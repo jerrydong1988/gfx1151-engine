@@ -14,9 +14,14 @@ is produced.
   BF16 rounding is an explicit numerical difference from a native compressed
   matrix multiply. The indexer reference projection still uses FP32 weights.
 * Routed experts (storage 23, parameter 128) remain compressed on the GPU.
-  Input/output Hadamard transforms surround direct grouped Q4 GEMV kernels;
-  expert results are reduced in routing order. Prefill uses 16-token tiles,
-  not the existing Q4CP WMMA path. Its performance must be measured separately.
+  The default `exact` batch kernel shares each expert row across eight tokens
+  while preserving the original FP32 accumulation and router-rank order.
+  Explicit `wmma` and `compensated` modes instead reuse the tiled matrix-core
+  pipeline, with rotations around the nonlinear activation. These faster
+  modes change floating-point rounding and are not output-equivalent modes.
+* Optional native HT projection kernels read the compressed trellis weights
+  directly for single-token and small-batch generation. Dense BF16 copies
+  remain available for prefill; this option does not remove the 7.83 GiB cost.
 * The PLE direct-I/O handle is selected from the mapping that owns the table,
   including a separate sidecar. The sidecar is part of the existing KV-cache
   file identity. `NGRAM_FILE` is understood by the Windows and HGN launchers.
@@ -101,14 +106,48 @@ build/hgn-v2-test.exe /path/v2.hgn /path/ngram.hgn --compare-v1 /path/w4b.hgn
 
 Synthetic tests cover row padding, both Q6 code planes, signed scales,
 Hadamard inversion, trellis tile boundaries, GPU/CPU dense decoding,
-per-token/per-expert grouped GEMVs and weighted reduction. CPU inspection
+per-token/per-expert grouped GEMVs, complete routed MoE batches, weighted
+reduction, and strided FP32/BF16 inputs to native HT projections. The exact
+batch test requires numerically identical FP32 outputs to its reference.
+CPU inspection
 validates metadata for every v2 tensor and samples 128 rows of each rotated
 matrix (four rows for Q6). Optional cosine comparison to v1 is a structural
 cross-check against a **different quantization**, not a full-precision oracle.
 
 Windows gfx1151 validation results are recorded in `HGN_V2_VALIDATION.md`.
+The subsequent kernel work and its numerical limits are recorded in
+`HGN_V2_OPTIMIZATION.md`.
 Linux execution, long context, concurrent requests and quality/performance
 parity require separate evidence.
+
+## Kernel modes
+
+Set process environment variables before starting the engine or launcher:
+
+| Variable | Values | Default |
+|---|---|---|
+| `GDEC_V2_MOE` | `exact`, `reference`, `wmma`, `compensated` | `exact` |
+| `GDEC_V2_NATIVE_HT` | `1` enables compressed HT projections | off |
+| `GDEC_KLD_SERIAL` | present: teacher-forced serial logits for KLD testing | off |
+
+`reference` retains the original slow expert loop and disables native HT.
+`exact` accelerates batches above 64 tokens and otherwise uses the original
+loop. `wmma` uses FP16 matrix operands with FP32 accumulation; `compensated`
+adds scaled residual operands to reduce local rounding error, at extra cost.
+Both matrix-core modes also use the optimized FP32 small-batch expert GEMV.
+`GDEC_V2_REFERENCE=1` remains a diagnostic alias for `reference`.
+
+For speed experiments on Windows PowerShell:
+
+```powershell
+$env:GDEC_V2_MOE = 'wmma'
+$env:GDEC_V2_NATIVE_HT = '1'
+.\start_win.exe
+```
+
+To return to the conservative default, remove both environment variables
+before restarting. Environment changes do not alter a running engine.
+These are engine environment variables, not new `service.conf` keys.
 
 ## Format research provenance
 

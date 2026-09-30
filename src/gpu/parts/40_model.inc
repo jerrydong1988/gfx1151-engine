@@ -1595,8 +1595,29 @@ struct GpuModel {
     CK(hipMemcpyAsync(y, d_moeacc, g_cfg.d * 4, hipMemcpyDeviceToDevice, g_str));
   }
 
-  // Reference routed-expert path: retain v2 Q4 groups, rotate activations,
-  // and sum experts in routing order. Bounded 16-token tiles limit scratch.
+  // Batched matrix-core path. Quantized planes stay in their original format.
+  template<bool Precise, int BN>
+  void moe_v2_wmma(const WView& gu, const WView& dn, const float* x,
+                   float* out, int P, int nt) {
+    const int d=g_cfg.d, mid=g_cfg.moe_mid, k=g_cfg.topk;
+    moelut::LutW a{},b{};
+    a.w=gu.data;a.sc=gu.data+gu.rows*gu.cols/2;a.sstride=d/128*2;a.e_rows=2*mid;
+    b.w=dn.data;b.sc=dn.data+dn.rows*dn.cols/2;b.sstride=mid/128*2;b.e_rows=d;
+    using Act=std::conditional_t<Precise,float,__half>;
+    Act* xr=(Act*)d_xbf16b;Act* hr=(Act*)d_hidb;
+    hgnv2gpu::rotate_fast<<<dim3(d/128,P),128,0,g_str>>>(x,xr,gu.su,d,false);
+    k_moe_lut<moelut::kQ4R128,false,BN,Precise><<<dim3(2*mid/128,nt,64/BN),256,0,g_str>>>(
+        a,xr,d_tokidx,d_moetiles,d_moentiles,d_guvb,nullptr,2*mid,d);
+    hgnv2gpu::activate_rotate<<<dim3(mid/128,P*k),128,0,g_str>>>(d_guvb,hr,gu.sv,dn.su,mid);
+    k_moe_lut<moelut::kQ4R128,false,BN,Precise><<<dim3(d/128,nt,64/BN),256,0,g_str>>>(
+        b,hr,nullptr,d_moetiles,d_moentiles,d_guvb,nullptr,d,mid);
+    k_moe_reduce_pw<10><<<dim3((d+255)/256,P),256,0,g_str>>>(d_guvb,d_pairids,d_pweight,out,P,d);
+    hgnv2gpu::rotate_fast<<<dim3(d/128,P),128,0,g_str>>>(out,out,dn.sv,d,true);
+  }
+
+  // Default: reuse each expert's weights across eight tokens, preserving the
+  // original FP32 FMA order, Hadamard placement and router rank reduction.
+  // Matrix-core modes explicitly accept different floating-point rounding.
   void moe_v2(const WView& gu,const WView& dn,const float* x,const int* ids,
                const float* weights,float* out,int P) {
     const int d=g_cfg.d,mid=g_cfg.moe_mid,k=g_cfg.topk;
@@ -1605,8 +1626,49 @@ struct GpuModel {
        gu.rows!=uint64_t(g_cfg.experts)*2*mid || dn.rows!=uint64_t(g_cfg.experts)*d ||
        !d_v2_x || !d_v2_pairs)
       throw std::runtime_error("HGN v2: unsupported expert pair");
+    const V2MoeMode mode=v2_moe_mode();
+    const bool reference=mode==V2MoeMode::Reference || mode==V2MoeMode::Exact;
+    const int minbatch=mode==V2MoeMode::Exact?64:16;
+    if(mode!=V2MoeMode::Reference && P>minbatch && P<=maxbatch_cap && k==10 && moe_deterministic &&
+       !moe_host_route && !moe_ordered && !moe_untiled) {
+      moe_routing.run(ids,weights,d_tokidx,d_pweight,d_eoff,d_pairids,P,k,g_cfg.experts);
+      k_moe_tiles<<<1,512,0,g_str>>>(d_eoff,d_moetiles,d_moentiles,g_cfg.experts);
+      const int nt=(P*k+63)/64+g_cfg.experts;
+      if(mode==V2MoeMode::Exact){
+        float* xr=(float*)d_xbf16b;float* hr=d_hidb;
+        hgnv2gpu::rotate_fast<<<dim3(d/128,P),128,0,g_str>>>(x,xr,gu.su,d,false);
+        hgnv2gpu::expert_batch_exact<8><<<dim3((2*mid+7)/8,nt,8),256,0,g_str>>>(gu.data,
+            (const __half*)(gu.data+gu.rows*gu.cols/2),xr,d_guvb,d_tokidx,(const int*)d_moetiles,d_moentiles,d,2*mid);
+        hgnv2gpu::rotate_fast<<<dim3(2*mid/128,P*k),128,0,g_str>>>(d_guvb,d_guvb,gu.sv,2*mid,true);
+        k_silu_mul_g<<<(P*k*mid+255)/256,256,0,g_str>>>(d_guvb,hr,mid,P*k);
+        hgnv2gpu::rotate_fast<<<dim3(mid/128,P*k),128,0,g_str>>>(hr,hr,dn.su,mid,false);
+        hgnv2gpu::expert_batch_exact<8><<<dim3((d+7)/8,nt,8),256,0,g_str>>>(dn.data,
+            (const __half*)(dn.data+dn.rows*dn.cols/2),hr,d_guvb,nullptr,(const int*)d_moetiles,d_moentiles,mid,d);
+        hgnv2gpu::rotate_fast<<<dim3(d/128,P*k),128,0,g_str>>>(d_guvb,d_guvb,dn.sv,d,true);
+        hgnv2gpu::original_pairids<<<(P*k+255)/256,256,0,g_str>>>(moe_routing.values_out,d_pairids,P*k);
+        k_moe_reduce_pw<10><<<dim3((d+255)/256,P),256,0,g_str>>>(d_guvb,d_pairids,d_pweight,out,P,d);
+      } else if(mode==V2MoeMode::Wmma) {
+        moe_v2_wmma<false,64>(gu,dn,x,out,P,nt);
+      } else if(P<1024) {
+        moe_v2_wmma<true,32>(gu,dn,x,out,P,nt);
+      } else {
+        moe_v2_wmma<true,64>(gu,dn,x,out,P,nt);
+      }
+      return;
+    }
     for(int p=0;p<P;p+=16) {
       const int n=std::min(16,P-p),slots=n*k;
+      if(!reference){
+        hgnv2gpu::rotate_fast<<<dim3(d/128,n),128,0,g_str>>>(x+(size_t)p*d,d_v2_x,gu.su,d,false);
+        hgnv2gpu::expert_mv_fast<<<dim3((2*mid+7)/8,slots),128,0,g_str>>>(gu.data,
+            (const __half*)(gu.data+gu.rows*gu.cols/2),d_v2_x,d_v2_gu,ids+p*16,d,2*mid,k,slots,false);
+        hgnv2gpu::activate_rotate<<<dim3(mid/128,slots),128,0,g_str>>>(d_v2_gu,d_v2_hid,gu.sv,dn.su,mid);
+        hgnv2gpu::expert_mv_fast<<<dim3((d+7)/8,slots),128,0,g_str>>>(dn.data,
+            (const __half*)(dn.data+dn.rows*dn.cols/2),d_v2_hid,d_v2_pairs,ids+p*16,mid,d,k,slots,true);
+        hgnv2gpu::reduce<<<dim3((d+255)/256,n),256,0,g_str>>>(d_v2_pairs,weights+p*16,out+(size_t)p*d,d,k);
+        hgnv2gpu::rotate_fast<<<dim3(d/128,n),128,0,g_str>>>(out+(size_t)p*d,out+(size_t)p*d,dn.sv,d,true);
+        continue;
+      }
       hgnv2gpu::rotate<<<dim3(d/128,n),128,0,g_str>>>(x+(size_t)p*d,d_v2_x,gu.su,d,n,false);
       hgnv2gpu::expert_mv<<<dim3((2*mid+7)/8,slots),256,0,g_str>>>(gu.data,
         (const __half*)(gu.data+gu.rows*gu.cols/2),d_v2_x,d_v2_gu,ids+p*16,d,2*mid,k,slots,false);

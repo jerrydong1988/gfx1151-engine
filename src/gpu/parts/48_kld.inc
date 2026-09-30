@@ -214,13 +214,26 @@ static int run(GpuModel& m, std::vector<int> tokens, const Opts& o) {
     const int* tk = tokens.data() + (size_t)c * n_ctx;
     // 分段与 prefill_batch 相同；不走 prefill_batch 是因为它段后的 MTP tap ingest 可能复用
     // d_xb，而下面要读最后一段的 d_xb 行（MTP 不影响主模型 logits）。
-    for (int off = 0; off < (int)n_ctx;) {
-      int rem = (int)n_ctx - off, n = std::min(m.maxbatch, rem);
-      if (rem > m.maxbatch && rem <= m.maxbatch_cap) n = rem;
-      m.prefill_chunk(std::vector<int>(tk + off, tk + off + n), off);
-      off += n;
+    // Optional teacher-forced serial reference, avoiding all batched math.
+    if (getenv("GDEC_KLD_SERIAL")) {
+      logits.resize((size_t)nrow * n_vocab);
+      std::vector<float> row;
+      for (int i=0; i<(int)n_ctx; i++) {
+        m.forward(tk[i]);
+        if (i>=first && i<(int)n_ctx-1) {
+          m.get_logits(row);
+          std::copy(row.begin(), row.end(), logits.begin()+(size_t)(i-first)*n_vocab);
+        }
+      }
+    } else {
+      for (int off = 0; off < (int)n_ctx;) {
+        int rem = (int)n_ctx - off, n = std::min(m.maxbatch, rem);
+        if (rem > m.maxbatch && rem <= m.maxbatch_cap) n = rem;
+        m.prefill_chunk(std::vector<int>(tk + off, tk + off + n), off);
+        off += n;
+      }
+      m.batch_logits_rows((int)n_ctx - last, first - last, nrow, logits);
     }
-    m.batch_logits_rows((int)n_ctx - last, first - last, nrow, logits);
     const int* tgt = tk + first + 1;
     if (out.is_open()) {
       parallel_rows(nrow, [&](int i) {

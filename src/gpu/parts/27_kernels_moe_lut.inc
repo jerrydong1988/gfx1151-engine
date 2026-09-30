@@ -22,6 +22,7 @@
 namespace moelut {
 
 constexpr int kQ4CP = 100, kIQ4NL = 20, kIQ4XS = 23;  // IQ: gguf::Type values
+constexpr int kQ4R128 = 101; // HGN v2: (nibble - 8) * signed fp16 scale, groups of 128
 
 __constant__ int8_t c_iq4_values[16] = {-127, -104, -83, -65, -49, -35, -22, -10,
                                         1, 13, 25, 38, 53, 69, 89, 113};
@@ -41,7 +42,7 @@ struct LutW {
 
 template <int T>
 __host__ __device__ constexpr size_t lut_row_bytes(size_t k) {
-  return T == kQ4CP ? k / 2 : T == kIQ4NL ? (k / 32) * 18 : (k / 256) * 136;
+  return T == kQ4CP || T == kQ4R128 ? k / 2 : T == kIQ4NL ? (k / 32) * 18 : (k / 256) * 136;
 }
 
 // IQ block codes (qs[0..15]: low nibbles = elements 0..15, high = 16..31)
@@ -64,28 +65,33 @@ __device__ __forceinline__ uint4 iq_to_pairs(uint4 q) {
 
 }  // namespace moelut
 
-template <int kLut, bool kPair, int BN = 64>
+template <int kLut, bool kPair, int BN = 64, bool Precise = false>
 __launch_bounds__(256) __global__
-    void k_moe_lut(moelut::LutW p, const __half* __restrict__ x, const int* __restrict__ tokidx,
+    void k_moe_lut(moelut::LutW p, const void* __restrict__ input, const int* __restrict__ tokidx,
                    const MoeTile* __restrict__ tiles, const int* __restrict__ ntiles,
                    float* __restrict__ out, __half* __restrict__ out_half, int m, int k) {
   using namespace moegg;
   using namespace moelut;
   constexpr int BM = 128, BK = 2;
   static_assert(BN % 16 == 0 && BN <= 64, "BN must match the MoeTile size (<= 64)");
-  static_assert(kLut == kQ4CP || kLut == kIQ4NL || kLut == kIQ4XS, "LUT type");
+  static_assert(kLut == kQ4CP || kLut == kQ4R128 || kLut == kIQ4NL || kLut == kIQ4XS, "LUT type");
+  static_assert(kLut != kQ4R128 || !kPair, "rotated gate/up must be unrotated before SiLU");
+  static_assert(!Precise || kLut == kQ4R128, "compensated input is only used for v2");
+  const __half* x=(const __half*)input;
+  const float* xf=(const float*)input;
   constexpr int kTokTiles = BN / 16;
   constexpr int kCodeBytes = BM * BK * 16;
   constexpr int kScaleBytes = BK * BM * 4;
   constexpr int kActStride = BN + 1;
   constexpr int kActBytes = BK * 4 * kActStride * 16;
-  constexpr int kStageBytes = kCodeBytes + kScaleBytes + kActBytes;
+  constexpr int kStageBytes = kCodeBytes + kScaleBytes + kActBytes*(Precise?2:1);
   constexpr int kLdsBytes = kStageBytes > 8 * 1024 ? kStageBytes : 8 * 1024;
   __shared__ __attribute__((aligned(16))) uint8_t lds[kLdsBytes];
   __shared__ uint32_t s_cbp[256];
   auto* s_codes = reinterpret_cast<uint4*>(lds);
   auto* s_scale = reinterpret_cast<uint32_t*>(lds + kCodeBytes);
   auto* s_act = reinterpret_cast<uint4*>(lds + kCodeBytes + kScaleBytes);
+  auto* s_act_lo = s_act + kActBytes/16;
 
   if ((int)blockIdx.y >= *ntiles) return;
   const int tid = threadIdx.x;
@@ -94,6 +100,9 @@ __launch_bounds__(256) __global__
     if constexpr (kLut == kQ4CP) {
       lo = p.cb[tid & 15];
       hi = p.cb[tid >> 4];
+    } else if constexpr (kLut == kQ4R128) {
+      lo = float((tid & 15) - 8);
+      hi = float((tid >> 4) - 8);
     } else {
       lo = (float)c_iq4_values[tid & 15] * (1.0f / 256.0f);  // exact; scale carries * 256
       hi = (float)c_iq4_values[tid >> 4] * (1.0f / 256.0f);
@@ -101,7 +110,12 @@ __launch_bounds__(256) __global__
     s_cbp[tid] = __builtin_bit_cast(uint32_t, __floats2half2_rn(lo, hi));
   }  // visible after the first __syncthreads of the main loop
 
-  const MoeTile tile = tiles[blockIdx.y];
+  MoeTile tile = tiles[blockIdx.y];
+  if constexpr(BN<64){
+    const int start=blockIdx.z*BN;
+    if(start>=tile.count)return;
+    tile.first+=start;tile.count=min(BN,tile.count-start);
+  }
   const int expert = tile.expert;
   const int slot0 = tile.first;
   const int nrows = tile.count;  // <= BN
@@ -127,7 +141,8 @@ __launch_bounds__(256) __global__
     f_live = r < m;
     const size_t row = (size_t)expert * p.e_rows + (upper ? p.up_off : 0) + (f_live ? r : (m - 1));
     f_ptr = (upper ? p.w_up : p.w) + row * rb;
-    if constexpr (kLut == kQ4CP) f_sp = (upper ? p.sc_up : p.sc) + row * (size_t)p.sstride;
+    if constexpr (kLut == kQ4CP || kLut == kQ4R128)
+      f_sp = (upper ? p.sc_up : p.sc) + row * (size_t)p.sstride;
   }
   uint4 f_codes = make_uint4(0u, 0u, 0u, 0u);
   uint32_t f_s = 0;   // q4cp / IQ4_NL: fp16 scale bits; IQ4_XS: header word 0 (d | scales_h << 16)
@@ -138,6 +153,7 @@ __launch_bounds__(256) __global__
   constexpr int kActChunks = BN * BK * 4;
   static_assert(kActChunks <= kActFetch * 256, "activation fetch");
   uint4 a_data[kActFetch];
+  uint4 a_low[kActFetch];
   const __half* a_src[kActFetch];
   int a_slot[kActFetch];
 #pragma unroll
@@ -147,7 +163,7 @@ __launch_bounds__(256) __global__
     const int sub = chunk % (BK * 4);
     int src = -1;
     if (chunk < kActChunks && t < nrows) src = tokidx ? tokidx[slot0 + t] : slot0 + t;
-    a_src[i] = src >= 0 ? x + (size_t)src * k + sub * 8 : nullptr;
+    a_src[i] = src >= 0 ? (Precise ? (const __half*)(xf+(size_t)src*k+sub*8) : x + (size_t)src * k + sub * 8) : nullptr;
     a_slot[i] = chunk < kActChunks ? sub * kActStride + t : -1;
   }
 
@@ -162,6 +178,9 @@ __launch_bounds__(256) __global__
       const int si = (kb0 % 8) + f_c;
       const uint32_t sw = si < 2 ? f_scv.x : si < 4 ? f_scv.y : si < 6 ? f_scv.z : f_scv.w;
       f_s = (si & 1) ? sw >> 16 : sw & 0xFFFFU;
+    } else if constexpr (kLut == kQ4R128) {
+      f_codes = *reinterpret_cast<const uint4*>(f_ptr + (size_t)kb * 16);
+      f_s = reinterpret_cast<const uint16_t*>(f_sp)[kb / 4];
     } else if constexpr (kLut == kIQ4NL) {
       // 18 B block at a 4 B (kb even) or 2 B (kb odd) boundary: 5 aligned
       // words cover it exactly (rows are 36-byte multiples, num_kb even).
@@ -187,15 +206,23 @@ __launch_bounds__(256) __global__
       f_codes = make_uint4(q0.x, q0.y, q1.x, q1.y);
     }
 #pragma unroll
-    for (int i = 0; i < kActFetch; ++i)
-      a_data[i] = a_src[i] ? *reinterpret_cast<const uint4*>(a_src[i] + kb0 * 32)
-                           : make_uint4(0u, 0u, 0u, 0u);
+    for (int i = 0; i < kActFetch; ++i) {
+      if constexpr (Precise) {
+        __half hi[8],lo[8];const float* src=(const float*)a_src[i];
+#pragma unroll
+        for(int j=0;j<8;j++){float v=src?src[kb0*32+j]:0.f;hi[j]=__float2half(v);lo[j]=__float2half((v-__half2float(hi[j]))*256.f);}
+        __builtin_memcpy(&a_data[i],hi,16);__builtin_memcpy(&a_low[i],lo,16);
+      } else {
+        a_data[i] = a_src[i] ? *reinterpret_cast<const uint4*>(a_src[i] + kb0 * 32)
+                             : make_uint4(0u, 0u, 0u, 0u);
+      }
+    }
   };
 
   const auto commit_stage = [&]() {
     const int row = tid >> 1;
     uint32_t s16;
-    if constexpr (kLut == kQ4CP) {
+    if constexpr (kLut == kQ4CP || kLut == kQ4R128) {
       s_codes[swizzle(row, f_c)] = f_codes;
       s16 = f_s;
     } else {
@@ -215,12 +242,13 @@ __launch_bounds__(256) __global__
     s_scale[f_c * BM + row] = f_live ? (s16 | (s16 << 16)) : 0U;
 #pragma unroll
     for (int i = 0; i < kActFetch; ++i)
-      if (a_slot[i] >= 0) s_act[a_slot[i]] = a_data[i];
+      if (a_slot[i] >= 0) {s_act[a_slot[i]] = a_data[i];if constexpr(Precise)s_act_lo[a_slot[i]]=a_low[i];}
   };
 
   v8f acc[kTokTiles];
+  v8f acc_lo[kTokTiles];
 #pragma unroll
-  for (int j = 0; j < kTokTiles; ++j) acc[j] = v8f{0, 0, 0, 0, 0, 0, 0, 0};
+  for (int j = 0; j < kTokTiles; ++j) {acc[j] = v8f{0, 0, 0, 0, 0, 0, 0, 0};if constexpr(Precise)acc_lo[j]=acc[j];}
 
   const auto compute_stage = [&]() {
     const int row = wave_id * 16 + sub_lane;
@@ -232,14 +260,23 @@ __launch_bounds__(256) __global__
       const __half2 scale2 = __builtin_bit_cast(__half2, s_scale[kb * BM + row]);
       const uint32_t words[4] = {raw[kb].x, raw[kb].y, raw[kb].z, raw[kb].w};
       __half2 h[16];
+      __half2 hl[16];
 #pragma unroll
       for (int i = 0; i < 16; ++i) {
         const uint32_t b = (words[i >> 2] >> (8 * (i & 3))) & 0xFFU;
         h[i] = __hmul2(__builtin_bit_cast(__half2, s_cbp[b]), scale2);
+        if constexpr(Precise){
+          __half2 codes=__builtin_bit_cast(__half2,s_cbp[b]);
+          float sc=__low2float(scale2);
+          hl[i]=__floats2half2_rn((__low2float(codes)*sc-__low2float(h[i]))*256.f,
+                                (__high2float(codes)*sc-__high2float(h[i]))*256.f);
+        }
       }
       v16h a_lo, a_hi;
       __builtin_memcpy(&a_lo, &h[0], 32);
       __builtin_memcpy(&a_hi, &h[8], 32);
+      v16h al_lo,al_hi;
+      if constexpr(Precise){__builtin_memcpy(&al_lo,&hl[0],32);__builtin_memcpy(&al_hi,&hl[8],32);}
 #pragma unroll
       for (int j = 0; j < kTokTiles; ++j) {
         asm volatile("" ::: "memory");  // keep one token tile's fragments live
@@ -253,6 +290,15 @@ __launch_bounds__(256) __global__
         __builtin_memcpy(&b_hi, &b[2], 32);
         acc[j] = wmma(a_lo, b_lo, acc[j]);
         acc[j] = wmma(a_hi, b_hi, acc[j]);
+        if constexpr(Precise){
+          const uint4* fl=s_act_lo+(kb*4)*kActStride+j*16+sub_lane;
+          uint4 bl[4];
+#pragma unroll
+          for(int q=0;q<4;q++)bl[q]=fl[q*kActStride];
+          v16h bl_lo,bl_hi;__builtin_memcpy(&bl_lo,&bl[0],32);__builtin_memcpy(&bl_hi,&bl[2],32);
+          acc_lo[j]=wmma(al_lo,b_lo,acc_lo[j]);acc_lo[j]=wmma(al_hi,b_hi,acc_lo[j]);
+          acc_lo[j]=wmma(a_lo,bl_lo,acc_lo[j]);acc_lo[j]=wmma(a_hi,bl_hi,acc_lo[j]);
+        }
       }
     }
   };
@@ -264,6 +310,10 @@ __launch_bounds__(256) __global__
     if (kb0 + BK < num_kb) fetch_stage(kb0 + BK);
     compute_stage();
     __syncthreads();
+  }
+  if constexpr(Precise){
+#pragma unroll
+    for(int j=0;j<kTokTiles;j++)acc[j]+=acc_lo[j]*(1.f/256);
   }
 
   if constexpr (kPair) {

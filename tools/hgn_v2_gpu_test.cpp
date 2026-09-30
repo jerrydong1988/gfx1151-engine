@@ -37,6 +37,43 @@ static void dense(uint32_t type,int n,int k){
   CK(hipGetLastError());CK(hipDeviceSynchronize());CK(hipMemcpy(got.data(),out,got.size()*2,hipMemcpyDeviceToHost));
   double err=0,norm=0;for(size_t i=0;i<ref.size();i++){uint32_t bits=uint32_t(got[i])<<16;float g;memcpy(&g,&bits,4);err+=(g-ref[i])*(g-ref[i]);norm+=ref[i]*ref[i];}
   double rel=std::sqrt(err/norm);std::cout<<"dense "<<type<<" "<<n<<"x"<<k<<" BF16 relative L2="<<rel<<"\n";check(rel<.003,"dense differential mismatch");
+  if(type==16){
+    std::vector<float> x(k),y(n),partials(size_t(n)*8);
+    for(auto& v:x)v=float(int(rng()%200)-100)*.02f;
+    auto dx=upload(x),xr=upload(x),dy=upload(y),dp=upload(partials);
+    for(int split:{1,2,8}){
+      hgnv2gpu::rotate_fast<<<dim3(k/128,1),128>>>(dx,xr,(__half*)a,k,false);
+      hgnv2gpu::ht_mv<<<dim3(n/128,split),256>>>((uint32_t*)p,xr,dp,n,k,split);
+      hgnv2gpu::ht_mv_finish<<<n/128,128>>>(dp,dy,(__half*)b,n,split);
+      CK(hipDeviceSynchronize());CK(hipMemcpy(y.data(),dy,n*4,hipMemcpyDeviceToHost));
+      double er=0,nm=0;
+      for(int r=0;r<n;r++){double z=0;for(int c=0;c<k;c++)z+=double(ref[size_t(r)*k+c])*x[c];er+=(y[r]-z)*(y[r]-z);nm+=z*z;}
+      double l2=sqrt(er/nm);std::cout<<"native HT CPU oracle split="<<split<<" L2="<<l2<<"\n";
+      check(l2<2e-6,"native HT CPU mismatch");
+    }
+    CK(hipFree(dx));CK(hipFree(xr));CK(hipFree(dy));CK(hipFree(dp));
+    for(int P:{1,3,5,8})for(bool bf16:{false,true}){
+      int stride=k+128;
+      std::vector<float> bx(size_t(P)*stride),by(size_t(P)*n),bp(size_t(P)*n*8),br(size_t(P)*k);
+      std::vector<uint16_t> bits(bx.size());
+      for(size_t i=0;i<bx.size();i++){
+        bx[i]=float(int(rng()%200)-100)*.02f;
+        uint32_t u;memcpy(&u,&bx[i],4);bits[i]=uint16_t((u+0x7fff+((u>>16)&1))>>16);
+        if(bf16){u=uint32_t(bits[i])<<16;memcpy(&bx[i],&u,4);}
+      }
+      auto fx=upload(bx),ry=upload(br),oy=upload(by),ps=upload(bp);
+      auto hx=upload(bits);
+      hgnv2gpu::ht_rotate_input<<<dim3(k/128,P),128>>>(bf16?(void*)hx:(void*)fx,ry,(__half*)a,k,stride,bf16);
+      hgnv2gpu::ht_mv_multi<4><<<dim3(n/128,8,(P+3)/4),256>>>((uint32_t*)p,ry,ps,n,k,8,P);
+      hgnv2gpu::ht_mv_finish<<<dim3(n/128,P),128>>>(ps,oy,(__half*)b,n,8);
+      CK(hipDeviceSynchronize());CK(hipMemcpy(by.data(),oy,by.size()*4,hipMemcpyDeviceToHost));
+      double er=0,nm=0;
+      for(int t=0;t<P;t++)for(int r=0;r<n;r++){double z=0;for(int c=0;c<k;c++)z+=double(ref[size_t(r)*k+c])*bx[size_t(t)*stride+c];double delta=by[size_t(t)*n+r]-z;er+=delta*delta;nm+=z*z;}
+      double l2=sqrt(er/nm);std::cout<<"native HT batch CPU oracle P="<<P<<" bf16="<<bf16<<" L2="<<l2<<"\n";
+      check(l2<2e-6,"native HT batch CPU mismatch");
+      CK(hipFree(fx));CK(hipFree(hx));CK(hipFree(ry));CK(hipFree(oy));CK(hipFree(ps));
+    }
+  }
   CK(hipFree(p));CK(hipFree(a));CK(hipFree(b));CK(hipFree(out));
 }
 static void expert(bool per_slot){

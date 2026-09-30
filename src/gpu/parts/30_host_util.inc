@@ -726,8 +726,24 @@ static const uint8_t* dev_ptr(const Tensor& t) {
 
 static std::unordered_map<std::string, const uint8_t*> g_v2_dense;
 static std::unordered_map<std::string, std::pair<const __half*,const __half*>> g_v2_rot;
+static float *g_v2_ht_x=nullptr,*g_v2_ht_parts=nullptr;
+static bool g_v2_ht_native=false;
+enum class V2MoeMode { Reference, Exact, Wmma, Compensated };
+static V2MoeMode v2_moe_mode() {
+  static const V2MoeMode mode=[] {
+    if(getenv("GDEC_V2_REFERENCE"))return V2MoeMode::Reference;
+    const char* p=getenv("GDEC_V2_MOE");
+    if(!p || !strcmp(p,"exact"))return V2MoeMode::Exact;
+    if(!strcmp(p,"reference"))return V2MoeMode::Reference;
+    if(!strcmp(p,"wmma"))return V2MoeMode::Wmma;
+    if(!strcmp(p,"compensated"))return V2MoeMode::Compensated;
+    throw std::runtime_error("GDEC_V2_MOE must be exact, wmma, compensated or reference");
+  }();
+  return mode;
+}
 static void load_v2_weights(const Checkpoint& ck) {
   size_t bytes=0;int count=0;
+  uint64_t maxcols=0,maxrows=0;
   for(const auto& kv:ck.tensors()) {
     const Tensor& t=kv.second;
     if(t.dtype!=16 && t.dtype!=23 && t.dtype!=24)continue;
@@ -737,6 +753,7 @@ static void load_v2_weights(const Checkpoint& ck) {
     if(t.dtype==23) {g_v2_rot[t.name]={su,sv};continue;}
     uint16_t* dst=nullptr; DALLOC(&dst,t.numel()*2);
     const int cols=(int)t.dims[t.ndims-1],rows=(int)(t.numel()/cols);
+    if(t.dtype==16){g_v2_rot[t.name]={su,sv};maxcols=std::max(maxcols,uint64_t(cols));maxrows=std::max(maxrows,uint64_t(rows));}
     if(t.dtype==24)
       hgnv2gpu::q6_dense<<<(unsigned)((t.numel()+255)/256),256,0,g_str>>>(dev_ptr(t),dst,t.numel(),cols);
     else
@@ -745,7 +762,15 @@ static void load_v2_weights(const Checkpoint& ck) {
     g_v2_dense[t.name]=(const uint8_t*)dst;bytes+=t.numel()*2;count++;
   }
   CK(hipStreamSynchronize(g_str));
+  const char* native=getenv("GDEC_V2_NATIVE_HT");
+  g_v2_ht_native=maxrows && v2_moe_mode()!=V2MoeMode::Reference && native && !strcmp(native,"1");
+  if(g_v2_ht_native){DALLOC(&g_v2_ht_x,maxcols*8*4);DALLOC(&g_v2_ht_parts,maxrows*8*8*4);}
   if(count)fprintf(stderr,"HGN v2: %d dense tensors decoded to BF16 (%.2f GiB); rotated experts stay compressed\n",count,bytes/1073741824.0);
+  if(count){
+    const auto mode=v2_moe_mode();
+    const char* name=mode==V2MoeMode::Reference?"reference":mode==V2MoeMode::Exact?"exact":mode==V2MoeMode::Wmma?"wmma":"compensated";
+    fprintf(stderr,"HGN v2: experts=%s, native HT GEMV=%s\n",name,g_v2_ht_native?"on":"off");
+  }
 }
 
 // --- device weight view for GEMV dispatch ------------------------------------
@@ -754,6 +779,7 @@ struct WView {
   const uint8_t* data;  // device pointer
   uint64_t rows, cols, scale_stride;
   const __half *su=nullptr,*sv=nullptr;
+  const uint32_t* ht_data=nullptr;
   uint64_t expert_rows=0;
 };
 
@@ -765,9 +791,10 @@ static WView wview(const Tensor& t) {
   w.rows = t.numel() / w.cols;
   auto v2=g_v2_dense.find(t.name);
   if(v2!=g_v2_dense.end()){w.dtype=0;w.data=v2->second;}
-  if(t.dtype==23){
+  if(t.dtype==23 || t.dtype==16){
     const auto& rot=g_v2_rot.at(t.name);w.su=rot.first;w.sv=rot.second;
     w.expert_rows=t.dims[t.ndims-2];
+    if(t.dtype==16)w.ht_data=(const uint32_t*)dev_ptr(t);
   }
   if (t.dtype == 5) {
     uint64_t codes_bytes = w.rows * w.cols / 2;
@@ -785,6 +812,13 @@ static void gemv(const WView& w, const float* x, float* y, uint64_t row_off = 0,
   int warps_per_block = 8;
   int threads = warps_per_block * 64;
   uint64_t blocks = (rows + warps_per_block - 1) / warps_per_block;
+  if(g_v2_ht_native && w.ht_data && row_off==0 && rows==w.rows && rows*w.cols>=8000000){
+    const int split=rows>=65536?1:(w.cols>=4096?8:2);
+    hgnv2gpu::rotate_fast<<<dim3(w.cols/128,1),128,0,g_str>>>(x,g_v2_ht_x,w.su,(int)w.cols,false);
+    hgnv2gpu::ht_mv<<<dim3(rows/128,split),256,0,g_str>>>(w.ht_data,g_v2_ht_x,g_v2_ht_parts,(int)rows,(int)w.cols,split);
+    hgnv2gpu::ht_mv_finish<<<rows/128,128,0,g_str>>>(g_v2_ht_parts,y,w.sv,(int)rows,split);
+    return;
+  }
   if (w.dtype == 5) {
     const uint8_t* codes = w.data + 64 + row_off * (w.cols / 2);
     const uint8_t* scales =
@@ -854,6 +888,13 @@ static bool gemv_multi_q4cp(const WView& w, const void* x, float* y, int P,
   if (getenv("GDEC_NO_GEMVMR")) return false;
   if (P < 1 || P > 8) return false;
   if (!xstride) xstride = w.cols;
+  if(g_v2_ht_native && w.ht_data && w.rows*w.cols>=8000000){
+    const int split=w.rows>=65536?1:(w.cols>=4096?8:2);
+    hgnv2gpu::ht_rotate_input<<<dim3(w.cols/128,P),128,0,g_str>>>(x,g_v2_ht_x,w.su,(int)w.cols,xstride,xbf16);
+    hgnv2gpu::ht_mv_multi<4><<<dim3(w.rows/128,split,(P+3)/4),256,0,g_str>>>(w.ht_data,g_v2_ht_x,g_v2_ht_parts,(int)w.rows,(int)w.cols,split,P);
+    hgnv2gpu::ht_mv_finish<<<dim3(w.rows/128,P),128,0,g_str>>>(g_v2_ht_parts,y,w.sv,(int)w.rows,split);
+    return true;
+  }
   if (xbf16) {
     if (xstride % 8 || (((uintptr_t)x | (uintptr_t)y) & 15)) return false;
   } else if (xstride % 4 || (((uintptr_t)x | (uintptr_t)y) & 15))

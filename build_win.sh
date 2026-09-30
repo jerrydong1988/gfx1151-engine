@@ -79,12 +79,14 @@ case "$TARGET" in
     build/hgn-v2-test.exe
     "$HIPCC" -O2 -std=c++17 --offload-arch="$GPU_ARCH" tools/hgn_v2_gpu_test.cpp -o build/hgn-v2-gpu-test.exe
     build/hgn-v2-gpu-test.exe
+    "$HIPCC" -O3 -std=c++17 --offload-arch="$GPU_ARCH" tools/hgn_v2_moe_test.cpp -o build/hgn-v2-moe-test.exe
+    build/hgn-v2-moe-test.exe
     ;;
   engine)
     echo "[编译] build/gdec-win.exe"
     # 先编到临时文件再原子替换，编译失败保留上次成功的二进制（对齐 Linux build.sh）
-    "$HIPCC" "${FLAGS[@]}" src/gpu/gdec.cpp -o build/gdec-win.exe.tmp \
-      && mv -f build/gdec-win.exe.tmp build/gdec-win.exe
+    "$HIPCC" "${FLAGS[@]}" src/gpu/gdec.cpp -o build/gdec-win.exe.tmp
+    mv -f build/gdec-win.exe.tmp build/gdec-win.exe
     ;;
   api)
     # OpenAI HTTP 前端：纯主机 C++，用 TheRock 自带 clang++（不拖 HIP 依赖）。
