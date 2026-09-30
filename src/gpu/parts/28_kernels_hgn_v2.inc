@@ -83,18 +83,23 @@ __device__ __forceinline__ float had128(float v,float* s,int j){
   b=s[j^64];__syncthreads();v=(j&64)?b-v:v+b;
   return v*0.08838834764831844f;
 }
-template<class Out>
+// Split stores hi and a scaled low residual in two FP16 planes per row.
+// Packing once here avoids repeating conversion for every output-row tile.
+template<class Out, bool Split=false>
 __global__ void rotate_fast(const float* x,Out* y,const __half* sign,int cols,bool inverse){
   __shared__ float s[128];const int j=threadIdx.x,c=blockIdx.x*128+j;
   const uint64_t i=uint64_t(blockIdx.y)*cols+c;
   float v=x[i]*(inverse?1.f:__half2float(sign[c]));
   v=had128(v,s,j)*(inverse?__half2float(sign[c]):1.f);
-  y[i]=Out(v);
+  if constexpr(Split){
+    __half* dst=(__half*)y+uint64_t(blockIdx.y)*cols*2;
+    __half hi=__float2half(v);dst[c]=hi;dst[cols+c]=__float2half((v-__half2float(hi))*256.f);
+  }else y[i]=Out(v);
 }
 // Gate/up accumulators are still in the rotated basis. Invert both, apply
 // SiLU in the original basis, then rotate for down. The only F16 rounding
 // for Out=half is the down GEMM input; transforms and activation remain FP32.
-template<class Out>
+template<class Out, bool Split=false>
 __global__ void activate_rotate(const float* gu,Out* hid,const __half* gu_sv,
                                const __half* dn_su,int mid){
   __shared__ float s[128];const int j=threadIdx.x,c=blockIdx.x*128+j;
@@ -102,7 +107,11 @@ __global__ void activate_rotate(const float* gu,Out* hid,const __half* gu_sv,
   float g=had128(gu[off],s,j)*__half2float(gu_sv[c]);
   float u=had128(gu[off+mid],s,j)*__half2float(gu_sv[c+mid]);
   float v=(g/(1.f+expf(-g)))*u*__half2float(dn_su[c]);
-  hid[uint64_t(blockIdx.y)*mid+c]=Out(had128(v,s,j));
+  v=had128(v,s,j);
+  if constexpr(Split){
+    __half* dst=(__half*)hid+uint64_t(blockIdx.y)*mid*2;
+    __half hi=__float2half(v);dst[c]=hi;dst[mid+c]=__float2half((v-__half2float(hi))*256.f);
+  }else hid[uint64_t(blockIdx.y)*mid+c]=Out(v);
 }
 
 // Decode: one lane processes 32 adjacent weights, two rows share the input

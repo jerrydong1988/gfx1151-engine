@@ -60,18 +60,19 @@ static void test(int P,int E,int D,int M,int reps){
     hgnv2gpu::rotate<<<dim3(D/128,S),128>>>(pairs,pairs,dv,D,S,true);
     hgnv2gpu::reduce<<<dim3((D+255)/256,P),256>>>(pairs,dw,out,D,K);
   };
-  auto variant=[&](auto precision,auto width){
+  auto variant=[&](auto precision,auto width,auto grouped){
     constexpr bool Precise=decltype(precision)::value;constexpr int BN=decltype(width)::value;
+    constexpr bool Group=decltype(grouped)::value;constexpr int BM=128;
     using Act=std::conditional_t<Precise,float,__half>;
     Act* ax=Precise?(Act*)xr:(Act*)x16;Act* ah=Precise?(Act*)hid:(Act*)h16;
-    hgnv2gpu::rotate_fast<<<dim3(D/128,P),128>>>(dx,ax,su,D,false);
-    k_moe_lut<moelut::kQ4R128,false,BN,Precise><<<dim3(2*M/128,tiles.size(),64/BN),256>>>(vg,ax,ix,dt,nt,gu,nullptr,2*M,D);
-    hgnv2gpu::activate_rotate<<<dim3(M/128,S),128>>>(gu,ah,sv,du,M);
-    k_moe_lut<moelut::kQ4R128,false,BN,Precise><<<dim3(D/128,tiles.size(),64/BN),256>>>(vd,ah,nullptr,dt,nt,pairs,nullptr,D,M);
+    hgnv2gpu::rotate_fast<Act,Group && Precise><<<dim3(D/128,P),128>>>(dx,ax,su,D,false);
+    k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group><<<dim3(2*M/BM,tiles.size(),64/BN),BM*2>>>(vg,ax,ix,dt,nt,gu,nullptr,2*M,D);
+    hgnv2gpu::activate_rotate<Act,Group && Precise><<<dim3(M/128,S),128>>>(gu,ah,sv,du,M);
+    k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group><<<dim3(D/BM,tiles.size(),64/BN),BM*2>>>(vd,ah,nullptr,dt,nt,pairs,nullptr,D,M);
     reduce_sorted<<<dim3((D+255)/256,P),256>>>(pairs,ord,dw,out,D,K);
     hgnv2gpu::rotate_fast<<<dim3(D/128,P),128>>>(out,out,dv,D,true);
   };
-  auto fast=[&]{variant(std::true_type{},std::integral_constant<int,64>{});};
+  auto fast=[&]{variant(std::true_type{},std::integral_constant<int,64>{},std::false_type{});};
   auto mv=[&]{
     hgnv2gpu::rotate_fast<<<dim3(D/128,P),128>>>(dx,xr,su,D,false);
     hgnv2gpu::expert_mv_fast<<<dim3((2*M+7)/8,S),128>>>(q,gs,xr,gu,di,D,2*M,K,S,false);
@@ -102,11 +103,11 @@ static void test(int P,int E,int D,int M,int reps){
   float rt=time(ref),ft=time(fast),mt=time(mv),et=time(exact);
   std::cout<<"P="<<P<<" E="<<E<<" D="<<D<<" M="<<M<<" relative_L2="<<rel<<" mv_L2="<<mrel<<" ref_ms="<<rt<<" wmma_ms="<<ft<<" mv_ms="<<mt<<" speedup="<<rt/ft<<std::endl;
   std::cout<<"exact_L2="<<erel<<" unequal="<<unequal<<" exact_ms="<<et<<" exact_speedup="<<rt/et<<std::endl;
-  auto bench_variant=[&](auto pr,auto bn){
-    auto fn=[&]{variant(pr,bn);};fn();CK(hipDeviceSynchronize());CK(hipMemcpy(got.data(),out,got.size()*4,hipMemcpyDeviceToHost));
+  auto bench_variant=[&](auto pr,auto bn,auto gp){
+    auto fn=[&]{variant(pr,bn,gp);};fn();CK(hipDeviceSynchronize());CK(hipMemcpy(got.data(),out,got.size()*4,hipMemcpyDeviceToHost));
     double sum=0;for(size_t i=0;i<got.size();i++){if(!std::isfinite(got[i]))throw std::runtime_error("variant nonfinite");sum+=(got[i]-base[i])*(got[i]-base[i]);}
-    double rel=sqrt(sum/norm);if(rel>(decltype(pr)::value?3e-5:.001))throw std::runtime_error("variant error");
-    float ms=time(fn);std::cout<<"variant P="<<P<<" precise="<<decltype(pr)::value<<" BN="<<decltype(bn)::value<<" L2="<<rel<<" ms="<<ms<<std::endl;
+    double rel=sqrt(sum/norm);if(rel>(decltype(pr)::value?(decltype(gp)::value?1e-6:3e-5):.001))throw std::runtime_error("variant error");
+    float ms=time(fn);std::cout<<"variant P="<<P<<" precise="<<decltype(pr)::value<<" BN="<<decltype(bn)::value<<" grouped="<<decltype(gp)::value<<" L2="<<rel<<" ms="<<ms<<std::endl;
   };
   if(E==512 && P<=16){
     auto fn=[&]{
@@ -121,14 +122,69 @@ static void test(int P,int E,int D,int M,int reps){
     for(size_t i=0;i<got.size();i++)if(got[i]!=base[i])throw std::runtime_error("packed MV exact mismatch");
     std::cout<<"exact_mv P="<<P<<" ms="<<time(fn)<<std::endl;
   }
-  if(E==512 && P>=64){
-    bench_variant(std::true_type{},std::integral_constant<int,32>{});
-    bench_variant(std::false_type{},std::integral_constant<int,64>{});
-    bench_variant(std::false_type{},std::integral_constant<int,32>{});
-    bench_variant(std::false_type{},std::integral_constant<int,16>{});
+  if(E!=512 || P>=64){
+    bench_variant(std::true_type{},std::integral_constant<int,32>{},std::false_type{});
+    bench_variant(std::false_type{},std::integral_constant<int,64>{},std::false_type{});
+    bench_variant(std::false_type{},std::integral_constant<int,64>{},std::true_type{});
+    bench_variant(std::true_type{},std::integral_constant<int,64>{},std::true_type{});
+    bench_variant(std::true_type{},std::integral_constant<int,32>{},std::true_type{});
+    bench_variant(std::true_type{},std::integral_constant<int,16>{},std::true_type{});
   }
 }
-int main()try{
+// Independent double-precision dot products test the quantized values, rather
+// than treating the old FP32 summation order as a mathematical oracle.
+static void dot_oracle(int P,int D){
+  constexpr int M=128;
+  std::vector<uint8_t> codes(size_t(M)*D/2);
+  for(size_t i=0;i<codes.size();i++)codes[i]=uint8_t(i*37+91);
+  std::vector<__half> scales(size_t(M)*D/128);
+  for(size_t i=0;i<scales.size();i++)
+    scales[i]=__float2half(i%13==0?0.f:std::ldexp((i%2?-1.f:1.f)*(1.f+float(i%17)/32),-int(i%15)-3));
+  std::vector<float> x(size_t(P)*D);
+  std::vector<__half> packed(x.size()*2);
+  for(int t=0;t<P;t++)for(int c=0;c<D;c++){
+    float v=std::ldexp(float((t*193+c*17)%211-105)/7.f,-int(c%9));
+    x[size_t(t)*D+c]=v;__half hi=__float2half(v);
+    packed[size_t(t)*D*2+c]=hi;
+    packed[size_t(t)*D*2+D+c]=__float2half((v-__half2float(hi))*256.f);
+  }
+  std::vector<MoeTile> tiles;
+  for(int t=0;t<P;t+=64)tiles.push_back({0,t,std::min(64,P-t)});
+  std::vector<int> ids(P*16,0);
+  Arena mem;auto q=mem.put(codes);auto s=mem.put(scales);auto a=mem.put(x);auto h=mem.put(packed);
+  auto tile=mem.put(tiles);auto nt=mem.put(std::vector<int>{int(tiles.size())});auto di=mem.put(ids);
+  auto out=mem.alloc<float>(size_t(P)*M);
+  moelut::LutW w{};w.w=q;w.sc=(uint8_t*)s;w.sstride=D/64;w.e_rows=M;
+  std::vector<double> expected(size_t(P)*M);
+  for(int t=0;t<P;t++)for(int r=0;r<M;r++){
+    double sum=0;
+    for(int c=0;c<D;c++){
+      uint8_t byte=codes[(size_t(r)*D+c)/2];
+      int value=int((byte>>(4*(c&1)))&15)-8;
+      sum+=double(value)*__half2float(scales[size_t(r)*(D/128)+c/128])*x[size_t(t)*D+c];
+    }
+    expected[size_t(t)*M+r]=sum;
+  }
+  auto compare=[&](const char* name){
+    CK(hipGetLastError());CK(hipDeviceSynchronize());
+    std::vector<float> got(expected.size());CK(hipMemcpy(got.data(),out,got.size()*4,hipMemcpyDeviceToHost));
+    double se=0,sr=0;
+    for(size_t i=0;i<got.size();i++){
+      if(!std::isfinite(got[i]))throw std::runtime_error("oracle nonfinite");
+      double delta=double(got[i])-expected[i];se+=delta*delta;sr+=expected[i]*expected[i];
+    }
+    double error=sqrt(se/sr);
+    std::cout<<"FP64_oracle "<<name<<" P="<<P<<" D="<<D<<" L2="<<error<<std::endl;
+    if(error>5e-7)throw std::runtime_error("FP64 dot error");
+  };
+  hgnv2gpu::expert_mv<<<dim3(M/8,P),256>>>(q,s,a,out,di,D,M,1,P,false);
+  compare("reference");
+  k_moe_lut<moelut::kQ4R128,false,32,true,true><<<dim3(M/128,tiles.size(),2),256>>>(w,h,nullptr,tile,nt,out,nullptr,M,D);
+  compare("grouped");
+}
+int main(int argc,char**)try{
+  if(argc>1){for(int p:{4096,8192})test(p,512,2560,640,1);return 0;}
+  dot_oracle(17,128);dot_oracle(65,640);dot_oracle(17,2560);
   for(int p:{1,17,65})test(p,19,256,384,3);
   for(int p:{1,4,16,64,256,1024})test(p,512,2560,640,3);
   std::cout<<"ALL PASS\n";return 0;

@@ -1596,7 +1596,7 @@ struct GpuModel {
   }
 
   // Batched matrix-core path. Quantized planes stay in their original format.
-  template<bool Precise, int BN>
+  template<bool Precise, int BN, bool Group128=false>
   void moe_v2_wmma(const WView& gu, const WView& dn, const float* x,
                    float* out, int P, int nt) {
     const int d=g_cfg.d, mid=g_cfg.moe_mid, k=g_cfg.topk;
@@ -1605,11 +1605,11 @@ struct GpuModel {
     b.w=dn.data;b.sc=dn.data+dn.rows*dn.cols/2;b.sstride=mid/128*2;b.e_rows=d;
     using Act=std::conditional_t<Precise,float,__half>;
     Act* xr=(Act*)d_xbf16b;Act* hr=(Act*)d_hidb;
-    hgnv2gpu::rotate_fast<<<dim3(d/128,P),128,0,g_str>>>(x,xr,gu.su,d,false);
-    k_moe_lut<moelut::kQ4R128,false,BN,Precise><<<dim3(2*mid/128,nt,64/BN),256,0,g_str>>>(
+    hgnv2gpu::rotate_fast<Act,Group128 && Precise><<<dim3(d/128,P),128,0,g_str>>>(x,xr,gu.su,d,false);
+    k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group128><<<dim3(2*mid/128,nt,64/BN),256,0,g_str>>>(
         a,xr,d_tokidx,d_moetiles,d_moentiles,d_guvb,nullptr,2*mid,d);
-    hgnv2gpu::activate_rotate<<<dim3(mid/128,P*k),128,0,g_str>>>(d_guvb,hr,gu.sv,dn.su,mid);
-    k_moe_lut<moelut::kQ4R128,false,BN,Precise><<<dim3(d/128,nt,64/BN),256,0,g_str>>>(
+    hgnv2gpu::activate_rotate<Act,Group128 && Precise><<<dim3(mid/128,P*k),128,0,g_str>>>(d_guvb,hr,gu.sv,dn.su,mid);
+    k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group128><<<dim3(d/128,nt,64/BN),256,0,g_str>>>(
         b,hr,nullptr,d_moetiles,d_moentiles,d_guvb,nullptr,d,mid);
     k_moe_reduce_pw<10><<<dim3((d+255)/256,P),256,0,g_str>>>(d_guvb,d_pairids,d_pweight,out,P,d);
     hgnv2gpu::rotate_fast<<<dim3(d/128,P),128,0,g_str>>>(out,out,dn.sv,d,true);
@@ -1619,14 +1619,13 @@ struct GpuModel {
   // original FP32 FMA order, Hadamard placement and router rank reduction.
   // Matrix-core modes explicitly accept different floating-point rounding.
   void moe_v2(const WView& gu,const WView& dn,const float* x,const int* ids,
-               const float* weights,float* out,int P) {
+               const float* weights,float* out,int P,V2MoeMode mode=v2_moe_mode()) {
     const int d=g_cfg.d,mid=g_cfg.moe_mid,k=g_cfg.topk;
     if(gu.dtype!=23 || dn.dtype!=23 || gu.expert_rows!=uint64_t(2*mid) ||
        dn.expert_rows!=uint64_t(d) || gu.cols!=uint64_t(d) || dn.cols!=uint64_t(mid) ||
        gu.rows!=uint64_t(g_cfg.experts)*2*mid || dn.rows!=uint64_t(g_cfg.experts)*d ||
        !d_v2_x || !d_v2_pairs)
       throw std::runtime_error("HGN v2: unsupported expert pair");
-    const V2MoeMode mode=v2_moe_mode();
     const bool reference=mode==V2MoeMode::Reference || mode==V2MoeMode::Exact;
     const int minbatch=mode==V2MoeMode::Exact?64:16;
     if(mode!=V2MoeMode::Reference && P>minbatch && P<=maxbatch_cap && k==10 && moe_deterministic &&
@@ -1645,6 +1644,13 @@ struct GpuModel {
         hgnv2gpu::rotate_fast<<<dim3(d/128,P*k),128,0,g_str>>>(d_guvb,d_guvb,dn.sv,d,true);
         hgnv2gpu::original_pairids<<<(P*k+255)/256,256,0,g_str>>>(moe_routing.values_out,d_pairids,P*k);
         k_moe_reduce_pw<10><<<dim3((d+255)/256,P),256,0,g_str>>>(d_guvb,d_pairids,d_pweight,out,P,d);
+      } else if(mode==V2MoeMode::Grouped) {
+        // Narrow tiles reduce padding/register pressure for sparse routes;
+        // wider tiles reuse weights better once experts receive many tokens.
+        if(P<6144)moe_v2_wmma<true,32,true>(gu,dn,x,out,P,nt);
+        else moe_v2_wmma<true,64,true>(gu,dn,x,out,P,nt);
+      } else if(mode==V2MoeMode::GroupedF16) {
+        moe_v2_wmma<false,64,true>(gu,dn,x,out,P,nt);
       } else if(mode==V2MoeMode::Wmma) {
         moe_v2_wmma<false,64>(gu,dn,x,out,P,nt);
       } else if(P<1024) {

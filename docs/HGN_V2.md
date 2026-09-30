@@ -120,6 +120,8 @@ Windows gfx1151 validation results are recorded in `HGN_V2_VALIDATION.md`.
 The subsequent kernel work and its numerical limits are recorded in
 `HGN_V2_OPTIMIZATION.md`; further order-preserving improvements are in
 `HGN_V2_EXACT_OPTIMIZATION.md`.
+Group-scale matrix kernels and their separate numerical/behavioral tests are
+recorded in `HGN_V2_GROUPED_OPTIMIZATION.md`.
 Linux execution, long context, concurrent requests and quality/performance
 parity require separate evidence.
 
@@ -129,7 +131,7 @@ Set process environment variables before starting the engine or launcher:
 
 | Variable | Values | Default |
 |---|---|---|
-| `GDEC_V2_MOE` | `exact`, `reference`, `wmma`, `compensated` | `exact` |
+| `GDEC_V2_MOE` | `exact`, `reference`, `wmma`, `compensated`, `grouped`, `grouped-f16` | `exact` |
 | `GDEC_V2_NATIVE_HT` | `1` enables compressed HT projections | off |
 | `GDEC_KLD_SERIAL` | present: teacher-forced serial logits for KLD testing | off |
 
@@ -137,13 +139,19 @@ Set process environment variables before starting the engine or launcher:
 `exact` accelerates batches above 64 tokens and uses an order-preserving
 packed GEMV for smaller batches. `wmma` uses FP16 matrix operands with FP32 accumulation; `compensated`
 adds scaled residual operands to reduce local rounding error, at extra cost.
-Both matrix-core modes also use the optimized FP32 small-batch expert GEMV.
+`grouped` multiplies exact Q4 integer codes by high/low FP16 activation parts,
+then applies each original 128-column scale in FP32. It avoids the additional
+weight rounding in the older WMMA path. `grouped-f16` uses only the high part
+to explore a faster, less accurate arithmetic boundary. These modes do not
+requantize or rewrite the model files. They change floating-point arithmetic
+and are not guaranteed to preserve model outputs or greedy MTP token parity.
+All matrix-core modes use the optimized FP32 small-batch expert GEMV.
 `GDEC_V2_REFERENCE=1` remains a diagnostic alias for `reference`.
 
 For speed experiments on Windows PowerShell:
 
 ```powershell
-$env:GDEC_V2_MOE = 'wmma'
+$env:GDEC_V2_MOE = 'grouped'
 $env:GDEC_V2_NATIVE_HT = '1'
 .\start_win.exe
 ```

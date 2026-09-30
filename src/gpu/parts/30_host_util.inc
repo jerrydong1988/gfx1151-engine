@@ -728,7 +728,7 @@ static std::unordered_map<std::string, const uint8_t*> g_v2_dense;
 static std::unordered_map<std::string, std::pair<const __half*,const __half*>> g_v2_rot;
 static float *g_v2_ht_x=nullptr,*g_v2_ht_parts=nullptr;
 static bool g_v2_ht_native=false;
-enum class V2MoeMode { Reference, Exact, Wmma, Compensated };
+enum class V2MoeMode { Reference, Exact, Wmma, Compensated, Grouped, GroupedF16 };
 static V2MoeMode v2_moe_mode() {
   static const V2MoeMode mode=[] {
     if(getenv("GDEC_V2_REFERENCE"))return V2MoeMode::Reference;
@@ -737,7 +737,9 @@ static V2MoeMode v2_moe_mode() {
     if(!strcmp(p,"reference"))return V2MoeMode::Reference;
     if(!strcmp(p,"wmma"))return V2MoeMode::Wmma;
     if(!strcmp(p,"compensated"))return V2MoeMode::Compensated;
-    throw std::runtime_error("GDEC_V2_MOE must be exact, wmma, compensated or reference");
+    if(!strcmp(p,"grouped"))return V2MoeMode::Grouped;
+    if(!strcmp(p,"grouped-f16"))return V2MoeMode::GroupedF16;
+    throw std::runtime_error("GDEC_V2_MOE must be exact, wmma, compensated, grouped, grouped-f16 or reference");
   }();
   return mode;
 }
@@ -768,7 +770,7 @@ static void load_v2_weights(const Checkpoint& ck) {
   if(count)fprintf(stderr,"HGN v2: %d dense tensors decoded to BF16 (%.2f GiB); rotated experts stay compressed\n",count,bytes/1073741824.0);
   if(count){
     const auto mode=v2_moe_mode();
-    const char* name=mode==V2MoeMode::Reference?"reference":mode==V2MoeMode::Exact?"exact":mode==V2MoeMode::Wmma?"wmma":"compensated";
+    const char* name=mode==V2MoeMode::Reference?"reference":mode==V2MoeMode::Exact?"exact":mode==V2MoeMode::Wmma?"wmma":mode==V2MoeMode::Grouped?"grouped":mode==V2MoeMode::GroupedF16?"grouped-f16":"compensated";
     fprintf(stderr,"HGN v2: experts=%s, native HT GEMV=%s\n",name,g_v2_ht_native?"on":"off");
   }
 }

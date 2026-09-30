@@ -16,6 +16,15 @@
 // Numerics: w = f16(f16(lut) * f16(scale)), F32 accumulate — like the GGUF path
 // (IQ: lut / 256 and scale * 256, exact rescale keeping scales out of fp16 subnormals).
 //
+// HGN v2 Group128 instead multiplies the exact Q4 integers on matrix cores,
+// resets the dot accumulator every 128 columns, and applies that group's
+// original signed scale in FP32. Precise adds a second matrix product for
+// the low activation part. Its input row is [hi[k], lo[k]] in FP16, where
+// x ~= hi + lo/256, occupying the same bytes as the FP32 scratch row.
+// This avoids rounding decoded weights to FP16; it is not bit-identical to
+// the reference FP32 summation tree. Both matrix modes require activations
+// representable in FP16 (the split does not extend FP16's exponent range).
+//
 //   kPair (gate/up): hid F16 [slot][m] = up * silu(gate), grid = (m / 64, tiles)
 //   !kPair (down):   pairs F32 [slot][m],                grid = (m / 128, tiles)
 
@@ -65,7 +74,7 @@ __device__ __forceinline__ uint4 iq_to_pairs(uint4 q) {
 
 }  // namespace moelut
 
-template <int kLut, bool kPair, int BN = 64, bool Precise = false>
+template <int kLut, bool kPair, int BN = 64, bool Precise = false, bool Group128 = false>
 __launch_bounds__(256) __global__
     void k_moe_lut(moelut::LutW p, const void* __restrict__ input, const int* __restrict__ tokidx,
                    const MoeTile* __restrict__ tiles, const int* __restrict__ ntiles,
@@ -77,6 +86,7 @@ __launch_bounds__(256) __global__
   static_assert(kLut == kQ4CP || kLut == kQ4R128 || kLut == kIQ4NL || kLut == kIQ4XS, "LUT type");
   static_assert(kLut != kQ4R128 || !kPair, "rotated gate/up must be unrotated before SiLU");
   static_assert(!Precise || kLut == kQ4R128, "compensated input is only used for v2");
+  static_assert(!Group128 || kLut == kQ4R128, "group scaling requires v2 weights");
   const __half* x=(const __half*)input;
   const float* xf=(const float*)input;
   constexpr int kTokTiles = BN / 16;
@@ -95,19 +105,19 @@ __launch_bounds__(256) __global__
 
   if ((int)blockIdx.y >= *ntiles) return;
   const int tid = threadIdx.x;
-  {
+  for(int cbidx=tid;!Group128 && cbidx<256;cbidx+=BM*2){
     float lo, hi;
     if constexpr (kLut == kQ4CP) {
-      lo = p.cb[tid & 15];
-      hi = p.cb[tid >> 4];
+      lo = p.cb[cbidx & 15];
+      hi = p.cb[cbidx >> 4];
     } else if constexpr (kLut == kQ4R128) {
-      lo = float((tid & 15) - 8);
-      hi = float((tid >> 4) - 8);
+      lo = float((cbidx & 15) - 8);
+      hi = float((cbidx >> 4) - 8);
     } else {
-      lo = (float)c_iq4_values[tid & 15] * (1.0f / 256.0f);  // exact; scale carries * 256
-      hi = (float)c_iq4_values[tid >> 4] * (1.0f / 256.0f);
+      lo = (float)c_iq4_values[cbidx & 15] * (1.0f / 256.0f);  // exact; scale carries * 256
+      hi = (float)c_iq4_values[cbidx >> 4] * (1.0f / 256.0f);
     }
-    s_cbp[tid] = __builtin_bit_cast(uint32_t, __floats2half2_rn(lo, hi));
+    s_cbp[cbidx] = __builtin_bit_cast(uint32_t, __floats2half2_rn(lo, hi));
   }  // visible after the first __syncthreads of the main loop
 
   MoeTile tile = tiles[blockIdx.y];
@@ -149,21 +159,20 @@ __launch_bounds__(256) __global__
   uint32_t f_sl = 0;  // IQ4_XS: scales_l[0..3]
   int f_ib = 0;       // IQ4_XS: sub-block
   uint4 f_scv = make_uint4(0u, 0u, 0u, 0u);  // q4cp: scales of K blocks kb0 & ~7 .. +7
-  constexpr int kActFetch = 2;
   constexpr int kActChunks = BN * BK * 4;
-  static_assert(kActChunks <= kActFetch * 256, "activation fetch");
+  constexpr int kActFetch = (kActChunks+BM*2-1)/(BM*2);
   uint4 a_data[kActFetch];
   uint4 a_low[kActFetch];
   const __half* a_src[kActFetch];
   int a_slot[kActFetch];
 #pragma unroll
   for (int i = 0; i < kActFetch; ++i) {
-    const int chunk = tid + i * 256;
+    const int chunk = tid + i * BM*2;
     const int t = chunk / (BK * 4);
     const int sub = chunk % (BK * 4);
     int src = -1;
     if (chunk < kActChunks && t < nrows) src = tokidx ? tokidx[slot0 + t] : slot0 + t;
-    a_src[i] = src >= 0 ? (Precise ? (const __half*)(xf+(size_t)src*k+sub*8) : x + (size_t)src * k + sub * 8) : nullptr;
+    a_src[i] = src >= 0 ? ((Group128 && Precise) ? x+(size_t)src*k*2+sub*8 : Precise ? (const __half*)(xf+(size_t)src*k+sub*8) : x + (size_t)src * k + sub * 8) : nullptr;
     a_slot[i] = chunk < kActChunks ? sub * kActStride + t : -1;
   }
 
@@ -207,7 +216,10 @@ __launch_bounds__(256) __global__
     }
 #pragma unroll
     for (int i = 0; i < kActFetch; ++i) {
-      if constexpr (Precise) {
+      if constexpr(Group128 && Precise){
+        a_data[i]=a_src[i]?*reinterpret_cast<const uint4*>(a_src[i]+kb0*32):make_uint4(0,0,0,0);
+        a_low[i]=a_src[i]?*reinterpret_cast<const uint4*>(a_src[i]+k+kb0*32):make_uint4(0,0,0,0);
+      }else if constexpr (Precise) {
         __half hi[8],lo[8];const float* src=(const float*)a_src[i];
 #pragma unroll
         for(int j=0;j<8;j++){float v=src?src[kb0*32+j]:0.f;hi[j]=__float2half(v);lo[j]=__float2half((v-__half2float(hi[j]))*256.f);}
@@ -247,10 +259,12 @@ __launch_bounds__(256) __global__
 
   v8f acc[kTokTiles];
   v8f acc_lo[kTokTiles];
+  v8f group[kTokTiles],group_lo[kTokTiles];
 #pragma unroll
   for (int j = 0; j < kTokTiles; ++j) {acc[j] = v8f{0, 0, 0, 0, 0, 0, 0, 0};if constexpr(Precise)acc_lo[j]=acc[j];}
+  if constexpr(Group128)for(int j=0;j<kTokTiles;j++){group[j]=acc[j];group_lo[j]=acc[j];}
 
-  const auto compute_stage = [&]() {
+  const auto compute_stage = [&](int kb0) {
     const int row = wave_id * 16 + sub_lane;
     uint4 raw[BK];
 #pragma unroll
@@ -264,8 +278,16 @@ __launch_bounds__(256) __global__
 #pragma unroll
       for (int i = 0; i < 16; ++i) {
         const uint32_t b = (words[i >> 2] >> (8 * (i & 3))) & 0xFFU;
-        h[i] = __hmul2(__builtin_bit_cast(__half2, s_cbp[b]), scale2);
-        if constexpr(Precise){
+        if constexpr(Group128){
+          // At exponent 10 each FP16 mantissa step is exactly one. Construct
+          // two values 1024+nibble, then subtract 1032 to decode signed Q4.
+          // This replaces a randomly indexed LDS codebook with packed ALU.
+          const uint32_t bits=0x64006400u|(b&15u)|((b&240u)<<12);
+          h[i]=__hsub2(__builtin_bit_cast(__half2,bits),
+                      __builtin_bit_cast(__half2,0x64086408u));
+        }
+        else h[i] = __hmul2(__builtin_bit_cast(__half2, s_cbp[b]), scale2);
+        if constexpr(Precise && !Group128){
           __half2 codes=__builtin_bit_cast(__half2,s_cbp[b]);
           float sc=__low2float(scale2);
           hl[i]=__floats2half2_rn((__low2float(codes)*sc-__low2float(h[i]))*256.f,
@@ -276,7 +298,7 @@ __launch_bounds__(256) __global__
       __builtin_memcpy(&a_lo, &h[0], 32);
       __builtin_memcpy(&a_hi, &h[8], 32);
       v16h al_lo,al_hi;
-      if constexpr(Precise){__builtin_memcpy(&al_lo,&hl[0],32);__builtin_memcpy(&al_hi,&hl[8],32);}
+      if constexpr(Precise && !Group128){__builtin_memcpy(&al_lo,&hl[0],32);__builtin_memcpy(&al_hi,&hl[8],32);}
 #pragma unroll
       for (int j = 0; j < kTokTiles; ++j) {
         asm volatile("" ::: "memory");  // keep one token tile's fragments live
@@ -288,16 +310,35 @@ __launch_bounds__(256) __global__
         v16h b_lo, b_hi;
         __builtin_memcpy(&b_lo, &b[0], 32);
         __builtin_memcpy(&b_hi, &b[2], 32);
-        acc[j] = wmma(a_lo, b_lo, acc[j]);
-        acc[j] = wmma(a_hi, b_hi, acc[j]);
+        if constexpr(Group128){
+          group[j]=wmma(a_lo,b_lo,group[j]);group[j]=wmma(a_hi,b_hi,group[j]);
+        }else{
+          acc[j] = wmma(a_lo, b_lo, acc[j]);
+          acc[j] = wmma(a_hi, b_hi, acc[j]);
+        }
         if constexpr(Precise){
           const uint4* fl=s_act_lo+(kb*4)*kActStride+j*16+sub_lane;
           uint4 bl[4];
 #pragma unroll
           for(int q=0;q<4;q++)bl[q]=fl[q*kActStride];
           v16h bl_lo,bl_hi;__builtin_memcpy(&bl_lo,&bl[0],32);__builtin_memcpy(&bl_hi,&bl[2],32);
-          acc_lo[j]=wmma(al_lo,b_lo,acc_lo[j]);acc_lo[j]=wmma(al_hi,b_hi,acc_lo[j]);
-          acc_lo[j]=wmma(a_lo,bl_lo,acc_lo[j]);acc_lo[j]=wmma(a_hi,bl_hi,acc_lo[j]);
+          if constexpr(Group128){
+            group_lo[j]=wmma(a_lo,bl_lo,group_lo[j]);group_lo[j]=wmma(a_hi,bl_hi,group_lo[j]);
+          }else{
+            acc_lo[j]=wmma(al_lo,b_lo,acc_lo[j]);acc_lo[j]=wmma(al_hi,b_hi,acc_lo[j]);
+            acc_lo[j]=wmma(a_lo,bl_lo,acc_lo[j]);acc_lo[j]=wmma(a_hi,bl_hi,acc_lo[j]);
+          }
+        }
+        if constexpr(Group128){
+          if((kb0+kb)%4==3){
+            float sc=__low2float(scale2);
+#pragma unroll
+            for(int z=0;z<8;z++){
+              float v=group[j][z];if constexpr(Precise)v+=group_lo[j][z]*(1.f/256);
+              acc[j][z]=fmaf(v,__shfl(sc,2*z+half_id,32),acc[j][z]);
+            }
+            group[j]=v8f{};group_lo[j]=v8f{};
+          }
         }
       }
     }
@@ -308,10 +349,10 @@ __launch_bounds__(256) __global__
     commit_stage();
     __syncthreads();
     if (kb0 + BK < num_kb) fetch_stage(kb0 + BK);
-    compute_stage();
+    compute_stage(kb0);
     __syncthreads();
   }
-  if constexpr(Precise){
+  if constexpr(Precise && !Group128){
 #pragma unroll
     for(int j=0;j<kTokTiles;j++)acc[j]+=acc_lo[j]*(1.f/256);
   }
