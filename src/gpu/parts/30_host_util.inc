@@ -93,8 +93,16 @@ static size_t devarena_estimate(const Checkpoint& ck, int maxctx) {
     const Tensor& t = kv.second;
     if (t.dtype == 10 || t.dtype == 11 || t.dtype == 4) continue;
     add(t.data_size);
+    if (t.dtype == 16 || t.dtype == 24) add(t.numel()*2);
   }
   const bool qsa_dense = getenv("GDEC_QSA_DENSE") != nullptr;
+  if(ck.find("layers.0.mlp.experts.gate_up_proj.weight") &&
+     ck.at("layers.0.mlp.experts.gate_up_proj.weight").dtype==23) {
+    add(size_t(16)*g_cfg.d*4);
+    add(size_t(16)*g_cfg.topk*g_cfg.d*4);
+    add(size_t(16)*g_cfg.topk*2*g_cfg.moe_mid*4);
+    add(size_t(16)*g_cfg.topk*g_cfg.moe_mid*4);
+  }
   const bool kv_fp32 = getenv("GDEC_QSA_KV_BF16") == nullptr;
   const bool index_f32 = getenv("GDEC_INDEX_BF16") == nullptr;
   const bool btv = getenv("GDEC_QSA_WMMA") && !kv_fp32 &&
@@ -716,11 +724,37 @@ static const uint8_t* dev_ptr(const Tensor& t) {
   return it->second;
 }
 
+static std::unordered_map<std::string, const uint8_t*> g_v2_dense;
+static std::unordered_map<std::string, std::pair<const __half*,const __half*>> g_v2_rot;
+static void load_v2_weights(const Checkpoint& ck) {
+  size_t bytes=0;int count=0;
+  for(const auto& kv:ck.tensors()) {
+    const Tensor& t=kv.second;
+    if(t.dtype!=16 && t.dtype!=23 && t.dtype!=24)continue;
+    auto rot=ck.rotation(t);
+    const __half* su=rot.first?(const __half*)dev_ptr(*rot.first):nullptr;
+    const __half* sv=rot.second?(const __half*)dev_ptr(*rot.second):nullptr;
+    if(t.dtype==23) {g_v2_rot[t.name]={su,sv};continue;}
+    uint16_t* dst=nullptr; DALLOC(&dst,t.numel()*2);
+    const int cols=(int)t.dims[t.ndims-1],rows=(int)(t.numel()/cols);
+    if(t.dtype==24)
+      hgnv2gpu::q6_dense<<<(unsigned)((t.numel()+255)/256),256,0,g_str>>>(dev_ptr(t),dst,t.numel(),cols);
+    else
+      hgnv2gpu::ht_dense<<<dim3(cols/128,rows/128),256,0,g_str>>>((const uint32_t*)dev_ptr(t),su,sv,dst,cols);
+    CK(hipGetLastError());
+    g_v2_dense[t.name]=(const uint8_t*)dst;bytes+=t.numel()*2;count++;
+  }
+  CK(hipStreamSynchronize(g_str));
+  if(count)fprintf(stderr,"HGN v2: %d dense tensors decoded to BF16 (%.2f GiB); rotated experts stay compressed\n",count,bytes/1073741824.0);
+}
+
 // --- device weight view for GEMV dispatch ------------------------------------
 struct WView {
   int dtype;
   const uint8_t* data;  // device pointer
   uint64_t rows, cols, scale_stride;
+  const __half *su=nullptr,*sv=nullptr;
+  uint64_t expert_rows=0;
 };
 
 static WView wview(const Tensor& t) {
@@ -729,6 +763,12 @@ static WView wview(const Tensor& t) {
   w.data = dev_ptr(t);
   w.cols = t.dims[t.ndims - 1];
   w.rows = t.numel() / w.cols;
+  auto v2=g_v2_dense.find(t.name);
+  if(v2!=g_v2_dense.end()){w.dtype=0;w.data=v2->second;}
+  if(t.dtype==23){
+    const auto& rot=g_v2_rot.at(t.name);w.su=rot.first;w.sv=rot.second;
+    w.expert_rows=t.dims[t.ndims-2];
+  }
   if (t.dtype == 5) {
     uint64_t codes_bytes = w.rows * w.cols / 2;
     w.scale_stride = ((w.cols / 32 * 2) + 15) & ~15ull;

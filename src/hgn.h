@@ -37,6 +37,9 @@
 #include <sys/stat.h>
 #include <unordered_map>
 #include <vector>
+#include <limits>
+#include <utility>
+#include "hgn_v2.h"
 
 #ifdef _WIN32
 #include "gpu/os_win32.h"
@@ -66,6 +69,7 @@ struct Tensor {
   uint64_t dims[4] = {0, 0, 0, 0};
   const uint8_t* data = nullptr;
   uint64_t data_size = 0;
+  uint32_t qparam = 0;  // upper 32 bits of Record.extra; lower bits are checksum
   uint64_t numel() const {
     uint64_t n = 1;
     for (uint32_t i = 0; i < ndims && i < 4; i++) n *= dims[i];
@@ -153,6 +157,14 @@ public:
   // Dequant whole tensor to fp32. For big tensors prefer row-wise access.
   void dequant(const Tensor& t, float* out) const {
     uint64_t n = t.numel();
+    if (t.dtype == 16 || t.dtype == 23 || t.dtype == 24) {
+      const auto rot = rotation(t);
+      hgn_v2::dequant(t.dtype, t.qparam, t.data, n/t.dims[t.ndims-1], t.dims[t.ndims-1],
+                      t.data_size, rot.first ? rot.first->data : nullptr,
+                      rot.second ? rot.second->data : nullptr,
+                      t.dims[t.ndims-2], 0, n/t.dims[t.ndims-1], out);
+      return;
+    }
     switch (t.dtype) {
       case 0: {
         const uint16_t* p = (const uint16_t*)t.data;
@@ -161,6 +173,9 @@ public:
       }
       case 1:
         memcpy(out, t.data, n * 4);
+        break;
+      case 2:
+        for (uint64_t i = 0; i < n; i++) out[i] = fp16_to_f32(hgn_v2::u16(t.data+i*2));
         break;
       case 8: {
         if (n + n / 32 * 2 != t.data_size)
@@ -251,10 +266,45 @@ public:
 
   size_t tensor_count() const { return index_.size(); }
 
+  std::pair<const Tensor*, const Tensor*> rotation(const Tensor& t) const {
+    if (t.dtype == 24) return {nullptr, nullptr};
+    if (t.ndims < 2 || t.name.size() < 6 || t.name.substr(t.name.size()-6) != "weight")
+      throw std::runtime_error("HGN v2: invalid rotated tensor " + t.name);
+    std::string prefix = t.name.substr(0,t.name.size()-6), suname=prefix+"suh";
+    const std::string gu="gate_up_proj.";
+    if (t.dtype == 23 && prefix.size() >= gu.size() && prefix.substr(prefix.size()-gu.size()) == gu)
+      suname=prefix.substr(0,prefix.size()-gu.size())+"su";
+    const Tensor& su=at(suname); const Tensor& sv=at(prefix+"svh");
+    if (su.dtype!=2 || sv.dtype!=2 || su.numel()!=t.dims[t.ndims-1] ||
+        sv.numel()!=t.dims[t.ndims-2] || su.data_size!=su.numel()*2 || sv.data_size!=sv.numel()*2)
+      throw std::runtime_error("HGN v2: rotation shape/type mismatch on " + t.name);
+    return {&su,&sv};
+  }
+  void validate_v2() const {
+    bool v2=false;
+    for(const auto& kv:index_) {
+      const Tensor& t=kv.second;
+      if(t.dtype!=16 && t.dtype!=23 && t.dtype!=24) continue;
+      v2=true;
+      if(t.ndims<2 || (t.dtype==16 && t.ndims!=2) ||
+         (t.dtype==23 && (t.ndims!=3 || t.dims[1]%128)))
+        throw std::runtime_error("HGN v2: unsupported dimensions on "+t.name);
+      hgn_v2::validate(t.dtype,t.qparam,t.numel()/t.dims[t.ndims-1],t.dims[t.ndims-1],t.data_size);
+      rotation(t);
+    }
+    if(v2) {
+      const auto* table=find("layers.1.ple.ngram_embedding.weight");
+      if(!table) throw std::runtime_error("HGN v2 requires the separate ngram HGN as an additional model file");
+      if(table->dtype!=10 || table->ndims!=3 || table->dims[2]!=160 || table->data_size!=table->numel()+4)
+        throw std::runtime_error("HGN v2: invalid PLE sidecar geometry or encoding");
+    }
+  }
+
   struct Mapping {
     const uint8_t* base;
     size_t len;
     void* os_handle = nullptr;  // Windows: 保持打开的句柄（OVERLAPPED|NO_BUFFERING，pload 直读用）
+    std::string path;
   };
   const std::vector<Mapping>& mappings() const { return maps_; }
   const std::unordered_map<std::string, Tensor>& tensors() const { return index_; }
@@ -288,7 +338,7 @@ private:
     const uint8_t* p = (const uint8_t*)MapViewOfFile(mh, FILE_MAP_READ, 0, 0, len);
     CloseHandle(mh);
     if (!p) throw std::runtime_error("MapViewOfFile");
-    maps_.push_back({p, len, (void*)fh});
+    maps_.push_back({p, len, (void*)fh, path});
 #else
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) throw std::runtime_error(std::string("open ") + path + ": " + strerror(errno));
@@ -299,17 +349,30 @@ private:
         (const uint8_t*)mmap(nullptr, len, PROT_READ, MAP_PRIVATE, fd, 0);
     if (p == MAP_FAILED) throw std::runtime_error("mmap");
     // advise random? leave default; page cache shared with the running server
-    maps_.push_back({p, len});
+    maps_.push_back({p, len, nullptr, path});
 #endif
 
     Header h;
+    if (len < sizeof(h)) throw std::runtime_error("truncated HGN header");
     memcpy(&h, p, sizeof(h));
     if (memcmp(h.magic, "HGN1", 4) != 0) throw std::runtime_error("bad magic");
     if ((uint64_t)h.file_size != len) throw std::runtime_error("size mismatch");
+    if (h.records_offset > len || uint64_t(h.tensor_count)*sizeof(Record) > len-h.records_offset)
+      throw std::runtime_error("HGN record table outside file");
 
     for (uint32_t i = 0; i < h.tensor_count; i++) {
       Record r;
       memcpy(&r, p + h.records_offset + (uint64_t)i * sizeof(Record), sizeof(r));
+      if (!r.ndims || r.ndims>4 || r.data_offset>len || r.data_size>len-r.data_offset)
+        throw std::runtime_error("HGN tensor outside file or invalid dimensions");
+      uint64_t elements=1;
+      for(uint32_t j=0;j<r.ndims;j++) {
+        if(!r.dims[j] || elements>std::numeric_limits<uint64_t>::max()/r.dims[j])
+          throw std::runtime_error("HGN tensor dimension overflow");
+        elements*=r.dims[j];
+      }
+      if(elements>std::numeric_limits<uint64_t>::max()/4)
+        throw std::runtime_error("HGN tensor byte size overflow");
       Tensor t;
       t.name.assign(r.name, strnlen(r.name, sizeof(r.name)));
       t.dtype = r.dtype;
@@ -317,6 +380,7 @@ private:
       for (int k = 0; k < 4; k++) t.dims[k] = r.dims[k];
       t.data = p + r.data_offset;
       t.data_size = r.data_size;
+      t.qparam = uint32_t(r.extra >> 32);
       if (is_overlay)
         index_[t.name] = t;  // override
       else

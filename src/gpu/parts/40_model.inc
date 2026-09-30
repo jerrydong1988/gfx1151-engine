@@ -32,6 +32,7 @@ struct GpuModel {
 
   // device state
   float *d_R, *d_Rhat, *d_x, *d_y, *d_emb;
+  float *d_v2_x=nullptr,*d_v2_pairs=nullptr,*d_v2_gu=nullptr,*d_v2_hid=nullptr;
   float *d_t320, *d_G, *d_w4;
   float *d_qkv, *d_g48, *d_beta48, *d_z;  // GDN scratch (z also used by QSA gate)
   float* d_S = nullptr;                   // (gdn_layers, 48, 128, 128)
@@ -546,6 +547,12 @@ struct GpuModel {
     DALLOC(&d_hid, 16 * 640 * 4);
     DALLOC(&d_ey, g_cfg.d * 4);
     DALLOC(&d_moeacc, g_cfg.d * 4);
+    if (!g_v2_rot.empty()) {
+      DALLOC(&d_v2_x,size_t(16)*g_cfg.d*4);
+      DALLOC(&d_v2_pairs,size_t(16)*g_cfg.topk*g_cfg.d*4);
+      DALLOC(&d_v2_gu,size_t(16)*g_cfg.topk*2*g_cfg.moe_mid*4);
+      DALLOC(&d_v2_hid,size_t(16)*g_cfg.topk*g_cfg.moe_mid*4);
+    }
     if (gg_on()) {
       const int k = g_cfg.topk;
       if (k != 10 || !moe_deterministic || moe_host_route || moe_ordered || moe_untiled)
@@ -783,18 +790,19 @@ struct GpuModel {
 #endif
       } else {
       memcpy(&ple_tscale, ple_table->data + ple_table->numel(), 4);
-      // io_uring path: file offset of the PLE table in the base .hgn. The fd
-      // is the base file, so only the base mapping (maps from file offset 0)
-      // is meaningful — if an overlay shadows the table, fall back.
+      // v2 moves PLE into a sidecar. Bind direct I/O to its owning mapping.
+      g_ple_off_ok=false;
+      for(const auto& mp:ckpt.mappings()) {
+        if(uintptr_t(ple_table->data)>=uintptr_t(mp.base) &&
+           uintptr_t(ple_table->data)-uintptr_t(mp.base)<mp.len) {
+          ple_uring_open(mp.path.c_str());
+          g_ple_foff=uint64_t(ple_table->data-mp.base);
 #ifdef _WIN32
-      if (g_ple_win.fh != INVALID_HANDLE_VALUE && !ckpt.mappings().empty()) {
+          g_ple_off_ok=g_ple_win.fh!=INVALID_HANDLE_VALUE;
 #else
-      if (g_ple_fd >= 0 && !ckpt.mappings().empty()) {
+          g_ple_off_ok=g_ple_fd>=0;
 #endif
-        const auto& mp0 = ckpt.mappings()[0];
-        if (ple_table->data >= mp0.base && ple_table->data < mp0.base + mp0.len) {
-          g_ple_foff = (uint64_t)(ple_table->data - mp0.base);
-          g_ple_off_ok = true;
+          break;
         }
       }
       }
@@ -1553,6 +1561,9 @@ struct GpuModel {
       WView gu = wview(ckpt.at(buf));
       snprintf(buf, sizeof buf, "layers.%d.mlp.experts.down_proj.weight", l);
       WView dn = wview(ckpt.at(buf));
+      if(gu.dtype==23 || dn.dtype==23) {
+        moe_v2(gu,dn,x,d_topids,d_topw,d_moeacc,1);
+      } else {
       if (!moe_down_direct(k, dn)) CK(hipMemsetAsync(d_moeacc, 0, g_cfg.d * 4, g_str));
       const int* topids = d_topids;  // 直读:ids 即专家号,免 D2H 同步
       // fused experts: one grouped launch each for gate_up / silu / down+accum
@@ -1567,6 +1578,7 @@ struct GpuModel {
       k_silu_mul_g<<<(k * g_cfg.moe_mid + 255) / 256, 256, 0, g_str>>>(d_guv, d_hid,
                                                                        g_cfg.moe_mid, k);
       moe_down1(k, dn, topids);
+      }
     }
     // shared expert
     snprintf(buf, sizeof buf, "layers.%d.mlp.shared_expert.gate_proj.weight", l);
@@ -1581,6 +1593,31 @@ struct GpuModel {
     k_axpy_sg<<<(2560 + 255) / 256, 256, 0, g_str>>>(d_moeacc, d_ey, d_sg, g_cfg.d,
                                                      g_cfg.d);
     CK(hipMemcpyAsync(y, d_moeacc, g_cfg.d * 4, hipMemcpyDeviceToDevice, g_str));
+  }
+
+  // Reference routed-expert path: retain v2 Q4 groups, rotate activations,
+  // and sum experts in routing order. Bounded 16-token tiles limit scratch.
+  void moe_v2(const WView& gu,const WView& dn,const float* x,const int* ids,
+               const float* weights,float* out,int P) {
+    const int d=g_cfg.d,mid=g_cfg.moe_mid,k=g_cfg.topk;
+    if(gu.dtype!=23 || dn.dtype!=23 || gu.expert_rows!=uint64_t(2*mid) ||
+       dn.expert_rows!=uint64_t(d) || gu.cols!=uint64_t(d) || dn.cols!=uint64_t(mid) ||
+       gu.rows!=uint64_t(g_cfg.experts)*2*mid || dn.rows!=uint64_t(g_cfg.experts)*d ||
+       !d_v2_x || !d_v2_pairs)
+      throw std::runtime_error("HGN v2: unsupported expert pair");
+    for(int p=0;p<P;p+=16) {
+      const int n=std::min(16,P-p),slots=n*k;
+      hgnv2gpu::rotate<<<dim3(d/128,n),128,0,g_str>>>(x+(size_t)p*d,d_v2_x,gu.su,d,n,false);
+      hgnv2gpu::expert_mv<<<dim3((2*mid+7)/8,slots),256,0,g_str>>>(gu.data,
+        (const __half*)(gu.data+gu.rows*gu.cols/2),d_v2_x,d_v2_gu,ids+p*16,d,2*mid,k,slots,false);
+      hgnv2gpu::rotate<<<dim3(2*mid/128,slots),128,0,g_str>>>(d_v2_gu,d_v2_gu,gu.sv,2*mid,slots,true);
+      k_silu_mul_g<<<(slots*mid+255)/256,256,0,g_str>>>(d_v2_gu,d_v2_hid,mid,slots);
+      hgnv2gpu::rotate<<<dim3(mid/128,slots),128,0,g_str>>>(d_v2_hid,d_v2_hid,dn.su,mid,slots,false);
+      hgnv2gpu::expert_mv<<<dim3((d+7)/8,slots),256,0,g_str>>>(dn.data,
+        (const __half*)(dn.data+dn.rows*dn.cols/2),d_v2_hid,d_v2_pairs,ids+p*16,mid,d,k,slots,true);
+      hgnv2gpu::rotate<<<dim3(d/128,slots),128,0,g_str>>>(d_v2_pairs,d_v2_pairs,dn.sv,d,slots,true);
+      hgnv2gpu::reduce<<<dim3((d+255)/256,n),256,0,g_str>>>(d_v2_pairs,weights+p*16,out+(size_t)p*d,d,k);
+    }
   }
 
   // PLE host phase: hash + read 16 rows into pinned staging (disk latency — overlapped).
@@ -3245,6 +3282,11 @@ struct GpuModel {
     // Shared expert first (its scratch d_guvb/d_hidb/d_xbf16b is dead before
     // the routed experts reuse it), so its add folds into the routed reduce.
     // GDEC_MOE_SG_FUSE=0: old order + k_axpy_sg.
+    if(gu.dtype==23 || dn.dtype==23) {
+      moe_v2(gu,dn,d_xb,d_topidsb,d_topwb,acc,P);
+      moe_b_shared(l,P,acc,direct_output);
+      return;
+    }
     static const bool sg_fuse = !env_zero("GDEC_MOE_SG_FUSE");
     if (!moe_naive && P > moe_naive_max && sg_fuse && moe_q4w_ok(gu, dn, P)) {
       moe_b_shared_ey(l, P);

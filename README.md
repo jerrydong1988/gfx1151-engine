@@ -4,6 +4,11 @@
 
 *English: [README_EN.md](README_EN.md)*
 
+> 本分支正在开发 **Halogen Flash-Next v2 HGN** 兼容支持。Windows 编译、格式检查和
+> CPU/GPU 内核测试已通过，完整模型推理与性能尚待验证，暂不替换正式部署。
+> 实现范围和测试方法见 [HGN v2](docs/HGN_V2.md)，当前证据见
+> [验证记录](docs/HGN_V2_VALIDATION.md)。下方上游性能数据不代表此实验路径的性能。
+
 在单张 AMD Strix Halo APU(gfx1151)上运行 177B MoE 模型的本地推理引擎,
 目标模型为 Qwen3.8-Flash-Next(qwen4_exp 架构)及其同结构微调。
 

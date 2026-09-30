@@ -37,7 +37,6 @@ static void gguf_base_setup(const std::string& base) {
 static std::unique_ptr<Checkpoint> open_base(const std::string& base) {
   if (is_gguf_path(base)) return std::make_unique<Checkpoint>();
   auto ck = std::make_unique<Checkpoint>(base.c_str());
-  ple_uring_open(base.c_str());
   return ck;
 }
 
@@ -328,6 +327,7 @@ int main(int argc, char** argv) {
     fprintf(stderr, "loaded %zu tensors (base+%zu overlay)\n", ckpt.tensor_count(),
             overlays.size());
     gguf_dense_apply(ckpt);
+    ckpt.validate_v2();
     g_cfg.vocab = (int)ckpt.at("lm_head.weight").dims[0];
     memstats_capture_hip_baseline();
     // D1a：并发 serve 用更小的 prefill 分段，缩短 D1b 层间让出的最长停顿。
@@ -344,6 +344,7 @@ int main(int argc, char** argv) {
     }
     devarena_init(ckpt, maxctx);
     load_arena(ckpt);
+    load_v2_weights(ckpt);
     GpuModel m(ckpt, maxctx);
     m.setup_draft_lmhead(g_lmhead_base_ok ? &g_lmhead_base : nullptr);
     gguf_dense_release(ckpt);
@@ -399,6 +400,7 @@ int main(int argc, char** argv) {
   fprintf(stderr, "loaded %zu tensors (base+%zu overlay)\n", ckpt.tensor_count(),
           overlays.size());
   gguf_dense_apply(ckpt);
+  ckpt.validate_v2();
   g_cfg.vocab = (int)ckpt.at("lm_head.weight").dims[0];
   if (ppl) {
     for (size_t i = 0; i < tokens.size(); i++) {
@@ -412,6 +414,7 @@ int main(int argc, char** argv) {
   memstats_capture_hip_baseline();
   devarena_init(ckpt, maxctx);
   load_arena(ckpt);
+  load_v2_weights(ckpt);
 
   GpuModel m(ckpt, maxctx);
   m.setup_draft_lmhead(g_lmhead_base_ok ? &g_lmhead_base : nullptr);

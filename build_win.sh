@@ -6,6 +6,7 @@
 #   bash build_win.sh api        # OpenAI HTTP 前端 → build/gdec-api-win.exe
 #   bash build_win.sh launcher   # 免脚本启动器 → ./start_win.exe（双击即用，托盘程序）
 #   bash build_win.sh test       # 编 build/ktest-win.exe 并运行 kernel 单测
+#   bash build_win.sh v2-test    # HGN v2 CPU/GPU differential tests (no model needed)
 #
 # 前置：TheRock 多架构包（默认 C:\therock-dist-windows-multiarch-10.0.0\...，
 # 可用 THEROCK=/path 覆盖）；GPU_ARCH 默认 gfx1151。
@@ -34,7 +35,7 @@ export HIP_PATH="$TR_WIN"
 unset ROCM_PATH HIP_PATH_64 HIP_PATH_71 HIP_PATH_72
 GPU_ARCH="${GPU_ARCH:-gfx1151}"
 TARGET="${1:-engine}"
-[[ "$TARGET" == engine || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == test ]] || { sed -n '2,10p' "$0" >&2; exit 2; }
+[[ "$TARGET" == engine || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == test || "$TARGET" == v2-test ]] || { sed -n '2,11p' "$0" >&2; exit 2; }
 
 mkdir -p build build/winlibs
 [[ -f build/winlibs/rocblas.lib ]]   || cp "$TR/lib/rocblas.lib" build/winlibs/
@@ -73,6 +74,12 @@ FLAGS=(-O3 -std=c++17 --offload-arch="$GPU_ARCH" -D_CRT_SECURE_NO_WARNINGS
        -I"$TR/include" -Lbuild/winlibs -lrocblas -lhipblaslt)
 
 case "$TARGET" in
+  v2-test)
+    "$TR/lib/llvm/bin/clang++.exe" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS tools/hgn_v2_test.cpp -o build/hgn-v2-test.exe
+    build/hgn-v2-test.exe
+    "$HIPCC" -O2 -std=c++17 --offload-arch="$GPU_ARCH" tools/hgn_v2_gpu_test.cpp -o build/hgn-v2-gpu-test.exe
+    build/hgn-v2-gpu-test.exe
+    ;;
   engine)
     echo "[编译] build/gdec-win.exe"
     # 先编到临时文件再原子替换，编译失败保留上次成功的二进制（对齐 Linux build.sh）

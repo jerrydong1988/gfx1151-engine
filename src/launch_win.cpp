@@ -868,6 +868,7 @@ int main(int argc, char** argv) {
         cfg_optional("VISION_FILE", model_dir + "\\heretic-vision.hgn");
     // 覆盖层（可选的高精度替换张量，叠加在主权重之上、MTP 之前）：默认空。
     const std::string overlay_file = cfg_optional("OVERLAY_FILE", "");
+    const std::string ngram_file = cfg_optional("NGRAM_FILE", "");
     const std::string tokenizer_dir =
         cfg("TOKENIZER_DIR", model_dir + "\\tokenizer");
     const std::string engine_host = cfg("ENGINE_HOST", engine_net::kDefaultHost);
@@ -896,6 +897,7 @@ int main(int argc, char** argv) {
     if (!file_exists("build\\gdec-api-win.exe")) fail("缺少 build\\gdec-api-win.exe");
     if (!file_exists(model_file)) fail("找不到模型：" + model_file + "（修改 service.conf）");
     if (!mtp_file.empty() && !file_exists(mtp_file)) fail("找不到 MTP 权重：" + mtp_file);
+    if (!ngram_file.empty() && !file_exists(ngram_file)) fail("找不到 ngram 权重：" + ngram_file);
     if (!vision_file.empty() && !file_exists(vision_file))
         fail("找不到视觉塔：" + vision_file + "（纯文本可 set VISION_FILE= 后启动）");
     if (!overlay_file.empty() && !file_exists(overlay_file))
@@ -972,6 +974,7 @@ int main(int argc, char** argv) {
 
     std::vector<std::string>& engine_args = g_plan.engine_args;
     engine_args = {model_file};
+    if (!ngram_file.empty()) engine_args.push_back(ngram_file);
     if (!overlay_file.empty()) engine_args.push_back(overlay_file);
     if (!mtp_file.empty()) engine_args.push_back(mtp_file);
     engine_args.insert(engine_args.end(),
