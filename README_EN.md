@@ -4,6 +4,14 @@
 
 *中文版:[README.md](README.md)*
 
+> This branch adds experimental **Halogen Flash-Next v2 HGN** support. Windows
+> builds, CPU/GPU kernel checks, full model loading, basic generation and a tool
+> round trip passed. Initial throughput is about 59 prompt tokens/s and 12 output
+> tokens/s on the prose fixture, substantially below the old weight path. Keep
+> the working deployment for daily use. See [implementation](docs/HGN_V2.md) and
+> [measured results](docs/HGN_V2_VALIDATION.md). Upstream figures below do not
+> describe this experimental path.
+
 A local inference engine that runs a 177B MoE model on a single AMD Strix
 Halo APU (gfx1151). Target model: Qwen3.8-Flash-Next (qwen4_exp architecture)
 and fine-tunes with the same architecture.

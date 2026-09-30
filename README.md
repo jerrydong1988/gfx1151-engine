@@ -5,7 +5,8 @@
 *English: [README_EN.md](README_EN.md)*
 
 > 本分支正在开发 **Halogen Flash-Next v2 HGN** 兼容支持。Windows 编译、格式检查和
-> CPU/GPU 内核测试已通过，完整模型推理与性能尚待验证，暂不替换正式部署。
+> CPU/GPU 内核测试、完整模型加载、基础生成和工具调用已通过；首轮实测约 59 token/s
+> 预填充、12 token/s 正文生成，明显慢于旧版权重路径，暂不替换正式部署。
 > 实现范围和测试方法见 [HGN v2](docs/HGN_V2.md)，当前证据见
 > [验证记录](docs/HGN_V2_VALIDATION.md)。下方上游性能数据不代表此实验路径的性能。
 
