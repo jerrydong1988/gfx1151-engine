@@ -1637,12 +1637,10 @@ struct GpuModel {
       if(mode==V2MoeMode::Exact){
         float* xr=(float*)d_xbf16b;float* hr=d_hidb;
         hgnv2gpu::rotate_fast<<<dim3(d/128,P),128,0,g_str>>>(x,xr,gu.su,d,false);
-        hgnv2gpu::expert_batch_exact<8><<<dim3((2*mid+7)/8,nt,8),256,0,g_str>>>(gu.data,
+        hgnv2gpu::expert_batch_exact<8,true><<<dim3((2*mid+7)/8,nt,8),256,0,g_str>>>(gu.data,
             (const __half*)(gu.data+gu.rows*gu.cols/2),xr,d_guvb,d_tokidx,(const int*)d_moetiles,d_moentiles,d,2*mid);
-        hgnv2gpu::rotate_fast<<<dim3(2*mid/128,P*k),128,0,g_str>>>(d_guvb,d_guvb,gu.sv,2*mid,true);
-        k_silu_mul_g<<<(P*k*mid+255)/256,256,0,g_str>>>(d_guvb,hr,mid,P*k);
-        hgnv2gpu::rotate_fast<<<dim3(mid/128,P*k),128,0,g_str>>>(hr,hr,dn.su,mid,false);
-        hgnv2gpu::expert_batch_exact<8><<<dim3((d+7)/8,nt,8),256,0,g_str>>>(dn.data,
+        hgnv2gpu::activate_rotate<<<dim3(mid/128,P*k),128,0,g_str>>>(d_guvb,hr,gu.sv,dn.su,mid);
+        hgnv2gpu::expert_batch_exact<8,true><<<dim3((d+7)/8,nt,8),256,0,g_str>>>(dn.data,
             (const __half*)(dn.data+dn.rows*dn.cols/2),hr,d_guvb,nullptr,(const int*)d_moetiles,d_moentiles,mid,d);
         hgnv2gpu::rotate_fast<<<dim3(d/128,P*k),128,0,g_str>>>(d_guvb,d_guvb,dn.sv,d,true);
         hgnv2gpu::original_pairids<<<(P*k+255)/256,256,0,g_str>>>(moe_routing.values_out,d_pairids,P*k);
@@ -1658,6 +1656,17 @@ struct GpuModel {
     }
     for(int p=0;p<P;p+=16) {
       const int n=std::min(16,P-p),slots=n*k;
+      if(mode==V2MoeMode::Exact){
+        hgnv2gpu::rotate_fast<<<dim3(d/128,n),128,0,g_str>>>(x+(size_t)p*d,d_v2_x,gu.su,d,false);
+        hgnv2gpu::expert_mv_exact_packed<<<dim3((2*mid+7)/8,slots),256,0,g_str>>>(gu.data,
+            (const __half*)(gu.data+gu.rows*gu.cols/2),d_v2_x,d_v2_gu,ids+p*16,d,2*mid,k,slots,false);
+        hgnv2gpu::activate_rotate<<<dim3(mid/128,slots),128,0,g_str>>>(d_v2_gu,d_v2_hid,gu.sv,dn.su,mid);
+        hgnv2gpu::expert_mv_exact_packed<<<dim3((d+7)/8,slots),256,0,g_str>>>(dn.data,
+            (const __half*)(dn.data+dn.rows*dn.cols/2),d_v2_hid,d_v2_pairs,ids+p*16,mid,d,k,slots,true);
+        hgnv2gpu::rotate_fast<<<dim3(d/128,slots),128,0,g_str>>>(d_v2_pairs,d_v2_pairs,dn.sv,d,true);
+        hgnv2gpu::reduce<<<dim3((d+255)/256,n),256,0,g_str>>>(d_v2_pairs,weights+p*16,out+(size_t)p*d,d,k);
+        continue;
+      }
       if(!reference){
         hgnv2gpu::rotate_fast<<<dim3(d/128,n),128,0,g_str>>>(x+(size_t)p*d,d_v2_x,gu.su,d,false);
         hgnv2gpu::expert_mv_fast<<<dim3((2*mid+7)/8,slots),128,0,g_str>>>(gu.data,

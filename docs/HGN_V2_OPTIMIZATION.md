@@ -1,5 +1,9 @@
 # HGN v2 kernel optimization — Windows gfx1151, 2026-09-30
 
+This records the first kernel round at `2c0b343`. A subsequent
+[order-preserving optimization](HGN_V2_EXACT_OPTIMIZATION.md) improves the
+default exact path further; the measurements below remain a historical snapshot.
+
 This is an experimental continuation of [the initial v2 port](HGN_V2_VALIDATION.md).
 It preserves the original compressed files. It does not establish accuracy
 parity with Halogen, an unquantized model, or the older w4b model.

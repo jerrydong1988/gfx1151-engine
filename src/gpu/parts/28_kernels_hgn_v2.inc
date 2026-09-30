@@ -196,7 +196,10 @@ __global__ void ht_mv_multi(const uint32_t* q,const float* x,float* parts,
 
 // FP32 batch fallback: each wave reuses one expert row for BT tokens while
 // retaining expert_mv's column order and reduction tree exactly.
-template<int BT>
+// Packed reads load four adjacent nibbles per lane, then redistribute them
+// to c=128*g+32*j+lane. Multiplication, FMA and reduction order are unchanged;
+// the 16-bit load is compressed integer storage, not an FP16 operand.
+template<int BT, bool Packed=false>
 __global__ void expert_batch_exact(const uint8_t* q,const __half* scales,
     const float* x,float* y,const int* tokidx,const int* tiles,const int* ntiles,
     int cols,int erows){
@@ -210,17 +213,53 @@ __global__ void expert_batch_exact(const uint8_t* q,const __half* scales,
   const float* in[BT];float acc[BT];
 #pragma unroll
   for(int t=0;t<BT;t++){in[t]=x+(uint64_t)(tokidx?tokidx[slot+min(t,live-1)]:slot+min(t,live-1))*cols;acc[t]=0;}
-  #pragma unroll 4
-  for(int c=lane;c<cols;c+=32){
-    uint64_t i=off+c;float w=float(int((q[i/2]>>((i%2)*4))&15)-8)*__half2float(scales[i/128]);
+  if constexpr(Packed){
+    for(int g=0;g<cols/128;g++){
+      uint32_t packed=((const uint16_t*)(q+off/2))[g*32+lane];
+      float scale=__half2float(scales[off/128+g]);
 #pragma unroll
-    for(int t=0;t<BT;t++)acc[t]=fmaf(w,in[t][c],acc[t]);
+      for(int j=0;j<4;j++){
+        uint32_t bits=__shfl(packed,j*8+lane/4,32);
+        float w=float(int((bits>>(4*(lane%4)))&15)-8)*scale;
+        int c=g*128+j*32+lane;
+#pragma unroll
+        for(int t=0;t<BT;t++)acc[t]=fmaf(w,in[t][c],acc[t]);
+      }
+    }
+  }else{
+#pragma unroll 4
+    for(int c=lane;c<cols;c+=32){
+      uint64_t i=off+c;float w=float(int((q[i/2]>>((i%2)*4))&15)-8)*__half2float(scales[i/128]);
+#pragma unroll
+      for(int t=0;t<BT;t++)acc[t]=fmaf(w,in[t][c],acc[t]);
+    }
   }
 #pragma unroll
   for(int t=0;t<BT;t++){
     for(int h=16;h;h/=2)acc[t]+=__shfl_down(acc[t],h,32);
     if(lane==0 && t<live)y[uint64_t(slot+t)*erows+row]=acc[t];
   }
+}
+// Single/small-token counterpart with the same arithmetic as expert_mv.
+__global__ void expert_mv_exact_packed(const uint8_t* q,const __half* scales,
+    const float* x,float* y,const int* ids,int cols,int erows,int topk,int slots,bool per_slot){
+  int lane=threadIdx.x&31,row=blockIdx.x*(blockDim.x/32)+threadIdx.x/32;
+  int slot=blockIdx.y;if(row>=erows||slot>=slots)return;
+  int tok=slot/topk,expert=ids[tok*16+slot%topk];
+  uint64_t off=(uint64_t(expert)*erows+row)*cols;
+  const float* in=x+uint64_t(per_slot?slot:tok)*cols;float sum=0;
+  for(int g=0;g<cols/128;g++){
+    uint32_t packed=((const uint16_t*)(q+off/2))[g*32+lane];
+    float scale=__half2float(scales[off/128+g]);
+#pragma unroll
+    for(int j=0;j<4;j++){
+      uint32_t bits=__shfl(packed,j*8+lane/4,32);
+      float w=float(int((bits>>(4*(lane%4)))&15)-8)*scale;
+      sum=fmaf(w,in[g*128+j*32+lane],sum);
+    }
+  }
+  for(int h=16;h;h/=2)sum+=__shfl_down(sum,h,32);
+  if(lane==0)y[(size_t)slot*erows+row]=sum;
 }
 __global__ void original_pairids(const int* sorted_values,int* pairids,int count){
   int p=blockIdx.x*blockDim.x+threadIdx.x;if(p<count)pairids[sorted_values[p]]=p;

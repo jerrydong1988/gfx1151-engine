@@ -16,6 +16,8 @@ is produced.
 * Routed experts (storage 23, parameter 128) remain compressed on the GPU.
   The default `exact` batch kernel shares each expert row across eight tokens
   while preserving the original FP32 accumulation and router-rank order.
+  Its packed weight reads and small-batch kernel preserve the same per-lane
+  column order and FP32 reduction tree, without FP16 matrix operands.
   Explicit `wmma` and `compensated` modes instead reuse the tiled matrix-core
   pipeline, with rotations around the nonlinear activation. These faster
   modes change floating-point rounding and are not output-equivalent modes.
@@ -116,7 +118,8 @@ cross-check against a **different quantization**, not a full-precision oracle.
 
 Windows gfx1151 validation results are recorded in `HGN_V2_VALIDATION.md`.
 The subsequent kernel work and its numerical limits are recorded in
-`HGN_V2_OPTIMIZATION.md`.
+`HGN_V2_OPTIMIZATION.md`; further order-preserving improvements are in
+`HGN_V2_EXACT_OPTIMIZATION.md`.
 Linux execution, long context, concurrent requests and quality/performance
 parity require separate evidence.
 
@@ -131,8 +134,8 @@ Set process environment variables before starting the engine or launcher:
 | `GDEC_KLD_SERIAL` | present: teacher-forced serial logits for KLD testing | off |
 
 `reference` retains the original slow expert loop and disables native HT.
-`exact` accelerates batches above 64 tokens and otherwise uses the original
-loop. `wmma` uses FP16 matrix operands with FP32 accumulation; `compensated`
+`exact` accelerates batches above 64 tokens and uses an order-preserving
+packed GEMV for smaller batches. `wmma` uses FP16 matrix operands with FP32 accumulation; `compensated`
 adds scaled residual operands to reduce local rounding error, at extra cost.
 Both matrix-core modes also use the optimized FP32 small-batch expert GEMV.
 `GDEC_V2_REFERENCE=1` remains a diagnostic alias for `reference`.

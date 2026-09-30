@@ -82,11 +82,9 @@ static void test(int P,int E,int D,int M,int reps){
   };
   auto exact=[&]{
     hgnv2gpu::rotate_fast<<<dim3(D/128,P),128>>>(dx,xr,su,D,false);
-    hgnv2gpu::expert_batch_exact<8><<<dim3((2*M+7)/8,tiles.size(),8),256>>>(q,gs,xr,gu,ix,(int*)dt,nt,D,2*M);
-    hgnv2gpu::rotate_fast<<<dim3(2*M/128,S),128>>>(gu,gu,sv,2*M,true);
-    act_ref<<<dim3((M+255)/256,S),256>>>(gu,hid,M);
-    hgnv2gpu::rotate_fast<<<dim3(M/128,S),128>>>(hid,hid,du,M,false);
-    hgnv2gpu::expert_batch_exact<8><<<dim3((D+7)/8,tiles.size(),8),256>>>(qd,ds,hid,pairs,nullptr,(int*)dt,nt,M,D);
+    hgnv2gpu::expert_batch_exact<8,true><<<dim3((2*M+7)/8,tiles.size(),8),256>>>(q,gs,xr,gu,ix,(int*)dt,nt,D,2*M);
+    hgnv2gpu::activate_rotate<<<dim3(M/128,S),128>>>(gu,hid,sv,du,M);
+    hgnv2gpu::expert_batch_exact<8,true><<<dim3((D+7)/8,tiles.size(),8),256>>>(qd,ds,hid,pairs,nullptr,(int*)dt,nt,M,D);
     hgnv2gpu::rotate_fast<<<dim3(D/128,S),128>>>(pairs,pairs,dv,D,true);
     reduce_sorted<<<dim3((D+255)/256,P),256>>>(pairs,ord,dw,out,D,K);
   };
@@ -110,6 +108,19 @@ static void test(int P,int E,int D,int M,int reps){
     double rel=sqrt(sum/norm);if(rel>(decltype(pr)::value?3e-5:.001))throw std::runtime_error("variant error");
     float ms=time(fn);std::cout<<"variant P="<<P<<" precise="<<decltype(pr)::value<<" BN="<<decltype(bn)::value<<" L2="<<rel<<" ms="<<ms<<std::endl;
   };
+  if(E==512 && P<=16){
+    auto fn=[&]{
+      hgnv2gpu::rotate_fast<<<dim3(D/128,P),128>>>(dx,xr,su,D,false);
+      hgnv2gpu::expert_mv_exact_packed<<<dim3((2*M+7)/8,S),256>>>(q,gs,xr,gu,di,D,2*M,K,S,false);
+      hgnv2gpu::activate_rotate<<<dim3(M/128,S),128>>>(gu,hid,sv,du,M);
+      hgnv2gpu::expert_mv_exact_packed<<<dim3((D+7)/8,S),256>>>(qd,ds,hid,pairs,di,M,D,K,S,true);
+      hgnv2gpu::rotate_fast<<<dim3(D/128,S),128>>>(pairs,pairs,dv,D,true);
+      hgnv2gpu::reduce<<<dim3((D+255)/256,P),256>>>(pairs,dw,out,D,K);
+    };
+    fn();CK(hipDeviceSynchronize());CK(hipMemcpy(got.data(),out,got.size()*4,hipMemcpyDeviceToHost));
+    for(size_t i=0;i<got.size();i++)if(got[i]!=base[i])throw std::runtime_error("packed MV exact mismatch");
+    std::cout<<"exact_mv P="<<P<<" ms="<<time(fn)<<std::endl;
+  }
   if(E==512 && P>=64){
     bench_variant(std::true_type{},std::integral_constant<int,32>{});
     bench_variant(std::false_type{},std::integral_constant<int,64>{});
