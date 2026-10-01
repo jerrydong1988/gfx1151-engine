@@ -397,6 +397,32 @@ __global__ void k_gr_write_b_hc_bf16(const float* __restrict__ w4,
 }
 
 // [gr-injfuse-begin]  (sed-extracted by tools/injfuse_proto.cu — needs f2bf/bf2f)
+// Exact replacement for the existing 256-thread LDS reduction tree. Only
+// wave 0 performs the five intra-wave levels; 128/64 remain cross-wave LDS,
+// then lane c computes the old 32-level pair c+(c+32) before shuffling.
+// All 256 threads still meet the entry, cross-wave and publication barriers.
+__device__ __forceinline__ float hc_norm_sum_256_wave(
+    float ss, float* sm, int lane) {
+  sm[lane] = ss;
+  __syncthreads();
+#pragma unroll
+  for (int off = 128; off >= 64; off >>= 1) {
+    if (lane < off) sm[lane] += sm[lane + off];
+    __syncthreads();
+  }
+  if (lane < 32) {
+    float sum = sm[lane] + sm[lane + 32];
+#pragma unroll
+    for (int off = 16; off > 0; off >>= 1) {
+      const float rhs = __shfl_down(sum, off, 32);
+      if (lane < off) sum += rhs;
+    }
+    if (lane == 0) sm[0] = sum;
+  }
+  __syncthreads();
+  return sm[0];
+}
+
 // BF16 residual state and BF16 normalized output. The rounded residual is
 // accumulated into the norm (scatter/store-before-norm order), halving HC
 // state traffic.
@@ -475,7 +501,7 @@ __global__ void k_inj_psum(const float* __restrict__ pin, float* __restrict__ w4
 // the same inject scalar; only w4 changes (summation order vs the GEMM).
 // The scalar comes from the GEMM's w4 (pfull [P][4]) or from the previous
 // call's partials (pin [P][4][4]); pin != pout (other blocks still read pin).
-template <int T>
+template <int T, bool WaveReduce = false>
 __global__ void __launch_bounds__(256) k_gr_scatter_norm_inj_bf16(
     const float* __restrict__ pfull, const float* __restrict__ pin,
     uint16_t* __restrict__ R, const float* __restrict__ y,
@@ -529,13 +555,19 @@ __global__ void __launch_bounds__(256) k_gr_scatter_norm_inj_bf16(
       }
       values[j] = rounded;
     }
-    sm[lane] = ss;
-    __syncthreads();
-    for (int off = 128; off > 0; off >>= 1) {
-      if (lane < off) sm[lane] += sm[lane + off];
+    float norm_sum;
+    if constexpr (WaveReduce) {
+      norm_sum = hc_norm_sum_256_wave(ss, sm, lane);
+    } else {
+      sm[lane] = ss;
       __syncthreads();
+      for (int off = 128; off > 0; off >>= 1) {
+        if (lane < off) sm[lane] += sm[lane + off];
+        __syncthreads();
+      }
+      norm_sum = sm[0];
     }
-    float inv = rsqrtf(sm[0] / d + eps);
+    float inv = rsqrtf(norm_sum / d + eps);
     float a[4] = {0.f, 0.f, 0.f, 0.f};
 #pragma unroll
     for (int j = 0; j < 10; j++) {
@@ -769,7 +801,7 @@ static int mrope_slot_row(int i) {
 #define QSA_LP 260  // LDS row pitch (floats, float4-aligned, bank-spread)
 #define QSA_DEC_NSPLIT 32  // decode flash-decoding splits (grid.x = splits, y = kvh)
 template <bool Sparse = false, bool SharedV = false, typename KVT = float,
-          bool Split = false>
+          bool Split = false, bool BatchRows = false>
 __global__ void k_qsa_flash(const float* __restrict__ q, const KVT* __restrict__ kc,
                             const KVT* __restrict__ vc, float* __restrict__ out, int P,
                             int dh, int hkv, int hq, const int* selected = nullptr,
@@ -778,6 +810,19 @@ __global__ void k_qsa_flash(const float* __restrict__ q, const KVT* __restrict__
                             int kbase = 0,
                             const int* __restrict__ ptab = nullptr) {
   static_assert(!SharedV || Sparse, "shared V is a sparse-attention specialization");
+  static_assert(!BatchRows || (Sparse && Split), "row batching requires decode split attention");
+  if constexpr (BatchRows) {
+    // Only independent row addressing changes. Keep x=splits, y=KV heads,
+    // block size, local softmax order, and split boundaries exactly as decode.
+    // pos is a contiguous array of absolute positions (one entry per row).
+    const size_t batch_row = blockIdx.z;
+    q += batch_row * hq * dh;
+    out += batch_row * hq * dh;
+    if (selected) selected += batch_row * 512;
+    pos += batch_row;
+    pacc += batch_row * hq * QSA_DEC_NSPLIT * dh;
+    pml += batch_row * hq * QSA_DEC_NSPLIT * 2;
+  }
   const int h = blockIdx.y;
   const int kvh = Sparse ? h : h / (hq / hkv);
   const int token = pos ? *pos : first + (int)blockIdx.x;
@@ -985,10 +1030,18 @@ __global__ void k_qsa_flash(const float* __restrict__ q, const KVT* __restrict__
 // --- k_qsa_flash_combine: merge QSA_DEC_NSPLIT split partials (decode) ------
 // Standard flash-decoding merge: out = sum_s exp(m_s - M) * acc_s / L with
 // L = sum_s exp(m_s - M) * l_s. One block per (q row, kv head).
+template <bool BatchRows = false>
 __global__ void k_qsa_flash_combine(const float* __restrict__ pml,
                                     const float* __restrict__ pacc,
                                     float* __restrict__ out, int qpg, int dh,
                                     const int* __restrict__ d_pos) {
+  if constexpr (BatchRows) {
+    // grid.y remains the KV-head dimension; each z row owns disjoint scratch.
+    const size_t batch_row = blockIdx.z;
+    pml += batch_row * gridDim.y * QSA_DEC_NSPLIT * qpg * 2;
+    pacc += batch_row * gridDim.y * QSA_DEC_NSPLIT * qpg * dh;
+    out += batch_row * gridDim.y * qpg * dh;
+  }
   (void)d_pos;  // dense tokens now take this path too (no <2051 early-out)
   const int h = blockIdx.y, row = blockIdx.x;
   const float* pm = pml + ((size_t)h * QSA_DEC_NSPLIT * qpg + row) * 2;
@@ -2354,3 +2407,37 @@ __global__ void __launch_bounds__(NT)
 }
 // [gemm-wmma-end]
 
+
+// R13 standalone candidate. Requires production bf2f(uint16_t).
+// Same 1024-thread element ownership, sum, shared reduction, rsqrt and output
+// expression as k_rmsnorm_zc_grouped<false>, with exact BF16 expansion at load.
+// Launch grid(P * ngroups), block(1024); gsize=2560/ngroups4 or10240/ngroups1.
+// Output is FP32, not the BF16 output of k_rmsnorm_zc_grouped_bf16.
+namespace r13tap {
+__global__ void norm_bf16_to_f32(const uint16_t* __restrict__ x,
+                               const float* __restrict__ w,
+                               float* __restrict__ out, int gsize, float eps,
+                               int ngroups) {
+  const uint16_t* xg = x + (size_t)blockIdx.x * gsize;
+  const float* wg = w + (size_t)(blockIdx.x % ngroups) * gsize;
+  float* og = out + (size_t)blockIdx.x * gsize;
+  __shared__ float sm[1024];
+  int t = threadIdx.x;
+  float ss = 0.f;
+  for (int i = t; i < gsize; i += blockDim.x) {
+    float value = bf2f(xg[i]);
+    ss += value * value;
+  }
+  sm[t] = ss;
+  __syncthreads();
+  for (int off = blockDim.x / 2; off > 0; off >>= 1) {
+    if (t < off) sm[t] += sm[t + off];
+    __syncthreads();
+  }
+  float inv = rsqrtf(sm[0] / gsize + eps);
+  for (int i = t; i < gsize; i += blockDim.x) {
+    float value = bf2f(xg[i]) * inv * (1.f + wg[i]);
+    og[i] = value;
+  }
+}
+}  // namespace r13tap

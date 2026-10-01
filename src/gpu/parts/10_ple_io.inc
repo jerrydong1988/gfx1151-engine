@@ -274,19 +274,8 @@ __device__ __forceinline__ int qsa_source_pos(int slot, int visible,
 // contiguous layout (identity), so every kernel below keeps its old addressing
 // bit-for-bit when paging is off. Only addresses change, never values or
 // accumulation order, so paged runs are bitwise identical to contiguous ones.
-constexpr int KV_PAGE_SHIFT = 8;
-constexpr int KV_PAGE = 1 << KV_PAGE_SHIFT;          // 256 tokens
-constexpr int KV_PAGE_BLOCKS = KV_PAGE / 4;          // 64 indexer blocks
-constexpr int KV_PAGE_BLOCK_SHIFT = KV_PAGE_SHIFT - 2;
-__device__ __forceinline__ int kv_row(const int* __restrict__ ptab, int t) {
-  return ptab ? (ptab[t >> KV_PAGE_SHIFT] << KV_PAGE_SHIFT) | (t & (KV_PAGE - 1))
-              : t;
-}
-__device__ __forceinline__ int ik_blk(const int* __restrict__ ptab, int b) {
-  return ptab ? (ptab[b >> KV_PAGE_BLOCK_SHIFT] << KV_PAGE_BLOCK_SHIFT) |
-                    (b & (KV_PAGE_BLOCKS - 1))
-              : b;
-}
+// Shared page constants / kv_row / ik_blk precede the index kernels in
+// 09_kernels_index.inc (included earlier by gdec.cpp).
 
 // ---- A2: host-side page allocator + per-sequence page table ----
 // KvPagePool hands out physical pages [0, npages). Physical page `npages` is
@@ -550,9 +539,18 @@ __global__ void k_index_append(const float* proj, const float* norm, float* ring
                   position, eps, theta);
 }
 
+template <bool BatchRows = false>
 __global__ void k_index_scores(const float* queries, const float* keys, float* scores,
                                 int stride, const int* pos,
                                 const int* __restrict__ ptab = nullptr) {
+  if constexpr (BatchRows) {
+    // Same per-query block shape and dot-product tree as decode. Each row
+    // gets its own four full-stride score planes and absolute-position slot.
+    const size_t row = blockIdx.y;
+    queries += row * 512;
+    scores += row * 4 * stride;
+    pos += row;
+  }
   int b = blockIdx.x * (blockDim.x / warpSize) + threadIdx.x / warpSize;
   int lane = threadIdx.x % warpSize;
   if (*pos < 2051 || b >= (*pos + 1) / 4) return;
@@ -564,6 +562,33 @@ __global__ void k_index_scores(const float* queries, const float* keys, float* s
     for (int s = warpSize / 2; s; s >>= 1) sum += __shfl_down_sync(~0ull, sum, s);
     if (!lane) scores[h * stride + b] = sum;
   }
+}
+
+// Tail-only MTP proposal context: score only initialized absolute blocks.
+// Compact score ids are relative to begin_block; selected ids are translated
+// back before attention. The trunk always uses k_index_scores unchanged.
+__global__ void k_mtp_index_scores_tail(
+    const float* queries, const float* keys, float* scores, int stride,
+    int begin_block, const int* pos, const int* __restrict__ ptab) {
+  const int b = blockIdx.x * (blockDim.x / warpSize) + threadIdx.x / warpSize;
+  const int absolute_block = begin_block + b;
+  if (absolute_block >= (*pos + 1) / 4) return;
+  const int lane = threadIdx.x % warpSize;
+  const float* kb = keys + (size_t)ik_blk(ptab, absolute_block) * 128;
+  for (int h = 0; h < 4; h++) {
+    float sum = 0.f;
+    for (int d = lane; d < 128; d += warpSize)
+      sum += queries[h * 128 + d] * kb[d];
+    for (int s = warpSize / 2; s; s >>= 1)
+      sum += __shfl_down_sync(~0ull, sum, s);
+    if (!lane) scores[h * stride + b] = sum;
+  }
+}
+
+__global__ void k_mtp_index_absolute(int* selected, int begin_block) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  // Host requires at least 512 complete valid blocks, so every id is valid.
+  if (i < 512) selected[i] += begin_block;
 }
 
 // Paged prefill: gather logical blocks [0, nb) of one layer's indexer keys
@@ -645,6 +670,24 @@ static void index_select(const float* scores, int stride, int* selected,
     k_index_select<8><<<count, 256, 0, g_str>>>(scores, stride, selected, first, pos);
   else
     k_index_select<16><<<count, 256, 0, g_str>>>(scores, stride, selected, first, pos);
+}
+
+// Match index_select(..., pos != nullptr)'s decode dispatch while the existing
+// kernels' query dimension handles consecutive absolute positions. Dispatch
+// must use stride, not the current visible count, to retain the serial template.
+static void index_select_serial_rows(const float* scores, int stride, int* selected,
+                                     int first, int count) {
+  static bool old_sel = getenv("GDEC_INDEX_OLDSEL") != nullptr;
+  if (!old_sel && stride > 512 && stride <= 8192) {
+    k_index_select_rs<<<count, 256, 0, g_str>>>(scores, stride, selected, first);
+    return;
+  }
+  if (stride <= 1024)
+    k_index_select<4><<<count, 256, 0, g_str>>>(scores, stride, selected, first);
+  else if (stride <= 2048)
+    k_index_select<8><<<count, 256, 0, g_str>>>(scores, stride, selected, first);
+  else
+    k_index_select<16><<<count, 256, 0, g_str>>>(scores, stride, selected, first);
 }
 
 __global__ void k_moe_route_pack(const int* ids, int* keys, int* values, int pairs, int k) {

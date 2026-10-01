@@ -91,6 +91,7 @@
 #define ROCBLAS_BETA_FEATURES_API  // rocblas_gemm_ex_get_solutions (iproj_sgemm)
 #include <rocblas/rocblas.h>
 #include <hipblaslt/hipblaslt.h>
+#include <hipblaslt/hipblaslt-ext.hpp>
 #include <rocprim/block/block_radix_sort.hpp>
 #include <rocprim/block/block_scan.hpp>
 #include <rocprim/device/device_radix_sort.hpp>
@@ -109,6 +110,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <exception>
 #include <functional>
 #include <future>
 #include <list>
@@ -157,6 +159,8 @@
 #include "parts/26_kernels_moe_gguf.inc"
 #include "parts/27_kernels_moe_lut.inc"
 #include "parts/28_kernels_hgn_v2.inc"
+#include "parts/29_kernels_v2_fused.inc"
+#include "parts/29_kernels_v2_fused_bn64.inc"
 #include "parts/30_host_util.inc"
 #include "parts/31_vision.inc"
 #include "parts/40_model.inc"

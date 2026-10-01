@@ -1,0 +1,7 @@
+{
+  "GDEC_SPEC_PRECISION": "aligned",
+  "GDEC_SPEC_ADAPT": "0",
+  "GDEC_SPEC_ADAPT_GREEDY": "0",
+  "GDEC_SPEC_QSA_BATCH": "1",
+  "GDEC_MTP_INGEST_KV_ONLY": "0"
+}

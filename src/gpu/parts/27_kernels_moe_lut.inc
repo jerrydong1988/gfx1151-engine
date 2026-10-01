@@ -72,9 +72,29 @@ __device__ __forceinline__ uint4 iq_to_pairs(uint4 q) {
                     __builtin_amdgcn_perm(pair_hi(q.w), pair_hi(q.z), sel));
 }
 
+// The grouped-v2 stage exchanges only LDS. Global weights/activations are
+// read-only throughout this CTA, and global output is written after the K loop.
+// Global loads feed registers used by commit_stage's LDS stores, so the compiler
+// must complete those dependencies before their use. Drain LDS reads/writes and
+// meet all waves before consuming/reusing the tile; no global cache invalidation
+// is needed for this local exchange. Keep the ordinary barrier as the default.
+// This is the same gfx11 LDS-only sequence used by the dense GEMM's gwmma_sync.
+template<bool LdsOnly>
+__device__ __forceinline__ void stage_sync() {
+  if constexpr (LdsOnly) {
+    __asm__ volatile(
+        "s_waitcnt lgkmcnt(0)\n\t"
+        "s_waitcnt_vscnt null, 0x0\n\t"
+        "s_barrier" :: : "memory");
+  } else {
+    __syncthreads();
+  }
+}
+
 }  // namespace moelut
 
-template <int kLut, bool kPair, int BN = 64, bool Precise = false, bool Group128 = false>
+template <int kLut, bool kPair, int BN = 64, bool Precise = false, bool Group128 = false,
+          bool LdsSync = false, bool DeferredScale = false, bool PermuteQ4 = false>
 __launch_bounds__(256) __global__
     void k_moe_lut(moelut::LutW p, const void* __restrict__ input, const int* __restrict__ tokidx,
                    const MoeTile* __restrict__ tiles, const int* __restrict__ ntiles,
@@ -87,6 +107,12 @@ __launch_bounds__(256) __global__
   static_assert(kLut != kQ4R128 || !kPair, "rotated gate/up must be unrotated before SiLU");
   static_assert(!Precise || kLut == kQ4R128, "compensated input is only used for v2");
   static_assert(!Group128 || kLut == kQ4R128, "group scaling requires v2 weights");
+  static_assert(!LdsSync || (kLut == kQ4R128 && !kPair && Precise && Group128),
+                "LDS-only synchronization is an opt-in compensated v2 experiment");
+  static_assert(!DeferredScale || (kLut == kQ4R128 && !kPair && Precise && Group128),
+                "deferred scale widening is an opt-in compensated v2 experiment");
+  static_assert(!PermuteQ4 || (kLut == kQ4R128 && !kPair && Precise && Group128),
+                "permuted Q4 unpack is an opt-in compensated v2 experiment");
   const __half* x=(const __half*)input;
   const float* xf=(const float*)input;
   constexpr int kTokTiles = BN / 16;
@@ -156,6 +182,11 @@ __launch_bounds__(256) __global__
   }
   uint4 f_codes = make_uint4(0u, 0u, 0u, 0u);
   uint32_t f_s = 0;   // q4cp / IQ4_NL: fp16 scale bits; IQ4_XS: header word 0 (d | scales_h << 16)
+  // Keep the pending v2 scale as raw 16-bit storage until LDS commit. Widening
+  // it in fetch_stage can introduce a dependent high-half register clear and
+  // force vmcnt(0) before current-stage compute, defeating the prefetch overlap.
+  // This candidate changes neither the stored scale nor any floating-point op.
+  uint16_t f_s16 = 0;
   uint32_t f_sl = 0;  // IQ4_XS: scales_l[0..3]
   int f_ib = 0;       // IQ4_XS: sub-block
   uint4 f_scv = make_uint4(0u, 0u, 0u, 0u);  // q4cp: scales of K blocks kb0 & ~7 .. +7
@@ -189,7 +220,10 @@ __launch_bounds__(256) __global__
       f_s = (si & 1) ? sw >> 16 : sw & 0xFFFFU;
     } else if constexpr (kLut == kQ4R128) {
       f_codes = *reinterpret_cast<const uint4*>(f_ptr + (size_t)kb * 16);
-      f_s = reinterpret_cast<const uint16_t*>(f_sp)[kb / 4];
+      if constexpr (DeferredScale)
+        f_s16 = reinterpret_cast<const uint16_t*>(f_sp)[kb / 4];
+      else
+        f_s = reinterpret_cast<const uint16_t*>(f_sp)[kb / 4];
     } else if constexpr (kLut == kIQ4NL) {
       // 18 B block at a 4 B (kb even) or 2 B (kb odd) boundary: 5 aligned
       // words cover it exactly (rows are 36-byte multiples, num_kb even).
@@ -236,7 +270,8 @@ __launch_bounds__(256) __global__
     uint32_t s16;
     if constexpr (kLut == kQ4CP || kLut == kQ4R128) {
       s_codes[swizzle(row, f_c)] = f_codes;
-      s16 = f_s;
+      if constexpr (DeferredScale) s16 = uint32_t(f_s16);
+      else s16 = f_s;
     } else {
       s_codes[swizzle(row, f_c)] = iq_to_pairs(f_codes);
       // IQ scales are ~1e-5 (fp16 subnormal range): carry scale * 256 and
@@ -282,7 +317,17 @@ __launch_bounds__(256) __global__
           // At exponent 10 each FP16 mantissa step is exactly one. Construct
           // two values 1024+nibble, then subtract 1032 to decode signed Q4.
           // This replaces a randomly indexed LDS codebook with packed ALU.
-          const uint32_t bits=0x64006400u|(b&15u)|((b&240u)<<12);
+          uint32_t bits;
+          if constexpr (PermuteQ4) {
+            // Byte selectors 0..3 choose word bytes; 4..7 choose (word>>4).
+            // Keep each nibble in the same FP16 mantissa bits as the baseline.
+            const uint32_t word = words[i >> 2];
+            const uint32_t selector = 0x04040000u + 0x01010101u * (i & 3);
+            const uint32_t paired = __builtin_amdgcn_perm(word >> 4, word, selector);
+            bits = (paired & 0x000f000fu) | 0x64006400u;
+          } else {
+            bits=0x64006400u|(b&15u)|((b&240u)<<12);
+          }
           h[i]=__hsub2(__builtin_bit_cast(__half2,bits),
                       __builtin_bit_cast(__half2,0x64086408u));
         }
@@ -347,10 +392,10 @@ __launch_bounds__(256) __global__
   fetch_stage(0);
   for (int kb0 = 0; kb0 < num_kb; kb0 += BK) {
     commit_stage();
-    __syncthreads();
+    moelut::stage_sync<LdsSync>();
     if (kb0 + BK < num_kb) fetch_stage(kb0 + BK);
     compute_stage(kb0);
-    __syncthreads();
+    moelut::stage_sync<LdsSync>();
   }
   if constexpr(Precise && !Group128){
 #pragma unroll

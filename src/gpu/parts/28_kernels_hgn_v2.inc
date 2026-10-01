@@ -96,6 +96,37 @@ __global__ void rotate_fast(const float* x,Out* y,const __half* sign,int cols,bo
     __half hi=__float2half(v);dst[c]=hi;dst[cols+c]=__float2half((v-__half2float(hi))*256.f);
   }else y[i]=Out(v);
 }
+// Independent R12 candidate. Include after exact production had128 definition.
+// Host contract: Dd % 128 == 0, K valid rank entries/token, 256 threads,
+// out is disjoint from pairs/pairids/pw/sign. No change to rank or Had order.
+template<int K>
+__launch_bounds__(256) __global__
+void r12_moe_reduce_inverse_had(const float* __restrict__ pairs,
+                               const int* __restrict__ pairids,
+                               const float* __restrict__ pw,
+                               const __half* __restrict__ sign,
+                               float* __restrict__ out,int P,int Dd) {
+  __shared__ int ids[K];
+  __shared__ float scratch[256];
+  const int tid=threadIdx.x;
+  const int t=blockIdx.y, d=tid+(int)blockIdx.x*blockDim.x;
+  if(t>=P)return; // CTA-uniform; padded half-CTA below still participates.
+  if(tid<K)ids[tid]=pairids[t*K+tid];
+  __syncthreads();
+  const bool live=d<Dd;
+  float sum=0.f;
+  if(live) {
+#pragma unroll
+    for(int s=0;s<K;s++)sum+=pw[ids[s]]*pairs[(size_t)ids[s]*Dd+d];
+  }
+  // Exactly the inverse branch of rotate_fast<float,false>: the rank sum
+  // is already FP32. Both 128-thread groups execute every block barrier.
+  const int j=tid&127;
+  float v=sum*1.f;
+  v=hgnv2gpu::had128(v,scratch+(tid>>7)*128,j);
+  if(live)out[(size_t)t*Dd+d]=v*__half2float(sign[d]);
+}
+
 // Gate/up accumulators are still in the rotated basis. Invert both, apply
 // SiLU in the original basis, then rotate for down. The only F16 rounding
 // for Out=half is the down GEMM input; transforms and activation remain FP32.

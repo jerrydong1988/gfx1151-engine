@@ -122,6 +122,8 @@ The subsequent kernel work and its numerical limits are recorded in
 `HGN_V2_EXACT_OPTIMIZATION.md`.
 Group-scale matrix kernels and their separate numerical/behavioral tests are
 recorded in `HGN_V2_GROUPED_OPTIMIZATION.md`.
+The subsequent R1-R13 implementation and bounded R14 tool-task results are
+summarized in the [Windows v2 research checkpoint](WINDOWS_V2_RESEARCH_CHECKPOINT.md).
 Linux execution, long context, concurrent requests and quality/performance
 parity require separate evidence.
 

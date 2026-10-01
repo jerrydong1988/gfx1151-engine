@@ -7,6 +7,207 @@ struct KvOverflow : std::runtime_error {
 };
 
 struct GpuModel {
+
+  // Diagnostic-only, serve prompt / one slot. Timings are same-stream intervals,
+  // not pure kernel busy time: host submission gaps and pre-existing waits may
+  // be included. Child stages overlap their parent and must not be summed twice.
+  // Allocate timing events before the chunk's first marker, never per operator.
+  struct PrefillGpuProfile {
+    enum Stage {
+      Chunk, Embed, Ple, PleWait, PleDevice, Gr, Gdn, Qsa, QsaIndexPrep, QsaGather,
+      QsaScoreSelect, QsaFlash, Moe, RouterTopk, RouterGroup, V2Compute,
+      SharedExpert, Head, Tap, Handoff,
+      GdnInput, GdnPrep, GdnCore, GdnNorm, GdnOut,
+      GrScatterNormInject, GrMixDown, GrActCast, GrMixUp,
+      ExpertRotateIn, ExpertGu, ExpertActivation, ExpertDown, ExpertReduce, ExpertRotateOut, ExpertReduceRotate, ExpertGuActivation, Count
+    };
+    struct Record {
+      hipEvent_t start = nullptr, stop = nullptr;
+      Stage stage = Chunk;
+      std::chrono::steady_clock::time_point host_start;
+      double host_ms = 0;
+      bool closed = false;
+    };
+    std::vector<Record> records;
+    size_t used = 0;
+    hipStream_t stream = nullptr;
+    void init(size_t capacity, hipStream_t st) {
+      stream = st;
+      records.resize(capacity);
+      for (auto& r : records) {
+        CK(hipEventCreate(&r.start));
+        CK(hipEventCreate(&r.stop));
+      }
+    }
+    ~PrefillGpuProfile() noexcept {
+      for (auto& r : records) {
+        if (r.start) (void)hipEventDestroy(r.start);
+        if (r.stop) (void)hipEventDestroy(r.stop);
+      }
+    }
+    size_t begin(Stage stage) {
+      if (used == records.size())
+        throw std::runtime_error("prefill profile event capacity exceeded");
+      const size_t id = used++;
+      Record& r = records[id];
+      r.stage = stage;
+      r.host_start = std::chrono::steady_clock::now();
+      CK(hipEventRecord(r.start, stream));
+      return id;
+    }
+    void end(size_t id) noexcept {
+      Record& r = records[id];
+      if (r.closed) return;
+      CK(hipEventRecord(r.stop, stream));
+      r.host_ms = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - r.host_start).count();
+      r.closed = true;
+    }
+    PrefillGpuProfile() = default;
+    PrefillGpuProfile(const PrefillGpuProfile&) = delete;
+    PrefillGpuProfile& operator=(const PrefillGpuProfile&) = delete;
+  };
+  PrefillGpuProfile* prefill_profile_ = nullptr;  // valid only inside one chunk
+  struct PrefillProfileSpan {
+    PrefillGpuProfile* owner;
+    size_t id = 0;
+    PrefillProfileSpan(PrefillGpuProfile* p, PrefillGpuProfile::Stage stage)
+        : owner(p) { if (owner) id = owner->begin(stage); }
+    void stop() noexcept { if (owner) { owner->end(id); owner = nullptr; } }
+    ~PrefillProfileSpan() noexcept { stop(); }
+    PrefillProfileSpan(const PrefillProfileSpan&) = delete;
+    PrefillProfileSpan& operator=(const PrefillProfileSpan&) = delete;
+  };
+  static bool prefill_profile_enabled() {
+    static const bool enabled = [] {
+      const char* e = getenv("GDEC_PREFILL_PROFILE");
+      return e && !strcmp(e, "1");
+    }();
+    return enabled;
+  }
+  // Requires the parent prompt profiler; no events when either flag is off.
+  static bool prefill_gdn_profile_enabled() {
+    static const bool enabled = [] {
+      const char* e = getenv("GDEC_GDN_PROFILE");
+      return e && !strcmp(e, "1");
+    }();
+    return enabled;
+  }
+  static bool prefill_gr_profile_enabled() {
+    static const bool enabled = [] {
+      const char* e = getenv("GDEC_GR_PROFILE");
+      return e && !strcmp(e, "1");
+    }();
+    return enabled;
+  }
+  static bool prefill_expert_profile_enabled() {
+    static const bool enabled = [] {
+      const char* e = getenv("GDEC_EXPERT_PROFILE");
+      return e && !strcmp(e, "1");
+    }();
+    return enabled;
+  }
+  struct PrefillChunkProfile {
+    GpuModel& m;
+    PrefillGpuProfile owner;
+    PrefillGpuProfile* previous = nullptr;
+    bool active = false, reported = false;
+    int base, rows;
+    size_t total = 0;
+    double setup_ms = 0;
+    double ple_prepare_ms = -1, ple_join_ms = -1;
+    PrefillChunkProfile(GpuModel& model, int b, int p, bool final)
+        : m(model), base(b), rows(p) {
+      if (!prefill_profile_enabled() || !final || m.prog_total <= 0 ||
+          m.nslots != 1 || m.spec_snap || m.spec_fp32_active ||
+          m.ngram_verify_active || m.prefill_profile_) return;
+      const auto setup = std::chrono::steady_clock::now();
+      // A fixed number of scopes per layer, never one per token/expert/block.
+      // Worst-case extra scopes per layer; allocate before all timing.
+      const size_t per_layer = 12 + (prefill_gdn_profile_enabled() ? 5 : 0) +
+          (prefill_gr_profile_enabled() ? 12 : 0) +
+          (prefill_expert_profile_enabled() ? 6 : 0);
+      // Two extra PLE intervals in addition to the parent fixed slack.
+      owner.init((size_t)g_cfg.layers * per_layer + 34, g_str);
+      setup_ms = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - setup).count();
+      previous = m.prefill_profile_;
+      m.prefill_profile_ = &owner;
+      active = true;
+      total = owner.begin(PrefillGpuProfile::Chunk);
+    }
+    void close_gpu_span() noexcept { if (active) owner.end(total); }
+    // Must run after the existing chunk readback OR equivalent completion
+    // barrier (e.g. an intermediate-head omission). Never adds a synchronization.
+    void report_after_existing_sync() {
+      if (!active) return;
+      const double wall_ms = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - owner.records[total].host_start).count();
+      double gpu[PrefillGpuProfile::Count] = {}, host[PrefillGpuProfile::Count] = {};
+      unsigned calls[PrefillGpuProfile::Count] = {};
+      unsigned invalid = 0;
+      for (size_t i = 0; i < owner.used; ++i) {
+        const auto& r = owner.records[i];
+        // A changed caller must not accidentally turn this into an extra wait.
+        if (!r.closed || hipEventQuery(r.stop) != hipSuccess) { ++invalid; continue; }
+        float ms = 0;
+        if (hipEventElapsedTime(&ms, r.start, r.stop) != hipSuccess) { ++invalid; continue; }
+        gpu[r.stage] += ms;
+        host[r.stage] += r.host_ms;
+        ++calls[r.stage];
+      }
+      static const char* names[PrefillGpuProfile::Count] = {
+        "chunk", "embed", "ple", "ple_wait", "ple_device", "gr", "attention_gdn", "attention_qsa",
+        "qsa_index_prep", "qsa_gather", "qsa_score_select", "qsa_flash",
+        "moe_inclusive", "router_logits_topk", "v2_router_group", "v2_wmma_compute",
+        "shared_expert", "lm_head", "mtp_tap", "state_handoff",
+        "gdn_input_proj", "gdn_conv_norm_gates", "gdn_recurrence",
+        "gdn_gatednorm", "gdn_output_proj",
+        "gr_scatter_norm_inject", "gr_mix_down", "gr_activation_cast", "gr_mix_up",
+        "expert_rotate_in", "expert_gu", "expert_activation_rotate",
+        "expert_down", "expert_reduce", "expert_rotate_out", "expert_reduce_rotate", "expert_gu_activation"
+      };
+      fprintf(stderr, "[prefill-prof] req=%lld base=%d P=%d tail_begin=%d "
+              "tap=%d bf16=%d slots=%d cpu_wall_ms=%.6f event_setup_ms=%.6f "
+              "spans=%zu invalid=%u ple_prepare_ms=%.6f ple_join_ms=%.6f diagnostics_only=1\n",
+              (long long)m.prog_req, base, rows, m.mtp_tail_begin,
+              (int)(m.mtp_tap_capture && base >= m.mtp_tail_begin),
+              (int)m.batch_bf16(), m.nslots, wall_ms, setup_ms, owner.used, invalid,
+              ple_prepare_ms, ple_join_ms);
+      if (prefill_gdn_profile_enabled()) {
+        const char* core = m.gdn_loop ? "loop" : m.gdn_nosplit ? "chunk_fp32" :
+                           m.gdn_fused ? "fused" : m.gdn_pipe2 ? "split_pipe2" : "split_fp32";
+        fprintf(stderr, "[gdn-prof-config] req=%lld base=%d P=%d core=%s "
+                "fused=%d nosplit=%d stream=%d pipe=%d pipe2=%d wave=%d window_chunks=%d "
+                "diagnostics_only=1\n",
+                (long long)m.prog_req, base, rows, core, (int)m.gdn_fused,
+                (int)m.gdn_nosplit, (int)m.gdn_stream, (int)m.gdn_pipe,
+                (int)m.gdn_pipe2, (int)m.gdn_wave, m.gdn_window_chunks);
+      }
+      for (int s = 0; s < PrefillGpuProfile::Count; ++s)
+        if (calls[s])
+          fprintf(stderr, "[%s] req=%lld base=%d P=%d stage=%s "
+                  "calls=%u gpu_interval_ms=%.6f host_scope_ms=%.6f\n",
+                  s >= PrefillGpuProfile::ExpertRotateIn ? "expert-prof-stage" :
+                  s >= PrefillGpuProfile::GrScatterNormInject ? "gr-prof-stage" :
+                  s >= PrefillGpuProfile::GdnInput ? "gdn-prof-stage" : "prefill-prof-stage",
+                  (long long)m.prog_req, base, rows, names[s], calls[s], gpu[s], host[s]);
+      reported = true;
+    }
+    ~PrefillChunkProfile() noexcept {
+      if (!active) return;
+      m.prefill_profile_ = previous;
+      if (!reported)
+        fprintf(stderr, "[prefill-prof] req=%lld base=%d P=%d aborted=1 "
+                        "spans=%zu diagnostics_only=1\n",
+                (long long)m.prog_req, base, rows, owner.used);
+      // owner destroys all successfully created events on normal and C++
+      // exception exits. No forced stream/device synchronization is added.
+    }
+    PrefillChunkProfile(const PrefillChunkProfile&) = delete;
+    PrefillChunkProfile& operator=(const PrefillChunkProfile&) = delete;
+  };
+
   const Checkpoint& ckpt;
   bool ple_on = true;
   int maxctx;
@@ -45,6 +246,7 @@ struct GpuModel {
   uint16_t *d_vcbt = nullptr;  // optional BF16 V cache: [block][kvh][dim][slot]
   float *d_qg, *d_qs, *d_gs, *d_kb, *d_vb, *d_attn;
   float *d_pacc = nullptr, *d_pml = nullptr;  // QSA decode flash-decoding partials
+  int qsa_split_rows = 1;  // partial scratch rows; legacy decode uses row zero
   float *d_iproj = nullptr, *d_iq = nullptr, *d_ik = nullptr;
   float *d_iraw = nullptr, *d_inorm = nullptr, *d_iscores = nullptr;
   float* d_iw = nullptr;
@@ -56,6 +258,9 @@ struct GpuModel {
   // GDEC_INDEX_SCORE64=0 -> old k_index_scores_tiled; GDEC_INDEX_SEL2P=0 ->
   // old selector for n > 8192 (stream / rocPRIM per GDEC_INDEX_STREAM_SELECT).
   bool index_score64 = !env_zero("GDEC_INDEX_SCORE64");
+  // Opt-in only: regular big-prefill score64 reads physical keys directly.
+  bool index_score_paged = getenv("GDEC_INDEX_SCORE_PAGED") &&
+                           !strcmp(getenv("GDEC_INDEX_SCORE_PAGED"), "1");
   bool index_sel2p = !env_zero("GDEC_INDEX_SEL2P");
   static bool env_zero(const char* k) {
     const char* v = getenv(k);
@@ -105,6 +310,18 @@ struct GpuModel {
   void yield_point() {
     if (yield_fn) yield_fn(*this);
   }
+  void spec_round_yield(int max_rows) {
+    yield_point();
+    // A large verifier cannot borrow the small workspace. Requeue before
+    // saving any shared checkpoint, not later inside prefill_batch().
+    while (spec_fp32_active && g_borrow_light && max_rows > conc_rmax_) {
+      if (!borrow_skip_fn) throw std::runtime_error("aligned verify cannot borrow this workspace");
+      if (getenv("GDEC_SPEC_TRACE") && !env_zero("GDEC_SPEC_TRACE"))
+        fprintf(stderr, "[spec-early-yield] slot=%d rows=%d rmax=%d\n",
+                bound_, max_rows, conc_rmax_);
+      borrow_skip_fn(*this);
+    }
+  }
   // D1b mid-chunk GPU lending (serve mode, nslots > 1): while a long prompt
   // chunk is enqueued layer by layer, queued decode workers may borrow the
   // GPU for light rounds (chunks of at most conc_rmax_ rows) running on a
@@ -150,6 +367,28 @@ struct GpuModel {
   bool prefill_fused = getenv("GDEC_PREFILL_UNFUSED") == nullptr;
   bool gr_bf16 = getenv("GDEC_GR_BF16") != nullptr && prefill_fused;
   bool gr_scatter_norm = getenv("GDEC_GR_SCATTER_NORM") != nullptr || gr_bf16;
+  // Immutable policy plus a slot-local execution override. A yielding request
+  // must never change the configured layout seen by another sequence.
+  bool spec_precision_aligned = [] {
+    const char* mode = getenv("GDEC_SPEC_PRECISION");
+    if (!mode || !*mode || strcmp(mode, "legacy") == 0) return false;
+    if (strcmp(mode, "aligned") == 0) return true;
+    throw std::runtime_error("GDEC_SPEC_PRECISION must be legacy or aligned");
+  }();
+  // Opt-in numerical repair: generic BF16 MR retains the serial per-lane
+  // accumulator chain. Legacy policy and ordinary prefill keep their kernels.
+  bool spec_serial_order_mr = [] {
+    const char* e = getenv("GDEC_SPEC_SERIAL_ORDER_MR");
+    return e && strcmp(e, "1") == 0;
+  }();
+  bool spec_fp32_active = false;
+  bool spec_qsa_batch = getenv("GDEC_SPEC_QSA_BATCH") &&
+                        !env_zero("GDEC_SPEC_QSA_BATCH");
+  bool batch_bf16() const { return gr_bf16 && !spec_fp32_active; }
+  bool aligned_spec_active() const { return spec_precision_aligned && spec_fp32_active; }
+  bool serial_order_mr_active() const {
+    return aligned_spec_active() && spec_serial_order_mr;
+  }
   // Independent of GDEC_QSA_DENSE: dense used to force atomic MoE (and so lose
   // MoE_LT), which made it 2x slower in MoE and not a clean attention-only A/B.
   bool moe_deterministic = getenv("GDEC_MOE_ATOMIC") == nullptr;
@@ -180,6 +419,7 @@ struct GpuModel {
                           Dl = nullptr;
   };
   std::unordered_map<uint64_t, LtEntry> lt_algos;
+#include "41_mtp_branch_strided.inc"
   int* d_posarr;   // [maxctx] d_posarr[i] = i
   int* d_ringarr;  // [maxctx] d_ringarr[i] = i % 9
   int* d_tokarr;   // [maxctx] prefill token ids
@@ -314,6 +554,11 @@ struct GpuModel {
   int mtp_norm_mode = 0;       // 0 = full-10240 RMSNorm (H1), 1 = 4x2560 (H2)
   int mtp_hagg_mode = 0;       // 0 = sum branches + repeat4, 1 = per-branch + bcast e
   int mtp_pos = 0;             // host mirror of the MTP stream position
+  // Opt-in serve-only cold-request experiment. [begin, mtp_pos) is the
+  // initialized MTP range; target KV/positions still cover the entire prompt.
+  // begin is fixed for the request (this is not a sliding-window cache).
+  int mtp_tail_begin = 0;
+  int mtp_tail_prompt_end = 0;  // N-1, final prompt row is consumed by mtp_step
   float* d_mR = nullptr;       // MTP hyper stream (10240)
   float* d_mRhat = nullptr;    // MTP normed stream (10240)
   float* d_mh = nullptr;       // input h-path accumulator (2560)
@@ -422,6 +667,22 @@ struct GpuModel {
   }();
 
   explicit GpuModel(const Checkpoint& c, int mc) : ckpt(c), maxctx(mc) {
+    if (spec_precision_aligned) {
+      // GDN_LOOP omits speculative snapshots; QSA_LOOP bypasses the serial
+      // split-attention path. Small-MoE ablations change arithmetic with P.
+      if (getenv("GDEC_GDN_LOOP"))
+        throw std::runtime_error("aligned precision is incompatible with GDEC_GDN_LOOP");
+      if (getenv("GDEC_QSA_LOOP"))
+        throw std::runtime_error("aligned precision is incompatible with GDEC_QSA_LOOP");
+      for (const char* name : {"GDEC_V2_SMALL_EXACT", "GDEC_V2_SMALL_DOT_EXACT",
+                               "GDEC_V2_SMALL_ORDERED"})
+        if (getenv(name) && !env_zero(name))
+          throw std::runtime_error(std::string("aligned precision is incompatible with ") + name);
+    }
+    fprintf(stderr, "gdec: speculative precision %s (policy v2)\n",
+            spec_precision_aligned ? "aligned" : "legacy");
+    if (spec_precision_aligned && spec_serial_order_mr)
+      fprintf(stderr, "gdec: aligned BF16 MR serial accumulator order enabled\n");
     // Prefill workspace is sized by maxbatch, NOT maxctx: long prompts are
     // processed in maxbatch-token chunks via the same continuation path as
     // KV reuse, so a 256K context costs chunk-sized workspace (~4.5 GB at
@@ -538,8 +799,10 @@ struct GpuModel {
     DALLOC(&d_kb, 512 * 4);
     DALLOC(&d_vb, 512 * 4);
     DALLOC(&d_attn, 24 * 256 * 4);
-    DALLOC(&d_pacc, (size_t)2 * QSA_DEC_NSPLIT * 12 * 256 * 4);
-    DALLOC(&d_pml, (size_t)2 * QSA_DEC_NSPLIT * 12 * 2 * 4);
+    if (spec_precision_aligned && spec_qsa_batch)
+      qsa_split_rows = std::max(1, std::min(65, maxbatch_cap));
+    DALLOC(&d_pacc, (size_t)qsa_split_rows * 2 * QSA_DEC_NSPLIT * 12 * 256 * 4);
+    DALLOC(&d_pml, (size_t)qsa_split_rows * 2 * QSA_DEC_NSPLIT * 12 * 2 * 4);
     DALLOC(&d_router, 512 * 4);
     DALLOC(&d_topids, 16 * 4);
     DALLOC(&d_topw, 16 * 4);
@@ -812,7 +1075,7 @@ struct GpuModel {
     if (ckpt.find("mtp.fc_hidden.weight")) {
       // moe_lt is compatible: it only activates at P >= moe_lt_min (4096) in
       // the trunk batch MoE, while MTP draft/ingest/verify run their own
-      // fixed kernels at P <= gamma+1 <= 9. gr_bf16 taps are converted
+      // fixed kernels at P <= gamma+1 <= 9. batch_bf16() taps are converted
       // bf16->f32 at capture/rollback/ingest (see spec_taps/restore_dR_row).
       bool moe_default = mtp_moe_default();
       if (!moe_default) {
@@ -885,7 +1148,14 @@ struct GpuModel {
   }
 
   ~GpuModel() {
+    if (ple_lookahead_host_) {
+      // No batch-local job can outlive its caller/model. Shutdown only: drain
+      // possible device reads before releasing the lazily allocated buffer.
+      CK(hipStreamSynchronize(g_str));
+      CK(hipHostFree(ple_lookahead_host_));
+    }
     if (rbh) rocblas_destroy_handle(rbh);
+    mtp_branch_lt_.clear(); // destroy private descriptors before Lt handle
     if (lth) hipblasLtDestroy(lth);
 #ifndef _WIN32
     // Windows 下 d_Rhatbf16 来自 devarena bump 分配，不能单独 hipFree
@@ -1595,24 +1865,133 @@ struct GpuModel {
     CK(hipMemcpyAsync(y, d_moeacc, g_cfg.d * 4, hipMemcpyDeviceToDevice, g_str));
   }
 
+  // Exact values only: 1 retains R12b BN32; 2 selects R12c BN64.
+  // Missing, zero, or invalid values keep the unfused path and cache identity.
+  static int v2_moe_fused_gu_mode() {
+    static const int mode = [] {
+      const char* value = getenv("GDEC_V2_MOE_FUSED_GU");
+      if (value && !strcmp(value, "1")) return 1;
+      if (value && !strcmp(value, "2")) return 2;
+      return 0;
+    }();
+    return mode;
+  }
+
+  static bool v2_moe_reduce_had_enabled() {
+    static const bool enabled = [] {
+      const char* value = getenv("GDEC_V2_MOE_REDUCE_HAD");
+      return value && !strcmp(value, "1");
+    }();
+    return enabled;
+  }
+
+  static bool v2_moe_lds_sync_enabled() {
+    static const bool enabled = [] {
+      const char* value = getenv("GDEC_V2_MOE_LDS_SYNC");
+      return value && value[0] == '1' && value[1] == '\0';
+    }();
+    return enabled;
+  }
+
+  static bool v2_moe_defer_scale_enabled() {
+    static const bool enabled = [] {
+      const char* value = getenv("GDEC_V2_MOE_DEFER_SCALE");
+      return value && value[0] == '1' && value[1] == '\0';
+    }();
+    return enabled;
+  }
+
+  static bool v2_moe_permute_q4_enabled() {
+    static const bool enabled = [] {
+      const char* value = getenv("GDEC_V2_MOE_PERMUTE_Q4");
+      return value && value[0] == '1' && value[1] == '\0';
+    }();
+    return enabled;
+  }
+
   // Batched matrix-core path. Quantized planes stay in their original format.
-  template<bool Precise, int BN, bool Group128=false>
+  template<bool Precise, int BN, bool Group128=false, bool LdsSync=false,
+           bool DeferredScale=false, bool PermuteQ4=false>
   void moe_v2_wmma(const WView& gu, const WView& dn, const float* x,
                    float* out, int P, int nt) {
+    PrefillProfileSpan profile_experts(prefill_profile_, PrefillGpuProfile::V2Compute);
+    PrefillGpuProfile* expert_profile = prefill_profile_ && prefill_expert_profile_enabled()
+        ? prefill_profile_ : nullptr;
     const int d=g_cfg.d, mid=g_cfg.moe_mid, k=g_cfg.topk;
     moelut::LutW a{},b{};
     a.w=gu.data;a.sc=gu.data+gu.rows*gu.cols/2;a.sstride=d/128*2;a.e_rows=2*mid;
     b.w=dn.data;b.sc=dn.data+dn.rows*dn.cols/2;b.sstride=mid/128*2;b.e_rows=d;
     using Act=std::conditional_t<Precise,float,__half>;
     Act* xr=(Act*)d_xbf16b;Act* hr=(Act*)d_hidb;
+    { PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertRotateIn);
     hgnv2gpu::rotate_fast<Act,Group128 && Precise><<<dim3(d/128,P),128,0,g_str>>>(x,xr,gu.su,d,false);
-    k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group128><<<dim3(2*mid/128,nt,64/BN),256,0,g_str>>>(
+    }
+    if (Precise && Group128 && !aligned_spec_active() && P > 16 && k == 10 &&
+        mid % 128 == 0 && d % 128 == 0 && v2_moe_fused_gu_mode() != 0) {
+      if (v2_moe_fused_gu_mode() == 2) {
+        static const bool noted = [] {
+          fprintf(stderr, "[v2-moe] experimental grouped GU/activation BN64 fusion active (mode=2)\n");
+          return true;
+        }();
+        (void)noted;
+        // The common router always emits <=64-slot tiles. GU consumes each
+        // tile once; the unchanged down kernel may split it into BN32 halves.
+        PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertGuActivation);
+        r12guv3::k_v2_fused_gu_rotate_r12<LdsSync,DeferredScale,PermuteQ4><<<dim3(mid/128,nt),512,0,g_str>>>(
+            a,(const __half*)xr,d_tokidx,d_moetiles,d_moentiles,(__half*)hr,gu.sv,dn.su,mid,d);
+      } else {
+      static const bool noted = [] {
+        fprintf(stderr, "[v2-moe] experimental grouped GU/activation wave4 fusion active\n");
+        return true;
+      }();
+      (void)noted;
+      PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertGuActivation);
+      k_v2_fused_gu_rotate_r12<LdsSync,DeferredScale,PermuteQ4><<<dim3(mid/128,nt,2),256,0,g_str>>>(
+          a,(const __half*)xr,d_tokidx,d_moetiles,d_moentiles,(__half*)hr,gu.sv,dn.su,mid,d);
+      }
+    } else {
+    { PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertGu);
+    k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group128,LdsSync,DeferredScale,PermuteQ4><<<dim3(2*mid/128,nt,64/BN),256,0,g_str>>>(
         a,xr,d_tokidx,d_moetiles,d_moentiles,d_guvb,nullptr,2*mid,d);
+    }
+    { PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertActivation);
     hgnv2gpu::activate_rotate<Act,Group128 && Precise><<<dim3(mid/128,P*k),128,0,g_str>>>(d_guvb,hr,gu.sv,dn.su,mid);
-    k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group128><<<dim3(d/128,nt,64/BN),256,0,g_str>>>(
+    }
+    }
+    { PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertDown);
+    k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group128,LdsSync,DeferredScale,PermuteQ4><<<dim3(d/128,nt,64/BN),256,0,g_str>>>(
         b,hr,nullptr,d_moetiles,d_moentiles,d_guvb,nullptr,d,mid);
+    }
+    if (Precise && Group128 && !aligned_spec_active() && P > 16 && k == 10 &&
+        d % 128 == 0 && v2_moe_reduce_had_enabled()) {
+      static const bool noted = [] {
+        fprintf(stderr, "[v2-moe] experimental grouped reduce/inverse-Hadamard fusion active\n");
+        return true;
+      }();
+      (void)noted;
+      // Replaces both reference epilogue spans; do not count it twice.
+      PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertReduceRotate);
+      hgnv2gpu::r12_moe_reduce_inverse_had<10><<<dim3((d+255)/256,P),256,0,g_str>>>(
+          d_guvb,d_pairids,d_pweight,dn.sv,out,P,d);
+    } else {
+    { PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertReduce);
     k_moe_reduce_pw<10><<<dim3((d+255)/256,P),256,0,g_str>>>(d_guvb,d_pairids,d_pweight,out,P,d);
+    }
+    { PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertRotateOut);
     hgnv2gpu::rotate_fast<<<dim3(d/128,P),128,0,g_str>>>(out,out,dn.sv,d,true);
+    }
+    }
+  }
+
+  // The byte-unpack experiment is restricted to precise grouped experts.
+  // Keep the scale-prefetch and barrier factors independently selectable.
+  template<int BN, bool LdsSync=false, bool DeferredScale=false>
+  void moe_v2_grouped(const WView& gu, const WView& dn, const float* x,
+                      float* out, int P, int nt) {
+    if (v2_moe_permute_q4_enabled())
+      moe_v2_wmma<true,BN,true,LdsSync,DeferredScale,true>(gu,dn,x,out,P,nt);
+    else
+      moe_v2_wmma<true,BN,true,LdsSync,DeferredScale,false>(gu,dn,x,out,P,nt);
   }
 
   // Default: reuse each expert's weights across eight tokens, preserving the
@@ -1620,6 +1999,16 @@ struct GpuModel {
   // Matrix-core modes explicitly accept different floating-point rounding.
   void moe_v2(const WView& gu,const WView& dn,const float* x,const int* ids,
                const float* weights,float* out,int P,V2MoeMode mode=v2_moe_mode()) {
+    // Opt-in ablations keep the grouped prefill fixed while isolating the
+    // two floating-point reorderings in its small-token decode/verify path.
+    static const bool small_exact = getenv("GDEC_V2_SMALL_EXACT") &&
+                                    !env_zero("GDEC_V2_SMALL_EXACT");
+    static const bool small_dot_exact = getenv("GDEC_V2_SMALL_DOT_EXACT") &&
+                                        !env_zero("GDEC_V2_SMALL_DOT_EXACT");
+    static const bool small_ordered = getenv("GDEC_V2_SMALL_ORDERED") &&
+                                      !env_zero("GDEC_V2_SMALL_ORDERED");
+    const bool small_grouped = mode == V2MoeMode::Grouped && P <= 16;
+    if (small_grouped && small_exact) mode = V2MoeMode::Exact;
     const int d=g_cfg.d,mid=g_cfg.moe_mid,k=g_cfg.topk;
     if(gu.dtype!=23 || dn.dtype!=23 || gu.expert_rows!=uint64_t(2*mid) ||
        dn.expert_rows!=uint64_t(d) || gu.cols!=uint64_t(d) || dn.cols!=uint64_t(mid) ||
@@ -1628,10 +2017,12 @@ struct GpuModel {
       throw std::runtime_error("HGN v2: unsupported expert pair");
     const bool reference=mode==V2MoeMode::Reference || mode==V2MoeMode::Exact;
     const int minbatch=mode==V2MoeMode::Exact?64:16;
-    if(mode!=V2MoeMode::Reference && P>minbatch && P<=maxbatch_cap && k==10 && moe_deterministic &&
+    if(!aligned_spec_active() && mode!=V2MoeMode::Reference && P>minbatch && P<=maxbatch_cap && k==10 && moe_deterministic &&
        !moe_host_route && !moe_ordered && !moe_untiled) {
+      { PrefillProfileSpan profile_route(prefill_profile_, PrefillGpuProfile::RouterGroup);
       moe_routing.run(ids,weights,d_tokidx,d_pweight,d_eoff,d_pairids,P,k,g_cfg.experts);
       k_moe_tiles<<<1,512,0,g_str>>>(d_eoff,d_moetiles,d_moentiles,g_cfg.experts);
+      }
       const int nt=(P*k+63)/64+g_cfg.experts;
       if(mode==V2MoeMode::Exact){
         float* xr=(float*)d_xbf16b;float* hr=d_hidb;
@@ -1647,8 +2038,40 @@ struct GpuModel {
       } else if(mode==V2MoeMode::Grouped) {
         // Narrow tiles reduce padding/register pressure for sparse routes;
         // wider tiles reuse weights better once experts receive many tokens.
-        if(P<6144)moe_v2_wmma<true,32,true>(gu,dn,x,out,P,nt);
-        else moe_v2_wmma<true,64,true>(gu,dn,x,out,P,nt);
+        if (v2_moe_permute_q4_enabled()) {
+          static const bool noted = [] {
+            fprintf(stderr, "[v2-moe] experimental grouped permuted Q4 unpack active\n");
+            return true;
+          }();
+          (void)noted;
+        }
+        if (v2_moe_defer_scale_enabled()) {
+          static const bool noted = [] {
+            fprintf(stderr, "[v2-moe] experimental grouped deferred scale widening active\n");
+            return true;
+          }();
+          (void)noted;
+        }
+        if (v2_moe_lds_sync_enabled()) {
+          static const bool noted = [] {
+            fprintf(stderr, "[v2-moe] experimental grouped LDS-only stage sync active\n");
+            return true;
+          }();
+          (void)noted;
+          if (v2_moe_defer_scale_enabled()) {
+            if(P<6144)moe_v2_grouped<32,true,true>(gu,dn,x,out,P,nt);
+            else moe_v2_grouped<64,true,true>(gu,dn,x,out,P,nt);
+          } else {
+            if(P<6144)moe_v2_grouped<32,true>(gu,dn,x,out,P,nt);
+            else moe_v2_grouped<64,true>(gu,dn,x,out,P,nt);
+          }
+        } else if (v2_moe_defer_scale_enabled()) {
+          if(P<6144)moe_v2_grouped<32,false,true>(gu,dn,x,out,P,nt);
+          else moe_v2_grouped<64,false,true>(gu,dn,x,out,P,nt);
+        } else {
+          if(P<6144)moe_v2_grouped<32>(gu,dn,x,out,P,nt);
+          else moe_v2_grouped<64>(gu,dn,x,out,P,nt);
+        }
       } else if(mode==V2MoeMode::GroupedF16) {
         moe_v2_wmma<false,64,true>(gu,dn,x,out,P,nt);
       } else if(mode==V2MoeMode::Wmma) {
@@ -1675,13 +2098,26 @@ struct GpuModel {
       }
       if(!reference){
         hgnv2gpu::rotate_fast<<<dim3(d/128,n),128,0,g_str>>>(x+(size_t)p*d,d_v2_x,gu.su,d,false);
-        hgnv2gpu::expert_mv_fast<<<dim3((2*mid+7)/8,slots),128,0,g_str>>>(gu.data,
-            (const __half*)(gu.data+gu.rows*gu.cols/2),d_v2_x,d_v2_gu,ids+p*16,d,2*mid,k,slots,false);
+        if(small_grouped && small_dot_exact)
+          hgnv2gpu::expert_mv_exact_packed<<<dim3((2*mid+7)/8,slots),256,0,g_str>>>(gu.data,
+              (const __half*)(gu.data+gu.rows*gu.cols/2),d_v2_x,d_v2_gu,ids+p*16,d,2*mid,k,slots,false);
+        else
+          hgnv2gpu::expert_mv_fast<<<dim3((2*mid+7)/8,slots),128,0,g_str>>>(gu.data,
+              (const __half*)(gu.data+gu.rows*gu.cols/2),d_v2_x,d_v2_gu,ids+p*16,d,2*mid,k,slots,false);
         hgnv2gpu::activate_rotate<<<dim3(mid/128,slots),128,0,g_str>>>(d_v2_gu,d_v2_hid,gu.sv,dn.su,mid);
-        hgnv2gpu::expert_mv_fast<<<dim3((d+7)/8,slots),128,0,g_str>>>(dn.data,
-            (const __half*)(dn.data+dn.rows*dn.cols/2),d_v2_hid,d_v2_pairs,ids+p*16,mid,d,k,slots,true);
-        hgnv2gpu::reduce<<<dim3((d+255)/256,n),256,0,g_str>>>(d_v2_pairs,weights+p*16,out+(size_t)p*d,d,k);
-        hgnv2gpu::rotate_fast<<<dim3(d/128,n),128,0,g_str>>>(out+(size_t)p*d,out+(size_t)p*d,dn.sv,d,true);
+        if(small_grouped && small_dot_exact)
+          hgnv2gpu::expert_mv_exact_packed<<<dim3((d+7)/8,slots),256,0,g_str>>>(dn.data,
+              (const __half*)(dn.data+dn.rows*dn.cols/2),d_v2_hid,d_v2_pairs,ids+p*16,mid,d,k,slots,true);
+        else
+          hgnv2gpu::expert_mv_fast<<<dim3((d+7)/8,slots),128,0,g_str>>>(dn.data,
+              (const __half*)(dn.data+dn.rows*dn.cols/2),d_v2_hid,d_v2_pairs,ids+p*16,mid,d,k,slots,true);
+        if(small_grouped && small_ordered){
+          hgnv2gpu::rotate_fast<<<dim3(d/128,slots),128,0,g_str>>>(d_v2_pairs,d_v2_pairs,dn.sv,d,true);
+          hgnv2gpu::reduce<<<dim3((d+255)/256,n),256,0,g_str>>>(d_v2_pairs,weights+p*16,out+(size_t)p*d,d,k);
+        }else{
+          hgnv2gpu::reduce<<<dim3((d+255)/256,n),256,0,g_str>>>(d_v2_pairs,weights+p*16,out+(size_t)p*d,d,k);
+          hgnv2gpu::rotate_fast<<<dim3(d/128,n),128,0,g_str>>>(out+(size_t)p*d,out+(size_t)p*d,dn.sv,d,true);
+        }
         continue;
       }
       hgnv2gpu::rotate<<<dim3(d/128,n),128,0,g_str>>>(x+(size_t)p*d,d_v2_x,gu.su,d,n,false);
@@ -1903,6 +2339,7 @@ struct GpuModel {
     tock(3, t3);
   }
   void enq_final() {
+    PrefillProfileSpan profile_head(prefill_profile_, PrefillGpuProfile::Head);
     gr_read("hyper_connection_mixer", d_x /*h*/);
     gemv(wview(ckpt.at("lm_head.weight")), d_x, d_logits);
     argmax_rows(d_logits, g_cfg.vocab, 1, d_amx_cand, d_argmax, g_str);
@@ -1952,17 +2389,30 @@ struct GpuModel {
     auto pt0 = std::chrono::steady_clock::now();
     uint64_t N = w.rows, K = w.cols;
     if (!xstride) xstride = K;
+    if (aligned_spec_active() && P > 8) {
+      for (int off=0; off<P; off+=8)
+        gemm(w, x+(size_t)off*xstride, y+(size_t)off*N,
+             std::min(8,P-off), xstride, xbf ? xbf+(size_t)off*K : nullptr);
+      return;
+    }
     // Small P: direct multi-row q4 gemv reads the weight once (~0.56x bytes
     // of the dequant->bf16->LT path's traffic) and skips 3 launches/gemm.
     // xbf inputs are bf16 with row stride K (the LT B layout).
     bool mr_done =
-        xbf ? gemv_multi_q4cp(w, xbf, y, P, K, true)
-            : gemv_multi_q4cp(w, x, y, P, xstride);
+        xbf ? gemv_multi_q4cp(w, xbf, y, P, K, true, serial_order_mr_active())
+            : gemv_multi_q4cp(w, x, y, P, xstride, false, serial_order_mr_active());
     if (mr_done) {
       if (prof)
         p_gemm += std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - pt0)
                       .count();
+      return;
+    }
+    if (aligned_spec_active() && !xbf) {
+      // Unsupported/disabled MR kernels must not silently quantize an aligned
+      // target activation back to BF16. The serial projection is the fallback.
+      for (int row=0; row<P; ++row)
+        gemv(w, x+(size_t)row*xstride, y+(size_t)row*N);
       return;
     }
     static const bool gemm_dbg = getenv("GDEC_GEMM_DBG") != nullptr;
@@ -2239,10 +2689,17 @@ struct GpuModel {
       return false;
     if ((((uintptr_t)d_t320b | (uintptr_t)d_xbf16b) & 15) != 0) return false;
     auto pt0 = std::chrono::steady_clock::now();
+    PrefillGpuProfile* gr_profile = prefill_profile_ && prefill_gr_profile_enabled()
+        ? prefill_profile_ : nullptr;
+    PrefillProfileSpan weights_profile(gr_profile, PrefillGpuProfile::GrMixUp);
     const uint16_t* wp = gemm_wbf16(w);
+    weights_profile.stop();
+    PrefillProfileSpan cast_profile(gr_profile, PrefillGpuProfile::GrActCast);
     const uint64_t tot = (uint64_t)P * K;
     k_f32_to_bf16_v4<<<(unsigned)((tot / 4 + 255) / 256), 256, 0, g_str>>>(
         d_t320b, d_xbf16b, K, P, (int)K);
+    cast_profile.stop();
+    PrefillProfileSpan up_profile(gr_profile, PrefillGpuProfile::GrMixUp);
     // 128x128 w4x2 f2x4 (tools/hcmix_proto.cu tile sweep): the fused epilogue
     // favours the narrower tile — 2.33 vs 2.80 ms at P=8192 (pair 4.92 ms),
     // still bit-identical (K accumulation order is tile-independent).
@@ -2257,22 +2714,30 @@ struct GpuModel {
   }
 
   void gr_mix_b(const std::string& prefix, int P) {
+    PrefillGpuProfile* gr_profile = prefill_profile_ && prefill_gr_profile_enabled()
+        ? prefill_profile_ : nullptr;
+    PrefillProfileSpan down_profile(gr_profile, PrefillGpuProfile::GrMixDown);
     char buf[128];
     snprintf(buf, sizeof buf, "%s.input_mix_weight_down.weight", prefix.c_str());
     gemm(wview(ckpt.at(buf)), d_Rhatb, d_t320b, P, 0,
-         gr_bf16 ? d_Rhatbf16 : nullptr);
+         batch_bf16() ? d_Rhatbf16 : nullptr);
+    down_profile.stop();
+    { PrefillProfileSpan act_profile(gr_profile, PrefillGpuProfile::GrActCast);
     k_silu_scale<<<(P * 320 + 255) / 256, 256, 0, g_str>>>(d_t320b, 0.25f, P * 320);
+    }
     snprintf(buf, sizeof buf, "%s.input_mix_weight_up.weight", prefix.c_str());
     const WView wup = wview(ckpt.at(buf));
-    if (prefill_fused && gr_bf16 && hc_up_fused(wup, P)) {
+    if (prefill_fused && batch_bf16() && hc_up_fused(wup, P)) {
       xf16_src = d_xb;
       xf16_xs = xf16_K = g_cfg.d;
       xf16_P = P;
       return;
     }
+    // Fallback GEMM includes its internal conversion; fused path below splits it.
+    PrefillProfileSpan up_profile(gr_profile, PrefillGpuProfile::GrMixUp);
     gemm(wup, d_t320b, d_Gb, P);
     if (prefill_fused) {
-      if (gr_bf16) {
+      if (batch_bf16()) {
         // verify sizes: 4 column slices over P*4 blocks (per-column arithmetic
         // single-thread, unchanged). GDEC_COMBINE_CS=0 keeps P blocks.
         static const bool comb_cs = !env_zero("GDEC_COMBINE_CS");
@@ -2299,8 +2764,11 @@ struct GpuModel {
   }
 
   void gr_read_b(const std::string& prefix, int P) {
+    PrefillGpuProfile* gr_profile = prefill_profile_ && prefill_gr_profile_enabled()
+        ? prefill_profile_ : nullptr;
+    PrefillProfileSpan scatter_profile(gr_profile, PrefillGpuProfile::GrScatterNormInject);
     float* hw = ensure_hcnorm(prefix);
-    if (gr_bf16)
+    if (batch_bf16())
       k_rmsnorm_zc_grouped_bf16<<<4 * P, 1024, 0, g_str>>>(
           (const uint16_t*)d_Rb, hw, d_Rhatbf16, 2560, g_cfg.norm_eps, 4);
     else if (prefill_fused)
@@ -2311,6 +2779,7 @@ struct GpuModel {
           d_Rb, hw, d_Rhatb, 2560, g_cfg.norm_eps, 4);
     if (xf16_src == d_Rhatb) xf16_src = nullptr;  // d_Rhatb overwritten
     injp_cur = -1;  // new Rhat without inject partials
+    scatter_profile.stop();
     gr_mix_b(prefix, P);
   }
 
@@ -2321,9 +2790,18 @@ struct GpuModel {
   // bit-identical; w4 differs in summation order only (fp32, err/sum|terms|
   // ~1e-8 vs ~1e-7 for any sequential fp32 dot; tools/injfuse_proto.cu).
   // Opt-out GDEC_HC_INJ_FUSE=0 (tools/injfuse_verify.sh: KLD + speed).
+  // R10 opt-in: preserve the norm's exact addition tree while replacing
+  // its last five LDS/full-CTA levels with wave-0 register shuffles.
+  static bool hc_norm_wave_enabled() {
+    static const bool enabled = [] {
+      const char* e = getenv("GDEC_HC_NORM_WAVE");
+      return e && !strcmp(e, "1");
+    }();
+    return enabled;
+  }
   bool inj_fuse_on() const {
     static const bool on = !env_zero("GDEC_HC_INJ_FUSE");
-    return on && gr_bf16 && prefill_fused && !gr_scat4 && g_cfg.d <= 2560 &&
+    return on && batch_bf16() && prefill_fused && !gr_scat4 && g_cfg.d <= 2560 &&
            g_cfg.branches == 4;
   }
   // Private bf16 copy of a site's inject weight (4 x 4d). gemm_wbf16 dequants
@@ -2351,6 +2829,9 @@ struct GpuModel {
   }
 
   void gr_write_b(const std::string& prefix, int P) {
+    PrefillGpuProfile* gr_profile = prefill_profile_ && prefill_gr_profile_enabled()
+        ? prefill_profile_ : nullptr;
+    PrefillProfileSpan scatter_profile(gr_profile, PrefillGpuProfile::GrScatterNormInject);
     char buf[128];
     if (injp_cur >= 0 && injp_for == prefix) {
       k_inj_psum<<<(P * 4 + 255) / 256, 256, 0, g_str>>>(d_injp[injp_cur], d_w4b, P);
@@ -2358,9 +2839,9 @@ struct GpuModel {
     } else {
       snprintf(buf, sizeof buf, "%s.block_inject_weight.weight", prefix.c_str());
       gemm(wview(ckpt.at(buf)), d_Rhatb, d_w4b, P, 0,
-           gr_bf16 ? d_Rhatbf16 : nullptr);
+           batch_bf16() ? d_Rhatbf16 : nullptr);
     }
-    if (gr_bf16)
+    if (batch_bf16())
       k_gr_write_b_hc_bf16<<<(P * 2560 + 255) / 256, 256, 0, g_str>>>(
           d_w4b, (uint16_t*)d_Rb, d_yb, g_cfg.d, g_cfg.branches, P);
     else
@@ -2370,13 +2851,16 @@ struct GpuModel {
 
   void gr_write_read_b(const std::string& write_prefix,
                        const std::string& read_prefix, int P) {
+    PrefillGpuProfile* gr_profile = prefill_profile_ && prefill_gr_profile_enabled()
+        ? prefill_profile_ : nullptr;
+    PrefillProfileSpan scatter_profile(gr_profile, PrefillGpuProfile::GrScatterNormInject);
     char buf[128];
     const bool have_p = injp_cur >= 0 && injp_for == write_prefix;
     if (!have_p) {
       snprintf(buf, sizeof buf, "%s.block_inject_weight.weight",
                write_prefix.c_str());
       gemm(wview(ckpt.at(buf)), d_Rhatb, d_w4b, P, 0,
-           gr_bf16 ? d_Rhatbf16 : nullptr);
+           batch_bf16() ? d_Rhatbf16 : nullptr);
     }
     float* hw = ensure_hcnorm(read_prefix);
     const uint16_t* wn = inj_fuse_on() ? inj_wbf16(read_prefix) : nullptr;
@@ -2390,19 +2874,37 @@ struct GpuModel {
       // Per-(t,b) arithmetic is T-invariant (proto: R/Rhat bit-identical), the
       // 4-token serial loop was pure latency at 4 blocks. GDEC_SCAT_T1=0: T=4.
       static const bool scat_t1 = !env_zero("GDEC_SCAT_T1");
-      if (scat_t1 && P <= 8)
-        k_gr_scatter_norm_inj_bf16<1><<<4 * P, 256, 0, g_str>>>(
-            have_p ? nullptr : d_w4b, have_p ? d_injp[injp_cur] : nullptr,
-            (uint16_t*)d_Rb, d_yb, hw, d_Rhatbf16, wn, d_injp[nxt], g_cfg.d, P,
-            g_cfg.norm_eps);
-      else
-        k_gr_scatter_norm_inj_bf16<4><<<4 * ((P + 3) / 4), 256, 0, g_str>>>(
-            have_p ? nullptr : d_w4b, have_p ? d_injp[injp_cur] : nullptr,
-            (uint16_t*)d_Rb, d_yb, hw, d_Rhatbf16, wn, d_injp[nxt], g_cfg.d, P,
-            g_cfg.norm_eps);
+      if (hc_norm_wave_enabled()) {
+        static const bool noted = [] {
+          fprintf(stderr, "[hc-norm-wave] exact-tree wave reduction active\n");
+          return true;
+        }();
+        (void)noted;
+        if (scat_t1 && P <= 8)
+          k_gr_scatter_norm_inj_bf16<1, true><<<4 * P, 256, 0, g_str>>>(
+              have_p ? nullptr : d_w4b, have_p ? d_injp[injp_cur] : nullptr,
+              (uint16_t*)d_Rb, d_yb, hw, d_Rhatbf16, wn, d_injp[nxt], g_cfg.d, P,
+              g_cfg.norm_eps);
+        else
+          k_gr_scatter_norm_inj_bf16<4, true><<<4 * ((P + 3) / 4), 256, 0, g_str>>>(
+              have_p ? nullptr : d_w4b, have_p ? d_injp[injp_cur] : nullptr,
+              (uint16_t*)d_Rb, d_yb, hw, d_Rhatbf16, wn, d_injp[nxt], g_cfg.d, P,
+              g_cfg.norm_eps);
+      } else {
+        if (scat_t1 && P <= 8)
+          k_gr_scatter_norm_inj_bf16<1><<<4 * P, 256, 0, g_str>>>(
+              have_p ? nullptr : d_w4b, have_p ? d_injp[injp_cur] : nullptr,
+              (uint16_t*)d_Rb, d_yb, hw, d_Rhatbf16, wn, d_injp[nxt], g_cfg.d, P,
+              g_cfg.norm_eps);
+        else
+          k_gr_scatter_norm_inj_bf16<4><<<4 * ((P + 3) / 4), 256, 0, g_str>>>(
+              have_p ? nullptr : d_w4b, have_p ? d_injp[injp_cur] : nullptr,
+              (uint16_t*)d_Rb, d_yb, hw, d_Rhatbf16, wn, d_injp[nxt], g_cfg.d, P,
+              g_cfg.norm_eps);
+      }
       injp_cur = nxt;
       injp_for = read_prefix;
-    } else if (gr_bf16)
+    } else if (batch_bf16())
       if (gr_scat4 && g_cfg.d <= 2560)
         k_gr_scatter_norm_b_hc_bf16_f4<<<P, 256, 0, g_str>>>(
             d_w4b, (uint16_t*)d_Rb, d_yb, hw, d_Rhatbf16, g_cfg.d,
@@ -2421,6 +2923,7 @@ struct GpuModel {
           g_cfg.norm_eps);
     if (!wn) injp_cur = -1;
     if (xf16_src == d_Rhatb) xf16_src = nullptr;
+    scatter_profile.stop();
     gr_mix_b(read_prefix, P);
   }
 
@@ -2428,6 +2931,9 @@ struct GpuModel {
   // k_gdn_chunk (chunk=64, fp32) advances S and writes all outputs at once.
   // GDEC_GDN_LOOP=1 falls back to the per-token recurrence loop.
   void gdn_b(int l, int gi, int P) {
+    PrefillGpuProfile* gdn_profile = prefill_profile_ && prefill_gdn_profile_enabled()
+        ? prefill_profile_ : nullptr;
+    PrefillProfileSpan input_profile(gdn_profile, PrefillGpuProfile::GdnInput);
     char buf[128];
     snprintf(buf, sizeof buf, "layers.%d.linear_attn.in_proj_qkv.weight", l);
     gemm(wview(ckpt.at(buf)), d_xb, d_qkvb, P);
@@ -2437,6 +2943,7 @@ struct GpuModel {
     gemm(wview(ckpt.at(buf)), d_xb, d_beta48b, P);
     snprintf(buf, sizeof buf, "layers.%d.linear_attn.in_proj_z.weight", l);
     gemm(wview(ckpt.at(buf)), d_xb, d_zb, P);
+    input_profile.stop();
     float* convst = d_convst + (size_t)gi * 3 * 10240;
     const float* cw = d_convw + (size_t)gi * 10240 * 4;
     const float* Alog = d_Alog + (size_t)gi * 48;
@@ -2445,12 +2952,20 @@ struct GpuModel {
     const float* gnw = d_gdnnorm + (size_t)gi * 128;
     float qscale = 1.f / sqrtf(128.f);
     if (!gdn_loop) {
+      { PrefillProfileSpan prep_profile(gdn_profile, PrefillGpuProfile::GdnPrep);
       // conv+silu and the q/k l2norm in one pass (k_gdn_conv_l2n_b, bit-exact
       // vs the pair, tools/convl2_verify.sh); opt-out GDEC_GDN_CONVL2=0.
       static const bool convl2 = !env_zero("GDEC_GDN_CONVL2");
-      const bool cl2 = convl2 && P <= 65535;
+      static const bool spec_conv_exact = getenv("GDEC_SPEC_CONV_EXACT") &&
+                                          !env_zero("GDEC_SPEC_CONV_EXACT");
+      const bool conv_serial_math = (aligned_spec_active() || (spec_snap && spec_conv_exact)) && P <= 65;
+      const bool cl2 = convl2 && P <= 65535 && !conv_serial_math;
       int64_t tot = (int64_t)P * 10240 / 4;  // 4 channels per thread (float4)
-      if (cl2)
+      if (conv_serial_math)
+        k_gdn_conv_b_serial_math<<<(unsigned)(((int64_t)P * 10240 + 255) / 256),
+                                    256, 0, g_str>>>(
+            d_qkvb, cw, convst, d_convb, P, 10240);
+      else if (cl2)
         k_gdn_conv_l2n_b<<<dim3(10, (unsigned)P), 256, 0, g_str>>>(
             d_qkvb, cw, convst, d_convb, P, 10240, 16, qscale);
       else
@@ -2468,13 +2983,18 @@ struct GpuModel {
         k_l2norm_qk_b<<<dim3(16, P), 128, 0, g_str>>>(d_convb, 128, qscale, 10240, 16);
       k_gdn_gates<<<P, 64, 0, g_str>>>(d_g48b, d_beta48b, Alog, dtb, d_g48b, d_beta48b,
                                        48, 48);
+      }
+      { PrefillProfileSpan core_profile(gdn_profile, PrefillGpuProfile::GdnCore);
       if (spec_snap) {
         int ngdn = g_cfg.layers - g_cfg.layers / 4;
         k_gdn_snap<<<48, 512, 0, g_str>>>(
             d_convb, d_g48b, d_beta48b, S, d_Ssnap + (size_t)gi * 48 * 128 * 128,
             P, 10240, (size_t)ngdn * 48 * 128 * 128);
       }
-      if (ngram_verify_active && !ngram_legacy_gdn && P <= 65) {
+      static const bool spec_gdn_exact = getenv("GDEC_SPEC_GDN_EXACT") &&
+                                         !env_zero("GDEC_SPEC_GDN_EXACT");
+      if (((ngram_verify_active && !ngram_legacy_gdn) ||
+           aligned_spec_active() || (spec_snap && spec_gdn_exact)) && P <= 65) {
         k_gdn_verify<<<48, 512, 0, g_str>>>(
             d_convb, d_g48b, d_beta48b, S, d_convb, P, 10240);
       } else if (gdn_nosplit) {
@@ -2548,9 +3068,25 @@ struct GpuModel {
         }
         if (pipe) CK(hipStreamWaitEvent(g_str, ev_s[lastw & 1], 0));
       }
+      }
+      PrefillProfileSpan norm_profile(gdn_profile, PrefillGpuProfile::GdnNorm);
+      static const bool spec_gdn_fp32 = getenv("GDEC_SPEC_GDN_FP32") &&
+                                        !env_zero("GDEC_SPEC_GDN_FP32");
+      if(aligned_spec_active() || (spec_snap && spec_gdn_fp32)){
+        k_gdn_gatednorm_b<false><<<dim3(48, (P + 31) / 32), 128, 0, g_str>>>(
+            d_convb + 4096, d_zb, gnw, d_qkvb + 4096, g_cfg.norm_eps, 10240, 6144,
+            nullptr, P);
+        norm_profile.stop();
+        PrefillProfileSpan output_profile(gdn_profile, PrefillGpuProfile::GdnOut);
+        snprintf(buf, sizeof buf, "layers.%d.linear_attn.out_proj.weight", l);
+        gemm(wview(ckpt.at(buf)), d_qkvb + 4096, d_yb, P, 10240);
+        return;
+      }
       k_gdn_gatednorm_b<true><<<dim3(48, (P + 31) / 32), 128, 0, g_str>>>(
           d_convb + 4096, d_zb, gnw, nullptr, g_cfg.norm_eps, 10240, 6144,
           d_xbf16b, P);
+      norm_profile.stop();
+      PrefillProfileSpan output_profile(gdn_profile, PrefillGpuProfile::GdnOut);
       snprintf(buf, sizeof buf, "layers.%d.linear_attn.out_proj.weight", l);
       gemm(wview(ckpt.at(buf)), d_convb + 4096, d_yb, P, 10240 /*row stride*/,
            d_xbf16b);
@@ -2614,6 +3150,37 @@ struct GpuModel {
   void qsa_flash_b(const KVT* kc, const KVT* vc, int P, int dense_P, int base = 0,
                    const uint16_t* vc_transposed = nullptr,
                    const int* ptab = nullptr) {
+    PrefillProfileSpan profile_flash(prefill_profile_, PrefillGpuProfile::QsaFlash);
+    if (aligned_spec_active() && !env_zero("GDEC_SPEC_ATTN_SERIAL")) {
+      // Match serial decode's split and FP32 merge, including dense rows.
+      // Covers guarded trunk verification and MTP ingest; prefill stays batched.
+      if (spec_qsa_batch) {
+        for (int off = 0; off < P; off += qsa_split_rows) {
+          const int rows = std::min(qsa_split_rows, P - off);
+          const int* pabs = d_posarr + base + off;
+          float* out = d_attnb + (size_t)off * 6144;
+          k_qsa_flash<true, false, KVT, true, true>
+              <<<dim3(QSA_DEC_NSPLIT, 2, rows), 128, 0, g_str>>>(
+                  d_qsb + (size_t)off * 6144, kc, vc, out, 1, 256, 2, 24,
+                  qsa_dense ? nullptr : d_iselected + (size_t)off * 512, 0,
+                  pabs, d_pacc, d_pml, 0, ptab);
+          k_qsa_flash_combine<true><<<dim3(12, 2, rows), 64, 0, g_str>>>(
+              d_pml, d_pacc, out, 12, 256, pabs);
+        }
+        return;
+      }
+      for (int row = 0; row < P; ++row) {
+        const int* pabs = d_posarr + base + row;
+        float* out = d_attnb + (size_t)row * 6144;
+        k_qsa_flash<true, false, KVT, true><<<dim3(QSA_DEC_NSPLIT, 2), 128, 0, g_str>>>(
+            d_qsb + (size_t)row * 6144, kc, vc, out, 1, 256, 2, 24,
+            qsa_dense ? nullptr : d_iselected + (size_t)row * 512, 0,
+            pabs, d_pacc, d_pml, 0, ptab);
+        k_qsa_flash_combine<<<dim3(12, 2), 64, 0, g_str>>>(
+            d_pml, d_pacc, out, 12, 256, pabs);
+      }
+      return;
+    }
     // ptab (paged KV) is honoured by k_qsa_flash (all KV types) and, for the
     // BF16 cache, by k_qsa_wmma<*, true> (A1c). The union / wmma6 /
     // k_qsa_flash_bf16 paths are not paged: the constructor refuses paging
@@ -2932,6 +3499,11 @@ struct GpuModel {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"  // beta API
   void iproj_sgemm(const float* w, const float* x, float* y, int P) {
+    if (aligned_spec_active() && P > 8) {
+      for (int off=0; off<P; off+=8)
+        iproj_sgemm(w, x+(size_t)off*2560, y+(size_t)off*640, std::min(8,P-off));
+      return;
+    }
     const float one = 1.f, zero = 0.f;
     static const bool plain = getenv("GDEC_IPROJ_SGEMM") != nullptr;
     // decode-P (<=8) multi-row fp32 GEMV in place of rocblas_sgemm's
@@ -3044,12 +3616,17 @@ struct GpuModel {
     char buf[128];
     const uint16_t* attn_bf = nullptr;  // gated o_proj input already in bf16
     if (!qsa_dense) {
+      PrefillProfileSpan profile_index_prep(prefill_profile_, PrefillGpuProfile::QsaIndexPrep);
       // rope cos/sin table for the indexer kernels below (idempotent; the QSA
       // prep path re-ensures the same (base, P) later and hits the cache)
       ensure_rope_tab(g_cfg.rope_theta, 64);
       ensure_rope_cs(base, P);
       snprintf(buf, sizeof buf, "layers.%d.self_attn.indexer.index_qk_proj.weight", l);
-      if (index_f32) {
+      if (aligned_spec_active()) {
+        const WView w = wview(ckpt.at(buf));
+        for (int row=0; row<P; ++row)
+          gemv(w, d_xb+(size_t)row*2560, d_iproj+(size_t)row*640);
+      } else if (index_f32) {
         iproj_sgemm(d_iw + (size_t)qi * 640 * 2560, d_xb, d_iproj, P);
       } else {
         gemm(wview(ckpt.at(buf)), d_xb, d_iproj, P);
@@ -3073,14 +3650,49 @@ struct GpuModel {
       if (spec_snap)
         k_iproj_snap<<<P, 128, 0, g_str>>>(
             d_iproj, d_iproj_snap + (size_t)qi * 9 * 128, P);
-      // Paged: the score sgemm / tiled kernel read keys [0, nb) contiguously;
-      // gather them into d_ikg first (same values, same sgemm shape -> the
-      // scores and selections stay bit-identical to the unpaged layout).
+      profile_index_prep.stop();
+      if (aligned_spec_active() && !env_zero("GDEC_SPEC_INDEX_SERIAL")) {
+        // Use the same reduction and selection dispatch as serial decode.
+        // Its score stride is the full index_blocks, not this batch's nb.
+        if (spec_qsa_batch) {
+          // Full-stride score planes are already row-sized in both workspaces.
+          // Chunking also bounds their use if an aligned replay grows beyond 65.
+          for (int off = 0; off < P; off += qsa_split_rows) {
+            const int rows = std::min(qsa_split_rows, P - off);
+            k_index_scores<true><<<dim3((index_blocks + 3) / 4, rows), 128, 0, g_str>>>(
+                d_iq + (size_t)off * 512, keys, d_iscores, index_blocks,
+                d_posarr + base + off, kvpt());
+            index_select_serial_rows(d_iscores, index_blocks,
+                                     d_iselected + (size_t)off * 512,
+                                     base + off, rows);
+          }
+        } else {
+        for (int row = 0; row < P; ++row) {
+          if (base + row < 2051) continue;
+          const int* pabs = d_posarr + base + row;
+          k_index_scores<<<(index_blocks + 3) / 4, 128, 0, g_str>>>(
+              d_iq + (size_t)row * 512, keys, d_iscores, index_blocks,
+              pabs, kvpt());
+          index_select(d_iscores, index_blocks,
+                       d_iselected + (size_t)row * 512, 0, 1, pabs);
+        }
+        }
+      } else {
+      // Only ordinary large prefill's fused score64 may bypass the history
+      // gather. Decode, aligned speculative rows, tiled and old selectors keep
+      // their original paths. Keep d_ikg allocated for contiguous fallbacks.
+      const bool score64_paged = index_score_paged && kv_paged &&
+          index_fused2 && index_score64 && !aligned_spec_active() && P >= 1024 &&
+          getenv("GDEC_INDEX_OLDSEL") == nullptr;
       const float* skeys = keys;
-      if (kv_paged && nb > 0 && std::max(2051, base) < base + P) {
+      bool ik_gathered = false;
+      if (kv_paged && nb > 0 && std::max(2051, base) < base + P && !score64_paged) {
+        PrefillProfileSpan profile_gather(prefill_profile_, PrefillGpuProfile::QsaGather);
         k_ik_gather<<<nb, 128, 0, g_str>>>(keys, d_ptab, d_ikg, nb);
         skeys = d_ikg;
+        ik_gathered = true;
       }
+      PrefillProfileSpan profile_rank(prefill_profile_, PrefillGpuProfile::QsaScoreSelect);
       const float one = 1.f, zero = 0.f;
       // NOTE: nb (m/ldc) is the absolute pooled-block count, matching the
       // shape a from-scratch prefill of the same total length would use —
@@ -3097,10 +3709,15 @@ struct GpuModel {
                                : min(first + INDEX_BATCH, base + P);
         int count = nxt - first;
         if (index_fused2 && count >= 16 && getenv("GDEC_INDEX_OLDSEL") == nullptr) {
-          if (index_score64)
-            k_index_scores_t64<<<index_t64_grid(nb, count), 256, 0, g_str>>>(
-                d_iq + (size_t)(first - base) * 512, skeys, d_iscores, nb, count, first);
-          else
+          if (index_score64) {
+            if (score64_paged)
+              k_index_scores_t64<true><<<index_t64_grid(nb, count), 256, 0, g_str>>>(
+                  d_iq + (size_t)(first - base) * 512, keys, d_iscores,
+                  nb, count, first, d_ptab);
+            else
+              k_index_scores_t64<<<index_t64_grid(nb, count), 256, 0, g_str>>>(
+                  d_iq + (size_t)(first - base) * 512, skeys, d_iscores, nb, count, first);
+          } else
             k_index_scores_tiled<<<dim3((nb + 31) / 32, (count + 15) / 16), 256, 0, g_str>>>(
                 d_iq + (size_t)(first - base) * 512, skeys, d_iscores, nb, count, first);
           int* const selrow = d_iselected + (size_t)(first - base) * 512;  // batch-local
@@ -3118,6 +3735,15 @@ struct GpuModel {
           first = nxt;
           continue;
         }
+        // A ragged score window (<16 queries) retains the original rocBLAS
+        // shape. Materialize its contiguous input lazily, once per layer.
+        if (score64_paged && !ik_gathered) {
+          // Nested inside QsaScoreSelect: do not add both inclusive timers.
+          PrefillProfileSpan profile_gather(prefill_profile_, PrefillGpuProfile::QsaGather);
+          k_ik_gather<<<nb, 128, 0, g_str>>>(keys, d_ptab, d_ikg, nb);
+          skeys = d_ikg;
+          ik_gathered = true;
+        }
         auto status = rocblas_sgemm(rbh, rocblas_operation_transpose, rocblas_operation_none,
                                     nb, count * 4, 128, &one, skeys, 128,
                                     d_iq + (size_t)(first - base) * 512, 128, &zero,
@@ -3129,6 +3755,7 @@ struct GpuModel {
         index_select(d_iscores, nb, d_iselected + (size_t)(first - base) * 512, first,
                      count);
         first = nxt;
+      }
       }
     }
     snprintf(buf, sizeof buf, "layers.%d.self_attn.q_proj.weight", l);
@@ -3153,7 +3780,7 @@ struct GpuModel {
       // into k_sigmoid_gate_bf16_v4, which reads the gate half of d_qgb
       // directly (qsplit skips its gs copy). GDEC_QSA_GATE_BF16=0 disables.
       static const bool gate_bf16_on = !env_zero("GDEC_QSA_GATE_BF16");
-      const bool gate_bf16 = gate_bf16_on && P > 8;
+      const bool gate_bf16 = gate_bf16_on && P > 8 && !aligned_spec_active();
       k_qsa_qsplit<true><<<dim3(24, P), 256, 0, g_str>>>(
           d_qgb, qnw, d_qsb, gate_bf16 ? nullptr : d_gsb, 256, g_cfg.norm_eps, base,
           d_ropecs);
@@ -3294,13 +3921,16 @@ struct GpuModel {
   // MoE: router batched; expert GEMVs grouped over P*k slots (naive: full
   // weight traffic per token — correct but slow; optimized in a later phase).
   void moe_b(int l, int P) {
+    PrefillProfileSpan profile_moe(prefill_profile_, PrefillGpuProfile::Moe);
     char buf[128];
     const bool direct_output = pp_moe_out && P > 8;
     float* const acc = direct_output ? d_yb : d_moeaccb;
+    PrefillProfileSpan profile_router(prefill_profile_, PrefillGpuProfile::RouterTopk);
     snprintf(buf, sizeof buf, "layers.%d.mlp.gate.weight", l);
     gemm(wview(ckpt.at(buf)), d_xb, d_routerb, P);
     int k = g_cfg.topk;
     k_router_topk<<<P, 512, 0, g_str>>>(d_routerb, d_topidsb, d_topwb, g_cfg.experts, k);
+    profile_router.stop();
     // GDEC_MOE_UNION_LOG=1: distinct experts across the P rows (P<=8, i.e.
     // verify); decides whether naive-MoE expert dedup is worth it.
     static const bool moe_union_log = getenv("GDEC_MOE_UNION_LOG") != nullptr;
@@ -3841,6 +4471,7 @@ struct GpuModel {
   }
   // Shared expert output d_eyb [P][d] and gate logit d_sgb [P].
   void moe_b_shared_ey(int l, int P) {
+    PrefillProfileSpan profile_shared(prefill_profile_, PrefillGpuProfile::SharedExpert);
     char buf[128];
     // shared expert (gate/up scratch in d_guvb head, silu out in d_hidb head)
     snprintf(buf, sizeof buf, "layers.%d.mlp.shared_expert.gate_proj.weight", l);
@@ -3902,6 +4533,7 @@ struct GpuModel {
     char attn_prefix[128], mlp_prefix[128];
     snprintf(attn_prefix, sizeof attn_prefix,
              "layers.%d.attn_hyper_connection", l);
+    { PrefillProfileSpan profile_gr(prefill_profile_, PrefillGpuProfile::Gr);
     if (fuse_prev_mlp) {
       snprintf(mlp_prefix, sizeof mlp_prefix,
                "layers.%d.mlp_hyper_connection", l - 1);
@@ -3909,14 +4541,19 @@ struct GpuModel {
     } else {
       gr_read_b(attn_prefix, P);
     }
+    }
+    { PrefillProfileSpan profile_attention(prefill_profile_,
+          is_qsa(l) ? PrefillGpuProfile::Qsa : PrefillGpuProfile::Gdn);
     if (is_qsa(l))
       qsa_b(l, l / 4, P, base);
     else
       gdn_b(l, l - (l + 1) / 4, P);
+    }
     if (dbg) {
       h_rms("gpu", l, "attn-x", d_xb + (size_t)(P - 1) * 2560, 2560);
       h_rms("gpu", l, "attn-y", d_yb + (size_t)(P - 1) * 2560, 2560);
     }
+    { PrefillProfileSpan profile_gr(prefill_profile_, PrefillGpuProfile::Gr);
     snprintf(mlp_prefix, sizeof mlp_prefix,
              "layers.%d.mlp_hyper_connection", l);
     if (gr_scatter_norm)
@@ -3925,12 +4562,16 @@ struct GpuModel {
       gr_write_b(attn_prefix, P);
       gr_read_b(mlp_prefix, P);
     }
+    }
     moe_b(l, P);
     if (dbg) {
       h_rms("gpu", l, "mlp-x", d_xb + (size_t)(P - 1) * 2560, 2560);
       h_rms("gpu", l, "mlp-y", d_yb + (size_t)(P - 1) * 2560, 2560);
     }
-    if (flush_mlp) gr_write_b(mlp_prefix, P);
+    if (flush_mlp) {
+      PrefillProfileSpan profile_gr(prefill_profile_, PrefillGpuProfile::Gr);
+      gr_write_b(mlp_prefix, P);
+    }
     if (!dbg && isatty(2)) {  // per-layer \r is terminal-only; logs use prefill-live
       fprintf(stderr, "\rprefill L%02d/%d", l + 1, g_cfg.layers);
       fflush(stderr);
@@ -3992,10 +4633,389 @@ struct GpuModel {
     }
   }
 
+  static int mtp_prefill_tail_tokens() {
+    static const int requested = [] {
+      const char* v = getenv("GDEC_MTP_PREFILL_TAIL");
+      if (!v || !v[0] || !strcmp(v, "0")) return 0;
+      try {
+        size_t used = 0;
+        const long long n = std::stoll(v, &used);
+        if (used == strlen(v) && n >= 8192 && n <= 2147483647LL)
+          return (int)n;
+      } catch (const std::exception&) {}
+      fprintf(stderr, "[mtp-tail] invalid GDEC_MTP_PREFILL_TAIL; "
+                      "expected 0 or an integer >=8192; using full prefill\n");
+      return 0;
+    }();
+    return requested;
+  }
+
+  // The caller has already checked cold serve, single slot, disabled caches,
+  // text, sparse QSA and KV-only ingest. Keep entire original chunks so the
+  // retained projections use the same GEMM shapes as full MTP initialization.
+  bool mtp_start_tail(int prompt_tokens) {
+    const int window = mtp_prefill_tail_tokens();
+    if (!window || prompt_tokens <= window + (long long)1 || maxbatch % 4)
+      return false;
+    const int desired = prompt_tokens - 1 - window;
+    int begin = 0;
+    for (int off = 0; off < prompt_tokens && off <= desired;) {
+      begin = off;
+      const int rem = prompt_tokens - off;
+      int n = std::min(maxbatch, rem);
+      if (rem > maxbatch && rem <= maxbatch_cap) n = rem;
+      off += n;
+    }
+    if (begin <= 0 || begin % 4) return false;
+    mtp_tail_begin = begin;
+    mtp_tail_prompt_end = prompt_tokens - 1;
+    mtp_pos = begin;
+    // reset_state does not initialize this MTP ring. A cold request can reuse
+    // a slot: explicitly clear it, even though the aligned first chunk never
+    // pools a block crossing the absent prefix.
+    CK(hipMemsetAsync(d_miraw, 0, (size_t)4 * 128 * sizeof(float), g_str));
+    CK(hipMemcpyAsync(d_mpos, &mtp_pos, sizeof(int), hipMemcpyHostToDevice, g_str));
+    fprintf(stderr, "[mtp-tail] enabled requested=%d begin=%d prompt_end=%d "
+                    "rows=%d pooled_blocks=[%d,%d) absolute_positions=1\n",
+            window, begin, mtp_tail_prompt_end, mtp_tail_prompt_end - begin,
+            begin / 4, mtp_tail_prompt_end / 4);
+    return true;
+  }
+
+  // R10 experiment: only normal prefill_batch intermediate chunks discard
+  // their single-row logits. Keep final=false verification semantics separate.
+  static bool prefill_skip_intermediate_head_enabled() {
+    static const bool enabled = [] {
+      const char* e = getenv("GDEC_PREFILL_SKIP_INTERMEDIATE_HEAD");
+      return e && !strcmp(e, "1");
+    }();
+    return enabled;
+  }
+
+  // Opt-in target-trunk diagnostic, deliberately distinct from MTPAUD01.
+  // Hook AFTER prefill timing/reporting, BEFORE MTP ingest reuses scratch.
+  // Records only served single-slot prompt chunks, never verify/warmup/CLI.
+  // Absent flag returns before any HIP IO. Enabled runs are not timing runs.
+  void prefill_state_audit(const std::vector<int>& tokens, int base, bool final,
+                           bool quiet, bool has_logits) {
+    if (!final || quiet || prog_total <= 0 || nslots != 1 ||
+        spec_snap || spec_fp32_active || ngram_verify_active ||
+        g_borrow_light.load(std::memory_order_acquire)) return;
+    static const std::string path = [] {
+      const char* e = getenv("GDEC_PREFILL_AUDIT");
+      return e ? std::string(e) : std::string();
+    }();
+    if (path.empty()) return;
+    static_assert(sizeof(float) == 4 && sizeof(int) == 4,
+                  "prefill audit requires FP32 and int32");
+    const uint32_t endian_probe = 1;
+    if (*(const uint8_t*)&endian_probe != 1)
+      throw std::runtime_error("[prefill-audit] requires little-endian host");
+    const int P = (int)tokens.size();
+    const int state_n = 10240;  // exact final-row handoff extent above
+    if (P <= 0 || pos != base + P || prog_base <= 0 || prog_base > prog_total ||
+        (prog_base == prog_total && !has_logits) || !d_R ||
+        (has_logits && !d_logits) || g_cfg.vocab <= 0)
+      throw std::runtime_error("[prefill-audit] inconsistent prompt boundary");
+    static std::ofstream file;
+    static uint64_t sequence = 0;
+    if (!file.is_open()) {
+      const std::filesystem::path dst(path);
+      if (!dst.is_absolute())
+        throw std::runtime_error("[prefill-audit] path must be absolute: " + path);
+      if (std::filesystem::exists(dst))
+        throw std::runtime_error("[prefill-audit] refusing existing file: " + path);
+      file.open(dst, std::ios::binary | std::ios::out | std::ios::app);
+      if (!file) throw std::runtime_error("[prefill-audit] open failed: " + path);
+      file.write("PFAUD001", 8);
+    }
+    CK(hipStreamSynchronize(g_str));
+    int device_pos = -1;
+    CK(hipMemcpy(&device_pos, d_pos, sizeof(int), hipMemcpyDeviceToHost));
+    if (device_pos != pos)
+      throw std::runtime_error("[prefill-audit] device position mismatch");
+    std::vector<float> state((size_t)state_n);
+    std::vector<float> logits(has_logits ? (size_t)g_cfg.vocab : 0);
+    CK(hipMemcpy(state.data(), d_R, state.size() * sizeof(float),
+                 hipMemcpyDeviceToHost));
+    if (has_logits)
+      CK(hipMemcpy(logits.data(), d_logits, logits.size() * sizeof(float),
+                   hipMemcpyDeviceToHost));
+    const uint64_t payload_bytes =
+        ((uint64_t)P + state.size() + logits.size()) * sizeof(float);
+    std::ostringstream header;
+    header << "{\"schema\":\"gdec-main-prefill-audit/v1\",\"sequence\":" << sequence
+           << ",\"request\":" << prog_req << ",\"base\":" << base << ",\"P\":" << P
+           << ",\"position\":" << pos << ",\"device_position\":" << device_pos
+           << ",\"prompt_total\":" << prog_total << ",\"progress_done\":" << prog_base
+           << ",\"prompt_done\":" << (prog_base == prog_total ? "true" : "false")
+           << ",\"state_n\":" << state_n << ",\"vocab\":" << g_cfg.vocab
+           << ",\"has_logits\":" << (has_logits ? "true" : "false")
+           << ",\"payload_bytes\":" << payload_bytes << "}";
+    const std::string text = header.str();
+    const uint32_t header_bytes = (uint32_t)text.size();
+    file.write((const char*)&header_bytes, sizeof(header_bytes));
+    file.write(text.data(), (std::streamsize)text.size());
+    file.write((const char*)tokens.data(), (std::streamsize)tokens.size() * sizeof(int));
+    file.write((const char*)state.data(), (std::streamsize)state.size() * sizeof(float));
+    if (has_logits)
+      file.write((const char*)logits.data(), (std::streamsize)logits.size() * sizeof(float));
+    file.flush();
+    if (!file) throw std::runtime_error("[prefill-audit] write/flush failed: " + path);
+    ++sequence;
+  }
+
+
+
+  // Experimental raw PLE I/O scheduling only. Arithmetic, integer hash and
+  // the device PLE path stay unchanged; default-off cache identity is preserved.
+  static bool ple_lookahead_enabled() {
+    static const bool enabled = [] {
+      const char* e = getenv("GDEC_PLE_LOOKAHEAD");
+      return e && !strcmp(e, "1");
+    }();
+    return enabled;
+  }
+  uint8_t* ple_lookahead_host_ = nullptr;
+  uint8_t* ple_lookahead_device_ = nullptr;
+  size_t ple_lookahead_bytes_ = 0;
+  void ensure_ple_lookahead_buffer() {
+    const size_t bytes = (size_t)maxbatch_cap * 16 * (size_t)g_ple_rb;
+    if (ple_lookahead_host_) {
+      if (bytes != ple_lookahead_bytes_)
+        throw std::runtime_error("PLE lookahead staging geometry changed");
+      return;
+    }
+    CK(hipHostMalloc((void**)&ple_lookahead_host_, bytes, hipHostMallocDefault));
+    CK(hipHostGetDevicePointer((void**)&ple_lookahead_device_, ple_lookahead_host_, 0));
+    ple_lookahead_bytes_ = bytes;
+  }
+  const char* ple_lookahead_ineligible(int N, int base, bool final, bool quiet) const {
+#ifndef _WIN32
+    return "platform";
+#else
+    if (!ple_on || !ple_table || !ple_eb || !ple_eb_dev) return "ple-disabled";
+    if (!final || quiet || prog_total <= 0) return "not-prompt";
+    if (nslots != 1 || bound_ != 0 || borrow_fn || borrow_query_fn || borrow_skip_fn ||
+        g_borrow_light.load(std::memory_order_acquire)) return "concurrency";
+    if (spec_snap || spec_fp32_active || ngram_verify_active) return "verify";
+    if (mrope_active_ || !img_inj.empty()) return "vision";
+    if (base != 0 || pos != 0 || !chist.empty()) return "not-cold";
+    if (N != prog_total) return "segmented-prompt";
+    if (N <= maxbatch_cap || N > maxctx) return "not-multichunk";
+    if (getenv("GDEC_PLE_NOSORT")) return "nosort";
+    if (!ple_uring_ready()) return "no-iocp";
+    return nullptr;
+#endif
+  }
+  struct PleLookaheadJob {
+    using Clock = std::chrono::steady_clock;
+    std::vector<int64_t> snapshot;  // two preceding tokens (or padding), then P tokens
+    std::vector<uint64_t> addresses;
+    int64_t mult[3], vsz[16], voff[16];
+    uint64_t table_va = 0;
+    uint8_t* host = nullptr;
+    uint8_t* device = nullptr;
+    int base = 0, rows = 0, buffer = 0, row_bytes = 0;
+    Clock::time_point started, done;
+    std::exception_ptr error;
+    std::thread worker;
+    ~PleLookaheadJob() noexcept {
+      // No cancellation while OVERLAPPED records may still be referenced.
+      // run() drains every submitted read before returning. This object and its
+      // address/snapshot storage remain alive through the join.
+      if (worker.joinable()) worker.join();
+    }
+    void launch() {
+      addresses.resize((size_t)rows * 16);
+      started = Clock::now();
+      worker = std::thread([this] {
+        try {
+          for (int t = 0; t < rows; ++t) {
+            auto cat = [&](int back) -> int64_t { return snapshot[(size_t)t + 2 - back]; };
+            for (int h = 0; h < 16; ++h) {
+              // Preserve the original signed integer expression and row order.
+              int64_t mix = cat(0) * mult[0] ^ (cat(1) * mult[1]);
+              if (h >= 8) mix ^= cat(2) * mult[2];
+              uint64_t row = (uint64_t)(voff[h] + (int64_t)(mix % vsz[h]));
+              addresses[(size_t)t * 16 + h] = table_va + row * (uint64_t)row_bytes;
+            }
+          }
+          // One pump call at a time: Windows' global IOCP does not dispatch
+          // completions by job owner. No HIP or mutable model access here.
+          PLE_PUMP.run(addresses.data(), host, table_va, (size_t)rows * 16);
+        } catch (...) {
+          error = std::current_exception();
+        }
+        done = Clock::now();
+      });
+    }
+    void join() {
+      if (worker.joinable()) worker.join();
+      if (error) std::rethrow_exception(error);
+    }
+    PleLookaheadJob() = default;
+    PleLookaheadJob(const PleLookaheadJob&) = delete;
+    PleLookaheadJob& operator=(const PleLookaheadJob&) = delete;
+  };
+  struct PleLookahead {
+    GpuModel& m;
+    const std::vector<int>& tokens;  // workers never borrow this reference
+    const int64_t req;
+    const int slot;
+    std::unique_ptr<PleLookaheadJob> pending;
+    bool chunk_inflight = false;
+    int current_base = -1, current_rows = 0, current_buffer = 0;
+    int completed_rows = 0, completed_chunks = 0;
+    PleLookahead(GpuModel& model, const std::vector<int>& input)
+        : m(model), tokens(input), req(model.prog_req), slot(model.bound_) {
+      m.ensure_ple_lookahead_buffer();
+      fprintf(stderr, "[ple-lookahead] enabled req=%lld tokens=%zu extra_bytes=%zu "
+                      "buffers=2 single_iocp=1 policy=1\n",
+              (long long)req, tokens.size(), m.ple_lookahead_bytes_);
+    }
+    int rows_at(int off) const {
+      const int rem = (int)tokens.size() - off;
+      int n = std::min(m.maxbatch, rem);
+      if (rem > m.maxbatch && rem <= m.maxbatch_cap) n = rem;
+      return n;
+    }
+    void check_identity() const {
+      if (m.prog_req != req || m.bound_ != slot || m.nslots != 1 ||
+          m.borrow_fn || m.borrow_query_fn || m.borrow_skip_fn ||
+          g_borrow_light.load(std::memory_order_acquire) ||
+          m.spec_snap || m.spec_fp32_active || m.ngram_verify_active)
+        throw std::runtime_error("PLE lookahead request/slot changed");
+    }
+    void begin_chunk(int base, int rows) {
+      check_identity();
+      if (chunk_inflight || base != completed_rows || rows != rows_at(base))
+        throw std::runtime_error("PLE lookahead chunk sequence changed");
+      current_base = base;
+      current_rows = rows;
+      chunk_inflight = true;  // exception cleanup precedes temporary token destruction
+    }
+    void make_job(int base, int rows, int buffer, int64_t previous2, int64_t previous1) {
+      if (pending) throw std::runtime_error("PLE lookahead IOCP job overlap");
+      auto job = std::make_unique<PleLookaheadJob>();
+      job->base = base; job->rows = rows; job->buffer = buffer; job->row_bytes = g_ple_rb;
+      job->table_va = (uint64_t)(uintptr_t)m.ple_table->data;
+      job->host = buffer ? m.ple_lookahead_host_ : (uint8_t*)m.ple_eb;
+      job->device = buffer ? m.ple_lookahead_device_ : m.ple_eb_dev;
+      std::memcpy(job->mult, m.ple_mult, sizeof(job->mult));
+      std::memcpy(job->vsz, m.ple_vsz, sizeof(job->vsz));
+      std::memcpy(job->voff, m.ple_voff, sizeof(job->voff));
+      job->snapshot.reserve((size_t)rows + 2);
+      job->snapshot.push_back(previous2);
+      job->snapshot.push_back(previous1);
+      for (int t = 0; t < rows; ++t) job->snapshot.push_back(tokens[(size_t)base + t]);
+      job->launch();  // a thread-creation failure leaves no joinable worker
+      pending = std::move(job);
+    }
+    void prepare_current(const std::vector<int>& current, int base, int rows) {
+      check_identity();
+      if (!chunk_inflight || base != current_base || rows != current_rows ||
+          m.chist.size() != (size_t)base + rows)
+        throw std::runtime_error("PLE lookahead history/chunk mismatch");
+      const int64_t previous1 = base >= 1 ? m.chist[(size_t)base - 1] : m.pad_id;
+      const int64_t previous2 = base >= 2 ? m.chist[(size_t)base - 2] : m.pad_id;
+      if (!pending) {
+        if (base != 0) throw std::runtime_error("PLE lookahead missing prepared chunk");
+        make_job(base, rows, 0, previous2, previous1);
+      }
+      if (pending->base != base || pending->rows != rows ||
+          pending->snapshot[0] != previous2 || pending->snapshot[1] != previous1)
+        throw std::runtime_error("PLE lookahead prepared identity mismatch");
+      for (int t = 0; t < rows; ++t)
+        if (pending->snapshot[(size_t)t + 2] != current[(size_t)t])
+          throw std::runtime_error("PLE lookahead prepared tokens mismatch");
+      current_buffer = pending->buffer;
+    }
+    void join_current(std::chrono::steady_clock::time_point& start,
+                      std::chrono::steady_clock::time_point& end) {
+      if (!pending || pending->base != current_base || pending->rows != current_rows)
+        throw std::runtime_error("PLE lookahead invalid current job");
+      pending->join();
+      start = pending->started;
+      end = pending->done;
+      pending.reset();  // GPU storage belongs to the model, not to this CPU job
+    }
+    void start_next() {
+      check_identity();
+      const int next = current_base + current_rows;
+      if (!chunk_inflight || pending || m.chist.size() != (size_t)next)
+        throw std::runtime_error("PLE lookahead invalid next-job boundary");
+      if (next == (int)tokens.size()) return;
+      if (next > (int)tokens.size())
+        throw std::runtime_error("PLE lookahead exceeds prompt segment");
+      const int64_t previous1 = next >= 1 ? m.chist[(size_t)next - 1] : m.pad_id;
+      const int64_t previous2 = next >= 2 ? m.chist[(size_t)next - 2] : m.pad_id;
+      // The other buffer's preceding use was completed by the previous chunk's
+      // existing readback. The current GPU consumer reads only current_buffer.
+      make_job(next, rows_at(next), current_buffer ^ 1, previous2, previous1);
+    }
+    void complete_chunk() {
+      if (!chunk_inflight || m.pos != current_base + current_rows)
+        throw std::runtime_error("PLE lookahead incomplete chunk return");
+      chunk_inflight = false;
+      completed_rows += current_rows;
+      ++completed_chunks;
+    }
+    void abort_chunk() noexcept {
+      // Join before reset/return: never let another request enter the shared
+      // IOCP while this job still owns completion records. Pending error is
+      // already reported by the throwing path, or is discarded on cancellation.
+      pending.reset();
+      if (chunk_inflight) {
+        // Exceptional path only. Protect raw staging and the caller's temporary
+        // token vector even when failure happened before the usual readback.
+        CK(hipStreamSynchronize(g_str));
+        chunk_inflight = false;
+      }
+    }
+    ~PleLookahead() noexcept {
+      abort_chunk();
+      fprintf(stderr, "[ple-lookahead] finished req=%lld chunks=%d rows=%d "
+                      "expected=%zu pending=0 complete=%d\n",
+              (long long)req, completed_chunks, completed_rows, tokens.size(),
+              (int)(completed_rows == (int)tokens.size()));
+    }
+    PleLookahead(const PleLookahead&) = delete;
+    PleLookahead& operator=(const PleLookahead&) = delete;
+  };
+  struct PleLookaheadChunkGuard {
+    PleLookahead* pipeline;
+    explicit PleLookaheadChunkGuard(PleLookahead* p, int base, int rows) : pipeline(p) {
+      if (pipeline) pipeline->begin_chunk(base, rows);
+    }
+    void complete() {
+      if (pipeline) { pipeline->complete_chunk(); pipeline = nullptr; }
+    }
+    ~PleLookaheadChunkGuard() noexcept { if (pipeline) pipeline->abort_chunk(); }
+    PleLookaheadChunkGuard(const PleLookaheadChunkGuard&) = delete;
+    PleLookaheadChunkGuard& operator=(const PleLookaheadChunkGuard&) = delete;
+  };
+
+  static bool mtp_tap_norm_fused_enabled() {
+    static const bool enabled = [] {
+      const char* value = getenv("GDEC_MTP_TAP_NORM_FUSED");
+      return value && !strcmp(value, "1");
+    }();
+    return enabled;
+  }
+
   int prefill_batch(const std::vector<int>& tokens, int base = 0, bool final = true,
                     bool quiet = false) {
     int N = (int)tokens.size();
     int id = -1;
+    int skipped_heads = 0;
+    std::unique_ptr<PleLookahead> ple_ahead;
+    if (ple_lookahead_enabled() && final && !quiet && prog_total > 0) {
+      const char* reason = ple_lookahead_ineligible(N, base, final, quiet);
+      if (!reason) ple_ahead = std::make_unique<PleLookahead>(*this, tokens);
+      else fprintf(stderr, "[ple-lookahead] fallback req=%lld base=%d rows=%d reason=%s\n",
+                   (long long)prog_req, base, N, reason);
+    }
     for (int off = 0; off < N;) {
       int rem = N - off;
       int n = std::min(maxbatch, rem);
@@ -4007,10 +5027,26 @@ struct GpuModel {
       while (n > conc_rmax_ && borrow_skip_fn &&
              g_borrow_light.load(std::memory_order_acquire))
         borrow_skip_fn(*this);
+      // quiet callers are verifier/re-ingest benchmarks; leave their legacy
+      // head policy unchanged. Each batch/segment's last chunk keeps logits
+      // for sampling, checkpoints, CLI output and the first generated token.
+      const bool skip_head = final && !quiet && !spec_snap &&
+          !spec_fp32_active && !ngram_verify_active && off + n < N &&
+          prefill_skip_intermediate_head_enabled();
+      // Per-call capability only: no pending norm/tap state survives a yield.
+      // The live BF16 rows are consumed before the next chunk reuses d_Rb.
+      const bool direct_mtp_tap = mtp_tap_norm_fused_enabled() &&
+          mtp_tap_capture && base + off >= mtp_tail_begin &&
+          mtp_tail_begin == 0 && batch_bf16() &&
+          std::min(n, N - off - 1) > 16 && nslots == 1 &&
+          !mrope_active_ && final && !quiet && prog_total > 0 &&
+          !spec_snap && !ngram_verify_active && !spec_fp32_active &&
+          g_cfg.d == 2560 && g_cfg.branches == 4;
       id = prefill_chunk(
           std::vector<int>(tokens.begin() + off, tokens.begin() + off + n),
-          base + off, final, quiet);
-      if (mtp_tap_capture) {
+          base + off, final, quiet, skip_head, ple_ahead.get(), direct_mtp_tap);
+      if (skip_head) ++skipped_heads;
+      if (mtp_tap_capture && base + off >= mtp_tail_begin) {
         // Ingest this chunk's taps (chunk-local rows in d_mtap) into the MTP
         // layer before the next chunk overwrites them. MTP position i takes
         // token i+1, so the very last prompt row is left to the spec loop.
@@ -4019,7 +5055,14 @@ struct GpuModel {
         if (count > 0) {
           std::vector<int> shifted(tokens.begin() + off + 1,
                                    tokens.begin() + off + 1 + count);
-          mtp_ingest_b(d_mtap, shifted, count, c0);
+          if (direct_mtp_tap && !batch_bf16())
+            throw std::runtime_error("R13 direct MTP tap lost BF16 state");
+          const bool normal_mtp_prompt = final && !quiet && prog_total > 0 &&
+              !spec_snap && !spec_fp32_active && !ngram_verify_active &&
+              mtp_tail_begin == 0 && !mrope_active_;
+          mtp_ingest_b(d_mtap, shifted, count, c0,
+                       direct_mtp_tap ? (const uint16_t*)d_Rb : nullptr,
+                       normal_mtp_prompt);
         }
       }
       off += n;
@@ -4027,17 +5070,23 @@ struct GpuModel {
       // (only persistent slot state is live here; spec verify never yields).
       if (prog_total > 0 && off < N) yield_point();
     }
+    if (skipped_heads)
+      fprintf(stderr, "[prefill-head-skip] base=%d tokens=%d skipped_chunks=%d "
+                      "last_head=1 synchronized=1\n", base, N, skipped_heads);
     return id;
   }
 
   int prefill_chunk(const std::vector<int>& tokens, int base = 0, bool final = true,
-                    bool quiet = false) {
+                    bool quiet = false, bool skip_head = false,
+                    PleLookahead* ple_ahead = nullptr, bool direct_mtp_tap = false) {
     int P = (int)tokens.size();
     if (P < 1 || base + P > maxctx || base < 0 || P > maxbatch_cap) {
       fprintf(stderr, "prefill_chunk: base=%d P=%d out of range "
               "(maxctx=%d maxbatch_cap=%d)\n", base, P, maxctx, maxbatch_cap);
       exit(1);
     }
+    PleLookaheadChunkGuard ple_ahead_guard(ple_ahead, base, P);
+    PrefillChunkProfile profile_chunk(*this, base, P, final);
     moe_dump_base_ = base;
     kv_prepare(base, base + P);  // A2/A3: back (and unshare) rows [base, base+P)
     set_vbase(base);  // P3-A: all base-reading batch kernels this chunk read d_vbase
@@ -4066,6 +5115,7 @@ struct GpuModel {
     std::atomic<int> ple_workers{0};
     int ple_base0 = 0;
     uint8_t* ple_fp8 = nullptr;
+    const uint8_t* ple_current_device = ple_eb_dev;
     // two-phase PLE gather state (must outlive the async workers — every
     // variable the pool lambdas capture by reference lives at this scope;
     // declaring aliases/sizes inside the gather block is
@@ -4079,6 +5129,11 @@ struct GpuModel {
       for (int t = 0; t < P; t++) chist.push_back(tokens[t]);
       ple_base0 = (int)chist.size() - P;
       ple_fp8 = (uint8_t*)ple_eb;
+      if (ple_ahead) {
+        ple_ahead->prepare_current(tokens, base, P);
+        ple_fp8 = ple_ahead->pending->host;
+        ple_current_device = ple_ahead->pending->device;
+      } else {
       constexpr int nt = 16;
       ple_workers.store(nt);
       ple_pool.reserve(nt);
@@ -4176,17 +5231,19 @@ struct GpuModel {
               ple_done = std::chrono::steady_clock::now();
           });
       }
+      }  // unchanged legacy worker-pool branch
     }
+    PrefillProfileSpan profile_embed(prefill_profile_, PrefillGpuProfile::Embed);
     CK(hipMemcpyAsync(d_tokarr, tokens.data(), P * 4, hipMemcpyHostToDevice, g_str));
     // embed all tokens: gather rows then repeat to 4 branches (in-place safe)
     WView et = wview(ckpt.at("embed_tokens.weight"));
-    if (gr_bf16)
+    if (batch_bf16())
       embed_rows(et, d_tokarr, P, d_Rb, 0, true);
     else {
       embed_rows(et, d_tokarr, P, d_Rb, 10240);
       k_repeat4_b<<<(P * 2560 + 255) / 256, 256, 0, g_str>>>(d_Rb, d_Rb, g_cfg.d);
     }
-    if (dbg && !gr_bf16)
+    if (dbg && !batch_bf16())
       h_rms("gpu", -1, "emb", d_Rb + (size_t)(P - 1) * 10240, g_cfg.d);
     // Vision (stage 4): masked_scatter the ViT embeds over this chunk's image
     // placeholder rows (HF inputs_embeds semantics; bf16-quantized source).
@@ -4199,7 +5256,7 @@ struct GpuModel {
         CK(hipMemcpyAsync(d_img_inj, h_img_inj.data(),
                           h_img_inj.size() * sizeof(int2),
                           hipMemcpyHostToDevice, g_str));
-        if (gr_bf16)
+        if (batch_bf16())
           k_img_inject_bf16<<<(unsigned)h_img_inj.size(), 256, 0, g_str>>>(
               d_img_emb, d_img_inj, (uint16_t*)d_Rb);
         else
@@ -4207,13 +5264,27 @@ struct GpuModel {
               d_img_emb, d_img_inj, d_Rb);
       }
     }
+    profile_embed.stop();
     enq_layer_b(0, P, false, true, base);
     if (prog_total > 0) prog_probe(0, P);
     phase("embed+L0", TP);
     if (ple_on) {
+      PrefillProfileSpan profile_ple(prefill_profile_, PrefillGpuProfile::Ple);
       auto wait_start = std::chrono::steady_clock::now();
-      for (auto& th : ple_pool) th.join();
+      PrefillProfileSpan profile_ple_wait(prefill_profile_, PrefillGpuProfile::PleWait);
+      if (ple_ahead) ple_ahead->join_current(ple_start, ple_done);
+      else for (auto& th : ple_pool) th.join();
       auto wait_done = std::chrono::steady_clock::now();
+      profile_ple_wait.stop();
+      if (profile_chunk.active) {
+        profile_chunk.ple_prepare_ms = std::chrono::duration<double, std::milli>(
+            ple_done - ple_start).count();
+        profile_chunk.ple_join_ms = std::chrono::duration<double, std::milli>(
+            wait_done - wait_start).count();
+      }
+      // The wait interval measures the stream gap after L0, not the full CPU
+      // preparation time. Device work below still depends on the L0 hidden state.
+      PrefillProfileSpan profile_ple_device(prefill_profile_, PrefillGpuProfile::PleDevice);
       if (prof) {
         p_pleh +=
             std::chrono::duration<double, std::milli>(ple_done - ple_start).count();
@@ -4224,14 +5295,14 @@ struct GpuModel {
       if (ple_iq4) {
         size_t nb = (size_t)P * 2560 / 32;
         k_ple_iq4nl_dequant<<<(unsigned)((nb + 255) / 256), 256, 0, g_str>>>(
-            ple_eb_dev, d_eb, nb);
+            ple_current_device, d_eb, nb);
       } else {
         size_t n16 = (size_t)P * 2560 / 16;
         k_ple_fp8_dequant<<<(unsigned)((n16 + 255) / 256), 256, 0, g_str>>>(
-            ple_eb_dev, d_eb, ple_tscale, n16);
+            ple_current_device, d_eb, ple_tscale, n16);
       }
       float* hc_storage = d_Rb;
-      if (gr_bf16) {
+      if (batch_bf16()) {
         uint64_t n = (uint64_t)P * 10240;
         k_bf16_to_f32<<<(unsigned)((n + 255) / 256), 256, 0, g_str>>>(
             (const uint16_t*)hc_storage, d_Rhatb, n);
@@ -4241,13 +5312,15 @@ struct GpuModel {
         for (int t = 0; t < P; t++) ple_gpu_t(t, base);
       else
         ple_gpu_b(P, base);
-      if (gr_bf16) {
+      if (batch_bf16()) {
         uint64_t n = (uint64_t)P * 10240;
         k_f32_to_bf16_v4<<<(unsigned)((n / 4 + 255) / 256), 256, 0, g_str>>>(
             d_Rb, (uint16_t*)hc_storage, 10240, P, 10240);
         d_Rb = hc_storage;
       }
     }
+    // CPU-only preparation of the next block overlaps the remaining layers.
+    if (ple_ahead) ple_ahead->start_next();
     phase("ple", TP);
     if (ws_ok_) CK(hipEventRecord(conc_ev_a_, g_str));  // D1b quantum clock
     for (int l = 1; l < g_cfg.layers; l++) {
@@ -4265,7 +5338,8 @@ struct GpuModel {
     }
     phase("L25-47", TP);
     // MTP tap capture: d_Rb now holds the final 48-layer stream for every row.
-    if (mtp_tap_capture) {
+    if (mtp_tap_capture && base >= mtp_tail_begin && !direct_mtp_tap) {
+      PrefillProfileSpan profile_tap(prefill_profile_, PrefillGpuProfile::Tap);
       // Taps are stored at chunk-local rows (0..P) regardless of the absolute
       // base; prefill_batch ingests each chunk right after it completes, so
       // prompts longer than maxbatch work.
@@ -4274,7 +5348,7 @@ struct GpuModel {
                 maxbatch_cap);
         exit(1);
       }
-      if (gr_bf16) {  // d_Rb rows are bf16; d_mtap stays fp32 for ingest
+      if (batch_bf16()) {  // d_Rb rows are bf16; d_mtap stays fp32 for ingest
         uint64_t n = (uint64_t)P * 10240;
         k_bf16_to_f32<<<(unsigned)((n + 255) / 256), 256, 0, g_str>>>(
             (const uint16_t*)d_Rb, d_mtap, n);
@@ -4283,8 +5357,9 @@ struct GpuModel {
                           hipMemcpyDeviceToDevice, g_str));
       }
     }
+    PrefillProfileSpan profile_handoff(prefill_profile_, PrefillGpuProfile::Handoff);
     // hand off last row to the single-token decode state
-    if (gr_bf16)
+    if (batch_bf16())
       k_bf16_to_f32<<<(10240 + 255) / 256, 256, 0, g_str>>>(
           (const uint16_t*)d_Rb + (size_t)(P - 1) * 10240, d_R, 10240);
     else
@@ -4294,13 +5369,25 @@ struct GpuModel {
     ple_ringpos = (base + P) % 9;
     CK(hipMemcpyAsync(d_pos, &pos, 4, hipMemcpyHostToDevice, g_str));
     CK(hipMemcpyAsync(d_ringpos, &ple_ringpos, 4, hipMemcpyHostToDevice, g_str));
-    // Verify consumes batch logits; do not compute and synchronously read
-    // the last row's lm_head a second time.
-    if (final) enq_final();
+    profile_handoff.stop();
+    // final=false is the existing async verification contract. A normal
+    // intermediate prompt chunk may separately omit its unused head, but
+    // MUST retain a completed return before its temporary token vector dies.
+    const bool emit_head = final && !skip_head;
+    if (emit_head) enq_final();
+    profile_chunk.close_gpu_span();
     phase("final", TP);
     int id = -1;
     if (final && prog_total > 0) prog_wait(P);
-    if (final) CK(hipMemcpy(&id, d_argmax, 4, hipMemcpyDeviceToHost));
+    if (emit_head)
+      CK(hipMemcpy(&id, d_argmax, 4, hipMemcpyDeviceToHost));
+    else if (final)
+      // prog_wait observes the last layer, not the later tap/state copies.
+      // Drain token H2D, PLE staging reads and persistent-state writes before
+      // prefill_batch can destroy its chunk vector, reuse staging or yield.
+      CK(hipStreamSynchronize(g_str));
+    ple_ahead_guard.complete();
+    profile_chunk.report_after_existing_sync();
     phase("argmax_d2h", TP);
     double sec =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - T0).count();
@@ -4332,6 +5419,8 @@ struct GpuModel {
                 h[s] * cyc2ms);
     }
 #endif
+    // Audit after all chunk timing; never mistake stale logits for a skipped head.
+    prefill_state_audit(tokens, base, final, quiet, emit_head);
     return id;
   }
 
@@ -4415,9 +5504,23 @@ struct GpuModel {
       k_index_append<<<1, 128, 0, g_str>>>(d_iproj, d_minorm + 128, d_miraw,
                                            d_mik, d_mpos, g_cfg.norm_eps,
                                            g_cfg.rope_theta, d_rdelta, kvpt());
-      k_index_scores<<<(index_blocks + 3) / 4, 128, 0, g_str>>>(
-          d_iq, d_mik, d_iscores, index_blocks, d_mpos, kvpt());
-      index_select(d_iscores, index_blocks, d_iselected, 0, 1, d_mpos);
+      if (mtp_tail_begin > 0) {
+        const int first_block = mtp_tail_begin / 4;
+        const int blocks = (mtp_pos + 1) / 4 - first_block;
+        if (mtp_tail_begin % 4 || blocks < 512 || blocks > index_blocks)
+          throw std::runtime_error("[mtp-tail] invalid proposal block range");
+        k_mtp_index_scores_tail<<<(blocks + 3) / 4, 128, 0, g_str>>>(
+            d_iq, d_mik, d_iscores, index_blocks, first_block, d_mpos, kvpt());
+        // Only selector enumeration is rebased. RoPE, K/V, pooled-key storage
+        // and attention still use the original absolute positions/page table.
+        index_select(d_iscores, index_blocks, d_iselected,
+                     mtp_pos - mtp_tail_begin, 1);
+        k_mtp_index_absolute<<<2, 256, 0, g_str>>>(d_iselected, first_block);
+      } else {
+        k_index_scores<<<(index_blocks + 3) / 4, 128, 0, g_str>>>(
+            d_iq, d_mik, d_iscores, index_blocks, d_mpos, kvpt());
+        index_select(d_iscores, index_blocks, d_iselected, 0, 1, d_mpos);
+      }
     }
     snprintf(buf, sizeof buf, "%s.q_proj.weight", pfx);
     gemv(wview(ckpt.at(buf)), x, d_qg);
@@ -4495,6 +5598,136 @@ struct GpuModel {
     CK(hipMemcpyAsync(y, d_moeacc, g_cfg.d * 4, hipMemcpyDeviceToDevice, g_str));
   }
 
+  // Opt-in single-slot diagnostic. Synchronizes and reads only; never use its
+  // timings as performance evidence. The absent flag returns before any HIP IO.
+  void mtp_state_audit(bool ingest, int base, int P, int token = -1,
+                       bool device_token = false, int logits_n = 0,
+                       const std::vector<int>* tokens = nullptr) {
+    static const std::string path = [] {
+      const char* e = getenv("GDEC_MTP_STATE_AUDIT");
+      return e ? std::string(e) : std::string();
+    }();
+    if (path.empty()) return;
+    static std::ofstream file;
+    static uint64_t sequence = 0;
+    if (!file.is_open()) {
+      const std::filesystem::path dst(path);
+      if (!dst.is_absolute())
+        throw std::runtime_error("[mtp-state-audit] path must be absolute: " + path);
+      if (std::filesystem::exists(dst))
+        throw std::runtime_error("[mtp-state-audit] refusing existing file: " + path);
+      file.open(dst, std::ios::binary | std::ios::out | std::ios::app);
+      if (!file) throw std::runtime_error("[mtp-state-audit] open failed: " + path);
+      file.write("MTPAUD01", 8);
+    }
+    CK(hipStreamSynchronize(g_str));
+    int device_pos = -1;
+    CK(hipMemcpy(&device_pos, d_mpos, sizeof(int), hipMemcpyDeviceToHost));
+    if (!ingest && device_token)
+      CK(hipMemcpy(&token, d_mtok, sizeof(int), hipMemcpyDeviceToHost));
+    struct Tensor {
+      const char* name; const char* dtype; int rows, cols;
+      std::vector<uint8_t> bytes;
+    };
+    std::vector<Tensor> tensors;
+    auto read = [&](const char* name, const char* dtype, int rows, int cols,
+                    int width, const void* src, int first = 0, int per_page = 0) {
+      Tensor t{name, dtype, rows, cols, {}};
+      const size_t row_bytes = (size_t)cols * width;
+      t.bytes.resize((size_t)rows * row_bytes);
+      if (rows > 0) {
+        if (!src) throw std::runtime_error(std::string("[mtp-state-audit] null tensor: ") + name);
+        if (per_page) {
+          kv_runs(first, first + rows, per_page, [&](int lr, size_t pr, int n) {
+            CK(hipMemcpy(t.bytes.data() + (size_t)(lr - first) * row_bytes,
+                          (const uint8_t*)src + pr * row_bytes,
+                          (size_t)n * row_bytes, hipMemcpyDeviceToHost));
+          });
+        } else {
+          CK(hipMemcpy(t.bytes.data(), src, t.bytes.size(), hipMemcpyDeviceToHost));
+        }
+      }
+      tensors.push_back(std::move(t));
+    };
+    const int block_base = base / 4;
+    const int block_count = ingest && !qsa_dense ? (base + P) / 4 - block_base : 0;
+    if (ingest) {
+      const char* dtype = qsa_kv_fp32 ? "f32le" : "bf16le";
+      const int width = qsa_kv_fp32 ? 4 : 2;
+      read("K", dtype, P, 512, width, qsa_kv_fp32 ? (void*)d_mkcf : (void*)d_mkcb, base, KV_PAGE);
+      read("V", dtype, P, 512, width, qsa_kv_fp32 ? (void*)d_mvcf : (void*)d_mvcb, base, KV_PAGE);
+      read("pooled_keys", "f32le", block_count, 128, 4, d_mik, block_base, KV_PAGE_BLOCKS);
+      read("raw_ring", "f32le", qsa_dense ? 0 : 4, 128, 4, d_miraw);
+      if (tokens) {
+        static_assert(sizeof(int) == 4, "audit token encoding requires int32");
+        Tensor t{"tokens", "i32le", P, 1, {}};
+        t.bytes.resize((size_t)P * 4);
+        std::memcpy(t.bytes.data(), tokens->data(), t.bytes.size());
+        tensors.push_back(std::move(t));
+      }
+    } else {
+      read("logits", "f32le", 1, logits_n, 4, d_logits);
+      if (mtp_tail_begin > 0) {
+        read("selected_blocks", "i32le", 1, 512, 4, d_iselected);
+        const auto& bytes = tensors.back().bytes;
+        const int begin_block = mtp_tail_begin / 4;
+        const int end_block = (device_pos + 1) / 4;
+        int previous = -1;
+        for (int i = 0; i < 512; i++) {
+          int block = -1;
+          std::memcpy(&block, bytes.data() + (size_t)i * sizeof(int), sizeof(int));
+          if (block < begin_block || block >= end_block || block <= previous)
+            throw std::runtime_error("[mtp-tail] audit invalid selected block");
+          previous = block;
+        }
+        const int recent_begin = ((device_pos + 1) / 4) * 4;
+        if (recent_begin < mtp_tail_begin)
+          throw std::runtime_error("[mtp-tail] audit invalid recent-token range");
+      }
+    }
+    std::ostringstream header;
+    header << "{\"event\":\"" << (ingest ? "ingest" : "step")
+           << "\",\"sequence\":" << sequence++ << ",\"slot\":" << bound_
+           << ",\"base\":" << base << ",\"P\":" << P
+           << ",\"trunk_pos\":" << pos << ",\"mtp_pos\":" << mtp_pos
+           << ",\"device_mtp_pos\":" << device_pos << ",\"token\":" << token
+           << ",\"device_token\":" << (device_token ? "true" : "false")
+           << ",\"paged\":" << (kv_paged ? "true" : "false")
+           << ",\"indexer_enabled\":" << (!qsa_dense ? "true" : "false")
+           << ",\"block_base\":" << block_base << ",\"block_count\":" << block_count
+           << ",\"vocab\":" << g_cfg.vocab << ",\"logits_n\":" << logits_n;
+    if (mtp_tail_begin > 0)
+      header << ",\"tail_begin\":" << mtp_tail_begin
+             << ",\"tail_prompt_end\":" << mtp_tail_prompt_end
+             << ",\"valid_block_begin\":" << mtp_tail_begin / 4
+             << ",\"valid_block_end\":" << (ingest ? (base + P) / 4 : (device_pos + 1) / 4)
+             << ",\"recent_begin\":" << (ingest ? (base + P) / 4 * 4 : (device_pos + 1) / 4 * 4)
+             << ",\"recent_end\":" << (ingest ? base + P : device_pos + 1);
+    header << ",\"tensors\":[";
+    uint64_t offset = 0;
+    for (size_t i = 0; i < tensors.size(); ++i) {
+      const auto& t = tensors[i];
+      if (i) header << ',';
+      header << "{\"name\":\"" << t.name << "\",\"dtype\":\"" << t.dtype
+             << "\",\"shape\":[" << t.rows << ',' << t.cols << "],\"offset\":"
+             << offset << ",\"nbytes\":" << t.bytes.size() << '}';
+      offset += t.bytes.size();
+    }
+    header << "]}";
+    const std::string json = header.str();
+    auto u64 = [&](uint64_t value) {
+      char bytes[8];
+      for (int i = 0; i < 8; ++i) bytes[i] = (char)(value >> (8 * i));
+      file.write(bytes, 8);
+    };
+    u64((uint64_t)json.size()); u64(offset);
+    file.write(json.data(), (std::streamsize)json.size());
+    for (const auto& t : tensors)
+      if (!t.bytes.empty()) file.write((const char*)t.bytes.data(), (std::streamsize)t.bytes.size());
+    file.flush();
+    if (!file) throw std::runtime_error("[mtp-state-audit] write/flush failed: " + path);
+  }
+
   // One full MTP draft step: appends (tap, tok) at mtp_pos. Greedy callers get
   // the argmax; sampling callers request the full logits instead.
   // d_tok_in: read the input token from this device pointer instead of the
@@ -4527,6 +5760,8 @@ struct GpuModel {
       gemv(lm, d_x, d_logits, 0, (uint64_t)dvn);  // keeps that base intact
     else
       gemv(lm, d_x, d_logits);
+    mtp_state_audit(false, mtp_pos, 1, tok, d_tok_in != nullptr,
+                    dvn ? dvn : g_cfg.vocab);
     int id = -1;
     if (host_logits) {
       host_logits->resize(g_cfg.vocab);
@@ -4545,12 +5780,23 @@ struct GpuModel {
   // ---- batch ingest: build MTP KV over a token range (prompt/accepted) ----
   // Row j takes (tap[j] = trunk h_{base+j}, toks[j] = t_{base+j+1}) at MTP
   // position base+j. No mixer/lm_head: only the layer state (KV) is built.
-  void mtp_input_b(const float* taps, int P) {
+  void mtp_input_b(const float* taps, int P, const uint16_t* taps_bf16 = nullptr,
+                   bool normal_prompt = false) {
     embed_rows(wview(ckpt.at("embed_tokens.weight")), d_tokarr, P, d_eb, 2560);
     k_rmsnorm_zc_grouped<<<P, 1024, 0, g_str>>>(d_eb, d_mnorm_e, d_eb, 2560,
                                                 g_cfg.norm_eps, 1);
     gemm(wview(ckpt.at("mtp.fc_embedding.weight")), d_eb, d_qnb, P);
-    if (mtp_norm_mode == 0)
+    if (taps_bf16) {
+      static const bool noted = [] {
+        fprintf(stderr, "[mtp-tap-norm] direct BF16 prompt norm active (FP32 output)\n");
+        return true;
+      }();
+      (void)noted;
+      const int groups = mtp_norm_mode == 0 ? 1 : 4;
+      const int width = mtp_norm_mode == 0 ? 10240 : 2560;
+      r13tap::norm_bf16_to_f32<<<groups * P, 1024, 0, g_str>>>(
+          taps_bf16, d_mnorm_h, d_mRhatb, width, g_cfg.norm_eps, groups);
+    } else if (mtp_norm_mode == 0)
       k_rmsnorm_zc_grouped<<<P, 1024, 0, g_str>>>(taps, d_mnorm_h, d_mRhatb,
                                                   10240, g_cfg.norm_eps, 1);
     else
@@ -4572,39 +5818,59 @@ struct GpuModel {
       k_repeat4_b<<<(unsigned)(((size_t)P * 2560 + 255) / 256), 256, 0, g_str>>>(
           d_mRb, d_mRb, g_cfg.d);
     } else {
-      for (int b = 0; b < 4; b++) {
-        gemm(wview(ckpt.at("mtp.fc_hidden.weight")), d_mRhatb + (size_t)b * 2560,
-             d_convoutb, P, 10240 /*xstride*/);
-        k_row_branch_copy<<<(unsigned)(((size_t)P * 2560 + 255) / 256), 256, 0,
-                            g_str>>>(d_convoutb, d_mRb, 2560, b);
+      // Main single-slot allocation is maxbatch_cap * 10240 BF16 elements;
+      // the helper rejects the swapped small/borrowed workspace explicitly.
+      if (!mtp_branch_strided(wview(ckpt.at("mtp.fc_hidden.weight")), P,
+                              normal_prompt, d_xbf16,
+                              (size_t)maxbatch_cap * 10240)) {
+        for (int b = 0; b < 4; b++) {
+          gemm(wview(ckpt.at("mtp.fc_hidden.weight")), d_mRhatb + (size_t)b * 2560,
+               d_convoutb, P, 10240 /*xstride*/);
+          k_row_branch_copy<<<(unsigned)(((size_t)P * 2560 + 255) / 256), 256, 0,
+                              g_str>>>(d_convoutb, d_mRb, 2560, b);
+        }
       }
       k_acc_broadcast4<<<(unsigned)(((size_t)P * 2560 + 255) / 256), 256, 0,
                          g_str>>>(d_qnb, d_mRb, 2560);
     }
   }
 
-  void mtp_gr_read_b(const std::string& prefix, int P) {
+  void mtp_gr_read_b(const std::string& prefix, int P, bool fuse_ingest = false) {
     char buf[128];
     float* hw = ensure_hcnorm(prefix);
-    k_rmsnorm_zc_grouped<<<4 * P, 1024, 0, g_str>>>(d_mRb, hw, d_mRhatb, 2560,
-                                                    g_cfg.norm_eps, 4);
-    // K=10240 gemms would overflow d_xbf16b (maxbatch*6144); convert into the
-    // 10240-wide d_xbf16 ourselves and pass it as xbf. (d_xbf16 is clobbered
-    // by later d_xb gemms, so gr_write_b reconverts.)
-    uint64_t tot = (uint64_t)P * 10240;
-    k_f32_to_bf16_v4<<<(unsigned)((tot / 4 + 255) / 256), 256, 0, g_str>>>(
-        d_mRhatb, d_xbf16, 10240, P, 10240);
+    // Keep the FP32 norm values and the 1024-lane reduction identical.
+    // The opt-in ingest path emits their BF16 conversion in the same launch.
+    if (fuse_ingest) {
+      k_rmsnorm_zc_grouped<true><<<4 * P, 1024, 0, g_str>>>(
+          d_mRb, hw, d_mRhatb, 2560, g_cfg.norm_eps, 4, d_xbf16);
+    } else {
+      k_rmsnorm_zc_grouped<<<4 * P, 1024, 0, g_str>>>(
+          d_mRb, hw, d_mRhatb, 2560, g_cfg.norm_eps, 4);
+      // K=10240 exceeds d_xbf16b's row width; use d_xbf16 explicitly.
+      const uint64_t tot = (uint64_t)P * 10240;
+      k_f32_to_bf16_v4<<<(unsigned)((tot / 4 + 255) / 256), 256, 0, g_str>>>(
+          d_mRhatb, d_xbf16, 10240, P, 10240);
+    }
     snprintf(buf, sizeof buf, "%s.input_mix_weight_down.weight", prefix.c_str());
     gemm(wview(ckpt.at(buf)), d_mRhatb, d_t320b, P, 0, d_xbf16);
     k_silu_scale<<<(P * 320 + 255) / 256, 256, 0, g_str>>>(d_t320b, 0.25f,
                                                            P * 320);
     snprintf(buf, sizeof buf, "%s.input_mix_weight_up.weight", prefix.c_str());
     gemm(wview(ckpt.at(buf)), d_t320b, d_Gb, P);
-    k_sigmoid_inplace<<<(unsigned)(((size_t)P * 10240 + 255) / 256), 256, 0,
-                        g_str>>>(d_Gb, P * 10240);
-    k_gr_combine_b<<<(P * 2560 + 255) / 256, 256, 0, g_str>>>(
-        d_Gb, d_mRhatb, d_xb, g_cfg.d, g_cfg.branches, P);
-    if (xf16_src == d_xb) xf16_src = nullptr;
+    if (fuse_ingest) {
+      // No later KV-only-ingest consumer reads d_Gb. Retain each FP32 gate
+      // expression and branch accumulation order; emit the same BF16 x.
+      k_gr_combine_b<true><<<(P * 2560 + 255) / 256, 256, 0, g_str>>>(
+          d_Gb, d_mRhatb, d_xb, g_cfg.d, g_cfg.branches, P, d_xbf16);
+      xf16_src = d_xb;
+      xf16_xs = xf16_K = g_cfg.d;
+      xf16_P = P;
+    } else {
+      k_sigmoid_inplace<<<(unsigned)(((size_t)P * 10240 + 255) / 256), 256, 0, g_str>>>(d_Gb, P * 10240);
+      k_gr_combine_b<<<(P * 2560 + 255) / 256, 256, 0, g_str>>>(
+          d_Gb, d_mRhatb, d_xb, g_cfg.d, g_cfg.branches, P);
+      if (xf16_src == d_xb) xf16_src = nullptr;
+    }
   }
   void mtp_gr_write_b(const std::string& prefix, int P) {
     char buf[128];
@@ -4808,22 +6074,135 @@ struct GpuModel {
                       hipMemcpyDeviceToDevice, g_str));
   }
 
+  // An ingest needs only the single MTP layer's persistent K/V and indexer
+  // state. Query/attention outputs and the MLP stream have no consumer: the
+  // next mtp_input_1/b overwrites its input stream from committed trunk taps.
+  // Keep the retained projections, normalization, RoPE and stores identical
+  // to mtp_qsa_b; the real drafting step still runs the complete layer.
+  void mtp_qsa_kv_b(int P, int base) {
+    const char* pfx = "mtp.layers.0.self_attn";
+    char buf[128];
+    ensure_rope_tab(g_cfg.rope_theta, 64);
+    ensure_rope_cs(base, P);
+    if (!qsa_dense) {
+      if (index_f32) {
+        iproj_sgemm(d_miw, d_xb, d_iproj, P);
+      } else {
+        snprintf(buf, sizeof buf, "%s.indexer.index_qk_proj.weight", pfx);
+        gemm(wview(ckpt.at(buf)), d_xb, d_iproj, P);
+      }
+      int nb = (base + P) / 4, b0 = base / 4;
+      if (nb > b0)
+        k_index_pool<<<nb - b0, 128, 0, g_str>>>(d_iproj, d_minorm + 128, d_mik,
+                                                 g_cfg.norm_eps,
+                                                 g_cfg.rope_theta, base, d_miraw,
+                                                 d_ropecs, kvpt());
+      k_index_ring<<<min(P, 4), 128, 0, g_str>>>(d_iproj, d_miraw, P, base);
+    }
+    snprintf(buf, sizeof buf, "%s.k_proj.weight", pfx);
+    gemm(wview(ckpt.at(buf)), d_xb, d_kbb, P);
+    snprintf(buf, sizeof buf, "%s.v_proj.weight", pfx);
+    gemm(wview(ckpt.at(buf)), d_xb, d_vbb, P);
+    snprintf(buf, sizeof buf, "%s.k_norm.weight", pfx);
+    float* knw = ensure_norm256(buf);
+    k_qsa_kprep<false><<<dim3(2, P), 256, 0, g_str>>>(d_kbb, knw, d_kbb,
+                                                      nullptr, g_cfg.norm_eps,
+                                                      base, d_ropecs);
+    if (qsa_kv_fp32) {
+      kv_rows_store(d_mkcf, d_kbb, base, P);
+      kv_rows_store(d_mvcf, d_vbb, base, P);
+    } else {
+      kv_runs(base, base + P, KV_PAGE, [&](int lr, size_t pr, int n) {
+        const size_t so = (size_t)(lr - base) * 512;
+        const unsigned g = (unsigned)(((size_t)n * 128 + 255) / 256);
+        k_f32_to_bf16_v4<<<g, 256, 0, g_str>>>(d_kbb + so, d_mkcb + pr * 512, 512, n,
+                                               512);
+        k_f32_to_bf16_v4<<<g, 256, 0, g_str>>>(d_vbb + so, d_mvcb + pr * 512, 512, n,
+                                               512);
+      });
+    }
+  }
+
   void mtp_ingest_b(const float* taps, const std::vector<int>& toks, int P,
-                    int base) {
+                    int base, const uint16_t* taps_bf16 = nullptr,
+                    bool normal_prompt = false) {
     if (P < 1) return;
+    if (mtp_tail_begin > 0 && base < mtp_tail_begin)
+      throw std::runtime_error("[mtp-tail] ingest crosses missing prefix");
     kv_prepare(base, base + P);  // B0: MTP rows live in the shared pool
+    static const bool profile_ingest = [] {
+      const char* e = getenv("GDEC_MTP_INGEST_PROFILE");
+      return e && e[0] == '1';
+    }();
+    // Timing events also need release if a C++ allocation/validation throws
+    // between creation and the normal end-of-ingest cleanup. CK failures
+    // retain the existing process-exit policy. No HIP calls when disabled.
+    struct IngestEventOwner {
+      bool live;
+      hipEvent_t events[4] = {};
+      explicit IngestEventOwner(bool enabled) : live(enabled) {}
+      void release() noexcept {
+        if (!live) return;
+        for (auto& ev : events) {
+          if (!ev) continue;
+          CK(hipEventDestroy(ev));
+          ev = nullptr;
+        }
+        live = false;
+      }
+      ~IngestEventOwner() noexcept { release(); }
+      IngestEventOwner(const IngestEventOwner&) = delete;
+      IngestEventOwner& operator=(const IngestEventOwner&) = delete;
+    } ingest_events(profile_ingest);
+    auto& ingest_ev = ingest_events.events;
+    if (profile_ingest) {
+      for (auto& ev : ingest_ev) CK(hipEventCreate(&ev));
+      CK(hipEventRecord(ingest_ev[0], g_str));
+    }
     CK(hipMemcpyAsync(d_tokarr, toks.data(), P * 4, hipMemcpyHostToDevice,
                       g_str));
-    mtp_input_b(taps, P);
+    mtp_input_b(taps, P, taps_bf16, normal_prompt);
+    if (profile_ingest) CK(hipEventRecord(ingest_ev[1], g_str));
     xf16_src = nullptr;
-    mtp_gr_read_b("mtp.layers.0.attn_hyper_connection", P);
-    mtp_qsa_b(P, base);
-    mtp_gr_write_b("mtp.layers.0.attn_hyper_connection", P);
-    mtp_gr_read_b("mtp.layers.0.mlp_hyper_connection", P);
-    mtp_moe_b(P);
-    mtp_gr_write_b("mtp.layers.0.mlp_hyper_connection", P);
+    static const bool kv_only = [] {
+      const char* e = getenv("GDEC_MTP_INGEST_KV_ONLY");
+      return e && e[0] == '1';
+    }();
+    static const bool fused_ingest = [] {
+      const char* e = getenv("GDEC_MTP_INGEST_FUSED");
+      return e && e[0] == '1';
+    }();
+    mtp_gr_read_b("mtp.layers.0.attn_hyper_connection", P,
+                  kv_only && fused_ingest);
+    if (profile_ingest) CK(hipEventRecord(ingest_ev[2], g_str));
+    if (kv_only) {
+      mtp_qsa_kv_b(P, base);
+    } else {
+      mtp_qsa_b(P, base);
+      mtp_gr_write_b("mtp.layers.0.attn_hyper_connection", P);
+      mtp_gr_read_b("mtp.layers.0.mlp_hyper_connection", P);
+      mtp_moe_b(P);
+      mtp_gr_write_b("mtp.layers.0.mlp_hyper_connection", P);
+    }
     mtp_pos = base + P;
     CK(hipMemcpyAsync(d_mpos, &mtp_pos, 4, hipMemcpyHostToDevice, g_str));
+    if (profile_ingest) {
+      CK(hipEventRecord(ingest_ev[3], g_str));
+      // Diagnostic-only synchronization. Normal requests never enter this.
+      CK(hipEventSynchronize(ingest_ev[3]));
+      float input_ms = 0.f, gr_ms = 0.f, state_ms = 0.f, total_ms = 0.f;
+      CK(hipEventElapsedTime(&input_ms, ingest_ev[0], ingest_ev[1]));
+      CK(hipEventElapsedTime(&gr_ms, ingest_ev[1], ingest_ev[2]));
+      CK(hipEventElapsedTime(&state_ms, ingest_ev[2], ingest_ev[3]));
+      CK(hipEventElapsedTime(&total_ms, ingest_ev[0], ingest_ev[3]));
+      fprintf(stderr,
+              "[mtp-ingest-prof] base=%d P=%d kv_only=%d fused=%d "
+              "input_ms=%.6f gr_ms=%.6f state_ms=%.6f total_ms=%.6f\n",
+              base, P, (int)kv_only, (int)(kv_only && fused_ingest),
+              input_ms, gr_ms, state_ms, total_ms);
+      ingest_events.release();  // same successful-path cleanup point
+    }
+    mtp_state_audit(true, base, P, -1, false, 0, &toks);
   }
 
   // Acceptance-rate harness: after prefill_batch(prompt) with tap capture,
@@ -4861,19 +6240,19 @@ struct GpuModel {
   }
 
   // =================== MTP speculative loop (Phase B) ========================
-  // gr_bf16 shims: d_Rb rows are bf16 under GDEC_GR_BF16, but the MTP ingest
+  // batch_bf16() shims: d_Rb rows are bf16 under GDEC_GR_BF16, but the MTP ingest
   // path and the decode state d_R are fp32. spec_taps stages rows 0..P-1 as
   // fp32 in d_Rhatb (scratch outside prefill; consumed by mtp_input_b before
   // anything else touches it).
   const float* spec_taps(int P) {
-    if (!gr_bf16) return d_Rb;
+    if (!batch_bf16()) return d_Rb;
     uint64_t n = (uint64_t)P * 10240;
     k_bf16_to_f32<<<(unsigned)((n + 255) / 256), 256, 0, g_str>>>(
         (const uint16_t*)d_Rb, d_Rhatb, n);
     return d_Rhatb;
   }
   void restore_dR_row(int d) {
-    if (gr_bf16)
+    if (batch_bf16())
       k_bf16_to_f32<<<(10240 + 255) / 256, 256, 0, g_str>>>(
           (const uint16_t*)d_Rb + (size_t)d * 10240, d_R, 10240);
     else
@@ -4902,7 +6281,8 @@ struct GpuModel {
       const int q = std::min(8, P - off);
       const bool ok = gemv_multi_q4cp(
           lw, d_xb + (size_t)off * 2560,
-          d_logits_b + (size_t)off * g_cfg.vocab, q, 2560);
+          d_logits_b + (size_t)off * g_cfg.vocab, q, 2560, false,
+          serial_order_mr_active());
       if (!ok) {
         for (int r = 0; r < q; r++) {
           gemv(lw, d_xb + (size_t)(off + r) * 2560,
@@ -4933,7 +6313,7 @@ struct GpuModel {
         int count = std::min(8, rows - group);
         if (!gemv_multi_q4cp(lw, d_xb + (size_t)(off + group) * 2560,
                               d_logits_b + (size_t)group * g_cfg.vocab,
-                              count, 2560)) {
+                              count, 2560, false, serial_order_mr_active())) {
           for (int row = 0; row < count; row++)
             gemv(lw, d_xb + (size_t)(off + group + row) * 2560,
                  d_logits_b + (size_t)(group + row) * g_cfg.vocab);
@@ -4961,7 +6341,7 @@ struct GpuModel {
         int count = std::min(8, rows - group);
         if (!gemv_multi_q4cp(lw, d_xb + (size_t)(off + group) * 2560,
                               d_logits_b + (size_t)group * g_cfg.vocab,
-                              count, 2560)) {
+                              count, 2560, false, serial_order_mr_active())) {
           for (int row = 0; row < count; row++)
             gemv(lw, d_xb + (size_t)(off + group + row) * 2560,
                  d_logits_b + (size_t)(group + row) * g_cfg.vocab);
@@ -4977,15 +6357,68 @@ struct GpuModel {
     batch_logits_device(P);
     argmax_rows(d_logits_b, g_cfg.vocab, P, d_amx_cand, d_argmax_arr, g_str);
     CK(hipMemcpy(host, d_argmax_arr, P * 4, hipMemcpyDeviceToHost));
+    diag_logits(d_logits_b, P, pos - P + 1, "verify");
   }
+
+  // Read-only first-divergence probe. Position counts the predicted token in
+  // the full prompt+generation sequence, starting at zero.
+  void diag_logits(const float* logits, int rows, int base, const char* tag) {
+    static const int target = getenv("GDEC_DIAG_LOGITS") ? atoi(getenv("GDEC_DIAG_LOGITS")) : -1;
+    if(target < 0 || base > target + 2 || base + rows <= target - 2) return;
+    std::vector<float> values(g_cfg.vocab);
+    for(int r=0;r<rows;r++) {
+      if(base+r < target-2 || base+r > target+2) continue;
+      CK(hipMemcpy(values.data(), logits+(size_t)r*g_cfg.vocab,
+                   values.size()*sizeof(float), hipMemcpyDeviceToHost));
+      int a=0,b=1;
+      if(values[b]>values[a])std::swap(a,b);
+      for(int i=2;i<g_cfg.vocab;i++) {
+        if(values[i]>values[a]) { b=a; a=i; }
+        else if(values[i]>values[b]) b=i;
+      }
+      fprintf(stderr,"[diag-logits] %s predict=%d top1=%d %.8f top2=%d %.8f margin=%.8f\n",
+              tag,base+r,a,values[a],b,values[b],values[a]-values[b]);
+    }
+  }
+
+  // The complete verify/accept/replay transaction shares one residual layout.
+  // spec_fp32_active is swapped with the sequence at scheduler handoffs.
+  struct SpecFp32Guard {
+    GpuModel& m; bool saved; bool active; int slot;
+    explicit SpecFp32Guard(GpuModel& model):m(model),saved(model.spec_fp32_active),
+      active(model.spec_precision_aligned ||
+             (getenv("GDEC_SPEC_FP32") && !env_zero("GDEC_SPEC_FP32"))),
+      slot(model.bound_) {
+      if (!active) return;
+      m.spec_fp32_active=true; m.xf16_src=nullptr; m.injp_cur=-1;
+    }
+    ~SpecFp32Guard() {
+      if (!active) return;
+      if (m.bound_ == slot) {
+        m.spec_fp32_active=saved; m.xf16_src=nullptr; m.injp_cur=-1;
+      } else {
+        m.slots_[(size_t)slot].spec_fp32_active=saved;
+      }
+    }
+    SpecFp32Guard(const SpecFp32Guard&) = delete;
+    SpecFp32Guard& operator=(const SpecFp32Guard&) = delete;
+  };
+  // Exception-safe phase markers; shared snapshots may not outlive a phase.
+  struct VerifyPhase {
+    bool& flag; bool saved;
+    explicit VerifyPhase(bool& f):flag(f),saved(f) { flag=true; }
+    ~VerifyPhase() { flag=saved; }
+    VerifyPhase(const VerifyPhase&) = delete;
+    VerifyPhase& operator=(const VerifyPhase&) = delete;
+  };
 
   // ---- GPU sampling prep (spec sampling fast path) ----
   // Corrections (bias/penalties) and the top-k pre-filter of
   // HostSampler::prepare run on device; only k (id, logit) pairs per row come
   // back and the host replays the remaining filter chain on them. The
-  // distribution is unchanged; candidate order is (value desc, id asc)
-  // instead of nth_element's arbitrary order, so same-seed draws can differ
-  // from the dense path (allowed: nth_element never promised an order).
+  // top-k support/order matches HostSampler: corrected raw logit descending,
+  // token id ascending. Selection happens before expf rounding in both paths.
+  // Different forward kernels can still supply slightly different logits.
   template <typename Sampler>
   bool sms_gpu_active(const Sampler& s) const {
     static const bool off =
@@ -5049,11 +6482,9 @@ struct GpuModel {
 
   // Per-row draft-prefix penalties. Walk row a (flat draft index base_off+a)
   // is only prepared when drafts[0..base_off+a) were all drawn before it, so
-  // its penalty hist counts include exactly those. An id already in the base
-  // hist gains only frequency * extra (presence came with the shared list);
-  // a new id costs presence + frequency * count. The shared+prefix split
-  // rounds differently from prepare()'s single merged subtraction by ~1 ulp;
-  // the sampling path is distribution-gated, not bit-gated.
+  // its penalty hist counts include exactly those. Store each prefix id's
+  // complete merged penalty, computed from integer counts as in prepare();
+  // k_corr_apply subtracts it once from the post-bias, pre-penalty logit.
   // Returns whether any prefix list is nonempty.
   template <typename Sampler>
   bool sms_prefix_upload(const Sampler& s, const int* drafts, int base_off,
@@ -5069,6 +6500,7 @@ struct GpuModel {
       int used = 0;
       int* rids = h_sm_pi.data() + (size_t)a * SMS_PCAP;
       float* rvals = h_sm_pv.data() + (size_t)a * SMS_PCAP;
+      int counts[SMS_PCAP] = {};
       for (int j = 0; j < nd; j++) {
         const int id = drafts[j];
         int slot = -1;
@@ -5077,9 +6509,13 @@ struct GpuModel {
         if (slot < 0) {
           slot = used++;
           rids[slot] = id;
-          rvals[slot] = s.hist.count(id) ? 0.0f : s.presence;
         }
-        rvals[slot] += s.frequency;
+        counts[slot]++;
+      }
+      for (int u = 0; u < used; u++) {
+        const auto h = s.hist.find(rids[u]);
+        const int count = counts[u] + (h == s.hist.end() ? 0 : h->second);
+        rvals[u] = s.presence + s.frequency * (float)count;
       }
       pn[a] = used;
       if (used) any = true;
@@ -5199,6 +6635,7 @@ struct GpuModel {
 
   std::vector<int> spec_loop_ngram(int cur, int gen, int gamma,
       const std::function<bool(int)>& emit = nullptr) {
+    SpecFp32Guard precision(*this);
     last_spec_rounds = last_spec_commit = last_spec_rollbacks = last_spec_proposed = 0;
     live_spec_rounds = live_spec_commits = live_spec_proposed = 0;
     std::vector<int> out;
@@ -5217,13 +6654,13 @@ struct GpuModel {
       return nx;
     };
     auto verify = [&](const std::vector<int>& tokens, int base) {
-      ngram_verify_active = true;
+      { VerifyPhase phase(ngram_verify_active);
       prefill_batch(tokens, base, ngram_legacy_final, true);
-      ngram_verify_active = false;
+      }
       if (!ple_on) chist.insert(chist.end(), tokens.begin(), tokens.end());
     };
     while ((int)out.size() < gen && pos < maxctx) {
-      yield_point();  // round top: only persistent slot state is live
+      spec_round_yield(maxg + 1);  // round top: no shared checkpoint is live
       if (chist.size() != (size_t)pos)
         throw std::runtime_error("ngram: token history and trunk position disagree");
       ngram.observe(chist);
@@ -5434,6 +6871,58 @@ struct GpuModel {
     }
   };
 
+  static bool spec_skip_unused_final_enabled() {
+    static const bool enabled = [] {
+      const char* e = getenv("GDEC_SPEC_SKIP_UNUSED_FINAL");
+      return e && e[0] == '1';
+    }();
+    return enabled;
+  }
+
+  // The caller-owned verify token buffer must outlive its queued H2D even
+  // when host allocations or validation throw before the normal readback.
+  // Declared after vt at the four call sites, so unwinding drains the stream
+  // before vt is destroyed. The successful path performs no HIP operation.
+  struct SpecVerifyExceptionSync {
+    const bool enabled;
+    const int exceptions;
+    const hipStream_t stream;
+    explicit SpecVerifyExceptionSync(bool active)
+        : enabled(active), exceptions(std::uncaught_exceptions()), stream(g_str) {}
+    ~SpecVerifyExceptionSync() noexcept {
+      if (enabled && std::uncaught_exceptions() > exceptions)
+        CK(hipStreamSynchronize(stream));
+    }
+    SpecVerifyExceptionSync(const SpecVerifyExceptionSync&) = delete;
+    SpecVerifyExceptionSync& operator=(const SpecVerifyExceptionSync&) = delete;
+  };
+
+  // These callers consume batched logits immediately after verification.
+  // Avoid an unused single-row mixer/head/argmax and its D2H barrier, while
+  // retaining all trunk state writes. The caller-owned token vector MUST
+  // remain alive through the following batch argmax/logits/top-k readback.
+  void mtp_verify_prefill(const std::vector<int>& tokens, int base) {
+    const int P = (int)tokens.size();
+    if (spec_skip_unused_final_enabled() && spec_snap && !mtp_tap_capture &&
+        prog_total == 0 && P > 0 && P <= maxbatch && P <= maxbatch_cap) {
+      // The round's shared snapshot is already live. Never reschedule here:
+      // spec_round_yield must obtain an adequate workspace before saving it.
+      if (P > conc_rmax_ &&
+          g_borrow_light.load(std::memory_order_acquire))
+        throw std::runtime_error(
+            "MTP verify head-skip cannot use borrowed workspace: verify rows=" +
+            std::to_string(P) + " exceeds conc_rmax=" +
+            std::to_string(conc_rmax_) +
+            "; retry with head-skip disabled or increase GDEC_CONC_RMAX");
+      // Do not use prefill_batch(final=false) here: its temporary chunk
+      // vector would die before the async token H2D has necessarily drained.
+      // No inter-chunk yield or prompt MTP tap ingest is needed for this path.
+      prefill_chunk(tokens, base, false, true);
+    } else {
+      prefill_batch(tokens, base, true, true);
+    }
+  }
+
   // Speculative decode driver. cur = emitted token for position pos (trunk
   // state processed through pos-1, MTP KV covers 0..pos-2). Greedy accept:
   // draft j committed iff it equals the trunk argmax at its verify row; the
@@ -5442,6 +6931,7 @@ struct GpuModel {
   // false aborts the loop early (serve: eos/cancel/streaming).
   std::vector<int> spec_loop(int cur, int gen, int gamma,
                              const std::function<bool(int)>& emit = nullptr) {
+    SpecFp32Guard precision(*this);
     last_spec_rounds = last_spec_commit = last_spec_rollbacks = 0;
     live_spec_rounds = live_spec_commits = live_spec_proposed = 0;
     std::vector<int> out;
@@ -5456,7 +6946,7 @@ struct GpuModel {
     };
     auto T0 = std::chrono::steady_clock::now();
     while ((int)out.size() < gen) {
-      yield_point();  // round top: mtp_pos == pos-1, d_R == h_{pos-1}
+      spec_round_yield(9);  // round top: mtp_pos == pos-1, d_R == h_{pos-1}
       int q = pos - 1;  // trunk processed through q
       int g = std::min(gctl.cur, gen - (int)out.size());
       size_t chist_sz = chist.size();
@@ -5484,9 +6974,11 @@ struct GpuModel {
       vt.reserve(g + 1);
       vt.push_back(cur);
       for (int j = 0; j < g; j++) vt.push_back(drafts[j]);
-      spec_snap = true;  // capture per-row rollback snapshots during verify
-      prefill_batch(vt, q + 1, true, true);
-      spec_snap = false;
+      SpecVerifyExceptionSync verify_exception_sync(
+          spec_skip_unused_final_enabled());
+      { VerifyPhase phase(spec_snap);
+      mtp_verify_prefill(vt, q + 1);
+      }
       batch_argmax(g + 1, v.data());
       if (!spec_force.empty())  // v[j] predicts out[out.size() + j]
         for (int j = 0; j <= g; j++)
@@ -5622,6 +7114,7 @@ struct GpuModel {
   // MTP KV covers 0..pos-2, d_R = h_{pos-1} pending pairing with cur.
   std::vector<int> spec_loop_chain(int cur, int gen, int gamma,
       const std::function<bool(int)>& emit = nullptr) {
+    SpecFp32Guard precision(*this);
     last_spec_rounds = last_spec_commit = last_spec_rollbacks =
         last_spec_proposed = 0;
     live_spec_rounds = live_spec_commits = live_spec_proposed = 0;
@@ -5644,14 +7137,14 @@ struct GpuModel {
           std::chrono::steady_clock::now() - t).count();
     };
     auto verify_ng = [&](const std::vector<int>& tokens, int base) {
-      ngram_verify_active = true;
+      { VerifyPhase phase(ngram_verify_active);
       prefill_batch(tokens, base, ngram_legacy_final, true);
-      ngram_verify_active = false;
+      }
       if (!ple_on) chist.insert(chist.end(), tokens.begin(), tokens.end());
     };
     auto T0 = std::chrono::steady_clock::now();
     while ((int)out.size() < gen && pos < maxctx) {
-      yield_point();  // round top: only persistent slot state is live
+      spec_round_yield(std::max(maxg + 1, 9));  // ngram or up to 8 MTP drafts
       if (chist.size() != (size_t)pos)
         throw std::runtime_error(
             "chain: token history and trunk position disagree");
@@ -5849,9 +7342,11 @@ struct GpuModel {
         vt.reserve(g + 1);
         vt.push_back(cur);
         for (int j = 0; j < g; j++) vt.push_back(drafts[j]);
-        spec_snap = true;  // capture per-row rollback snapshots during verify
-        prefill_batch(vt, q + 1, true, true);
-        spec_snap = false;
+        SpecVerifyExceptionSync verify_exception_sync(
+            spec_skip_unused_final_enabled());
+        { VerifyPhase phase(spec_snap);
+        mtp_verify_prefill(vt, q + 1);
+        }
         batch_argmax(g + 1, v.data());
         verify_ms += elapsed(t0);
         int a = 0;
@@ -5956,6 +7451,7 @@ struct GpuModel {
   std::vector<int> spec_loop_sample(
       int cur, int gen, int gamma, Sampler& sampler,
       const std::function<bool(int, float)>& emit = nullptr) {
+    SpecFp32Guard precision(*this);
     last_spec_rounds = last_spec_commit = last_spec_rollbacks = 0;
     live_spec_rounds = live_spec_commits = live_spec_proposed = 0;
     std::vector<int> out;
@@ -5972,7 +7468,7 @@ struct GpuModel {
     };
     auto T0 = std::chrono::steady_clock::now();
     while ((int)out.size() < gen) {
-      yield_point();  // round top: mtp_pos == pos-1, d_R == h_{pos-1}
+      spec_round_yield(9);  // round top: mtp_pos == pos-1, d_R == h_{pos-1}
       int q = pos - 1;
       int g = std::min(gctl.cur, gen - (int)out.size());
       size_t chist_sz = chist.size();
@@ -6031,9 +7527,11 @@ struct GpuModel {
       vt.reserve(g + 1);
       vt.push_back(cur);
       for (int j = 0; j < g; j++) vt.push_back(drafts[j]);
-      spec_snap = true;
-      prefill_batch(vt, q + 1, true, true);
-      spec_snap = false;
+      SpecVerifyExceptionSync verify_exception_sync(
+          spec_skip_unused_final_enabled());
+      { VerifyPhase phase(spec_snap);
+      mtp_verify_prefill(vt, q + 1);
+      }
       bool smg_v = false;
       if (smg) {
         const bool pfx = sms_prefix_upload(sampler, drafts.data(), 0, g + 1);
@@ -6229,6 +7727,7 @@ struct GpuModel {
   std::vector<int> spec_loop_chain_sample(
       int cur, int gen, int gamma, Sampler& sampler, bool mtp_ok,
       const std::function<bool(int, float)>& emit = nullptr) {
+    SpecFp32Guard precision(*this);
     last_spec_rounds = last_spec_commit = last_spec_rollbacks =
         last_spec_proposed = 0;
     live_spec_rounds = live_spec_commits = live_spec_proposed = 0;
@@ -6251,14 +7750,14 @@ struct GpuModel {
           std::chrono::steady_clock::now() - t).count();
     };
     auto verify_ng = [&](const std::vector<int>& tokens, int base) {
-      ngram_verify_active = true;
+      { VerifyPhase phase(ngram_verify_active);
       prefill_batch(tokens, base, ngram_legacy_final, true);
-      ngram_verify_active = false;
+      }
       if (!ple_on) chist.insert(chist.end(), tokens.begin(), tokens.end());
     };
     auto T0 = std::chrono::steady_clock::now();
     while ((int)out.size() < gen && pos < maxctx) {
-      yield_point();  // round top: only persistent slot state is live
+      spec_round_yield(std::max(maxg + 1, 9));  // ngram or up to 8 MTP drafts
       if (chist.size() != (size_t)pos)
         throw std::runtime_error(
             "chain-sample: token history and trunk position disagree");
@@ -6559,9 +8058,11 @@ struct GpuModel {
         vt.reserve(g + 1);
         vt.push_back(cur);
         for (int j = 0; j < g; j++) vt.push_back(drafts[j]);
-        spec_snap = true;  // capture per-row rollback snapshots during verify
-        prefill_batch(vt, q + 1, true, true);
-        spec_snap = false;
+        SpecVerifyExceptionSync verify_exception_sync(
+            spec_skip_unused_final_enabled());
+        { VerifyPhase phase(spec_snap);
+        mtp_verify_prefill(vt, q + 1);
+        }
         bool smg_v = false;
         if (smg) {
           const bool pfx = sms_prefix_upload(sampler, drafts.data(), 0, g + 1);
@@ -6806,9 +8307,10 @@ struct GpuModel {
   // cache key (bind also drops that cache).
 #define GDEC_SLOT_FIELDS(X)                                                    \
   X(pos) X(ple_ringpos) X(chist) X(ngram) X(mtp_pos) X(kv_seq) X(d_ptab)      \
+  X(mtp_tail_begin) X(mtp_tail_prompt_end)                                  \
   X(mrope_active_) X(rope_delta_) X(mrope_pos_) X(mrope_grids_) X(d_rdelta)   \
   X(img_inj) X(img_hash_) X(d_img_emb) X(img_emb_rows) X(img_emb_cap)         \
-  X(mtp_tap_capture) X(spec_snap) X(ngram_verify_active)                      \
+  X(mtp_tap_capture) X(spec_snap) X(ngram_verify_active) X(spec_fp32_active)                      \
   X(prog_total) X(prog_base) X(prog_last_est) X(prog_req) X(prog_t0)          \
   X(prog_last) X(last_spec_rounds) X(last_spec_commit) X(last_spec_rollbacks) \
   X(last_spec_proposed) X(live_spec_rounds) X(live_spec_commits)              \
@@ -6994,6 +8496,9 @@ struct GpuModel {
   // (residual stream in the big set, per-slot fields, KV pages) is untouched
   // by the borrower; chunk-level member state is restored explicitly.
   void conc_borrow_yield(int base, int P, int layer) {
+    // Verify/replay holds shared checkpoints and row snapshots. Lending here
+    // would let another sequence overwrite them even with slot-local flags.
+    if (spec_fp32_active || spec_snap || ngram_verify_active) return;
     if (!ws_ok_ || !borrow_query_fn || ws_lent_ || P <= conc_rmax_) return;
     if (moe_lt || qsa_union) return;  // paths with unduplicated scratch
     if (!borrow_query_fn()) return;
@@ -7107,7 +8612,7 @@ struct GpuModel {
   void slot_reset(int s, int back) {
     bind(s);
     reset_state();
-    mtp_tap_capture = spec_snap = ngram_verify_active = false;
+    mtp_tap_capture = spec_snap = ngram_verify_active = spec_fp32_active = false;
     prog_total = 0;
     bind(back);
   }
@@ -7116,6 +8621,7 @@ struct GpuModel {
   // process (the constructor memsets d_S/d_convst; hipMalloc's fresh zero
   // pages cover d_ring — reproduce both here).
   void reset_state() {
+    mtp_tail_begin = mtp_tail_prompt_end = 0;
     pos = 0;
     ple_ringpos = 0;
     chist.clear();
@@ -7164,6 +8670,7 @@ struct GpuModel {
                   t_enq / (t_n + 1), t_sync / (t_n + 1));
       }
       t_n++;
+      diag_logits(d_logits, 1, pos, "serial");
       return id;
     }
     // direct path (debug/perf): upload scalars, enqueue everything
@@ -7206,6 +8713,7 @@ struct GpuModel {
     }
     tock(4, t4);
     t_n++;
+    diag_logits(d_logits, 1, pos, "serial");
     return id;
   }
 

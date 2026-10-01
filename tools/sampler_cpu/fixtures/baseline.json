@@ -1,0 +1,8 @@
+{
+  "purpose": "Regression-only historical HostSampler fixture; not used by the engine",
+  "base_commit": "306676ec9c200ba2c82618429bf0bcba6e5d0daf",
+  "source": "src/gpu/parts/51_host_cfg.inc",
+  "symbol": "HostSampler",
+  "excerpt_sha256": "ebf276a05424f7c57742c53b738c9d52d37794c3cc3e42f70d29fc874a139073",
+  "verification": "Fixture struct text was compared byte-for-byte after UTF-8 newline normalization with git show of the named base commit. Leading fixture comments are excluded from the excerpt hash."
+}

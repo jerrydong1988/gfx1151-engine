@@ -221,9 +221,9 @@ static void argmax_rows(const float* x, int n, int rows,
 
 // --- GPU sampling prep (spec sampling fast path) ---
 // k_corr_apply replays HostSampler::prepare's correction phases on device:
-// bias adds first, then penalty subtracts, then this row's draft-prefix
-// penalty subtracts. Each list has unique ids, so within a phase the adds are
-// independent; phases are ordered by __syncthreads (one block per row).
+// bias adds first, then one merged penalty subtraction per id. Prefix ids
+// preserve their post-bias value so the shared base penalty is not rounded
+// into their final result. Lists have unique ids; one block handles each row.
 __global__ void k_corr_apply(float* __restrict__ x, int stride,
                              const int* __restrict__ b_ids,
                              const float* __restrict__ b_vals, int nb,
@@ -232,24 +232,34 @@ __global__ void k_corr_apply(float* __restrict__ x, int stride,
                              const int* __restrict__ p_ids,
                              const float* __restrict__ p_vals,
                              const int* __restrict__ p_n, int pcap) {
+  __shared__ float prefix_raw[64];  // SMS_PCAP, capped by sms_prefix_upload.
   float* xr = x + (size_t)blockIdx.y * stride;
+  const int np = p_n ? p_n[blockIdx.y] : 0;
+  const int* pr_ids = np ? p_ids + (size_t)blockIdx.y * pcap : nullptr;
+  const float* pr_vals = np ? p_vals + (size_t)blockIdx.y * pcap : nullptr;
   for (int i = threadIdx.x; i < nb; i += blockDim.x) xr[b_ids[i]] += b_vals[i];
   __syncthreads();
+  if (np) {
+    for (int i = threadIdx.x; i < np; i += blockDim.x)
+      prefix_raw[i] = xr[pr_ids[i]];
+    __syncthreads();
+  }
   for (int i = threadIdx.x; i < nh; i += blockDim.x) xr[h_ids[i]] -= h_vals[i];
   __syncthreads();
-  const int np = p_n ? p_n[blockIdx.y] : 0;
-  const int* pr_ids = p_ids + (size_t)blockIdx.y * pcap;
-  const float* pr_vals = p_vals + (size_t)blockIdx.y * pcap;
-  for (int i = threadIdx.x; i < np; i += blockDim.x) xr[pr_ids[i]] -= pr_vals[i];
+  for (int i = threadIdx.x; i < np; i += blockDim.x)
+    xr[pr_ids[i]] = prefix_raw[i] - pr_vals[i];
 }
 
-// Radix top-k over fp32 logits via their monotonic u32 keys (same map as
-// amx_pack). Two 12-bit histogram passes narrow the k-th value to a 24-bit
+// Radix top-k over fp32 logits via monotonic u32 keys; numerically equal
+// signed zeros share a key. Two 12-bit passes narrow the k-th value to a 24-bit
 // prefix; collect then writes every key >= T (the true top-k is a subset).
 // ctrl per row (8 ints): 0=prefix, 1=strictly-in count, 2=k, 3=done, 4=T,
 // 5=expected collect count.
 __device__ __forceinline__ unsigned tk_key(float v) {
   unsigned u = __float_as_uint(v);
+  // Final top-k sorting treats +0 == -0 and breaks ties by token id. Keep
+  // both signs in the same radix bucket so collection cannot discard -0.
+  if ((u & 0x7FFFFFFFu) == 0) u = 0;
   return u ^ ((u & 0x80000000u) ? 0xFFFFFFFFu : 0x80000000u);
 }
 

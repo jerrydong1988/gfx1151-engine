@@ -37,6 +37,29 @@ __global__ void k_gdn_conv_b(const float* __restrict__ x, const float* __restric
   *(float4*)(out + i) = o;
 }
 
+// Diagnostic small-batch counterpart of k_gdn_conv: keep its history-first
+// sum and multiply-by-sigmoid expression. Read the unchanged pre-batch state
+// plus earlier raw input rows; snapshot/update remain separate host launches.
+// Input and output must be distinct because later rows read earlier inputs.
+__global__ void k_gdn_conv_b_serial_math(const float* __restrict__ x,
+                                        const float* __restrict__ cw,
+                                        const float* __restrict__ convst,
+                                        float* __restrict__ out, int P, int qkv) {
+  const int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
+  if (i >= (int64_t)P * qkv) return;
+  const int t = (int)(i / qkv), ch = (int)(i - (int64_t)t * qkv);
+  const float h0 = t >= 3 ? x[(size_t)(t - 3) * qkv + ch]
+                          : convst[(size_t)t * qkv + ch];
+  const float h1 = t >= 2 ? x[(size_t)(t - 2) * qkv + ch]
+                          : convst[(size_t)(t + 1) * qkv + ch];
+  const float h2 = t >= 1 ? x[(size_t)(t - 1) * qkv + ch]
+                          : convst[(size_t)(t + 2) * qkv + ch];
+  float a = cw[ch * 4 + 0] * h0 + cw[ch * 4 + 1] * h1 +
+            cw[ch * 4 + 2] * h2 + cw[ch * 4 + 3] * x[i];
+  float sg = 1.f / (1.f + expf(-a));
+  out[i] = a * sg;
+}
+
 // --- write back conv state: convst[j] = last-3 inputs after P tokens.
 // Per-channel independent; old values are read into registers before writing.
 __global__ void k_convst_update(float* __restrict__ convst, const float* __restrict__ x,

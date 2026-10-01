@@ -8,3 +8,6 @@ data/kvsnap
 data/ppbench/
 data/*.bin
 .rocprofv3
+
+# Local speculative-validation outputs can contain prompts and raw model state.
+/spec-validation-results/

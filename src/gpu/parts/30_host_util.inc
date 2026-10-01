@@ -150,6 +150,16 @@ static size_t devarena_estimate(const Checkpoint& ck, int maxctx) {
   const size_t nkv = nqsa + (mtp_on ? 1 : 0);
   if (kv_paged) add(kvpg * 4);  // d_ptab
   add((size_t)64 << 20);  // decode 单行小缓冲合计（d_R..d_logits 等）
+  // Match the opt-in row-batched aligned split-attention scratch allocation.
+  // The base row is included in the existing single-row estimate above.
+  const char* spec_policy = getenv("GDEC_SPEC_PRECISION");
+  const char* spec_rows = getenv("GDEC_SPEC_QSA_BATCH");
+  if (spec_policy && !strcmp(spec_policy, "aligned") && spec_rows &&
+      strcmp(spec_rows, "0")) {
+    const size_t rows = std::max<size_t>(1, std::min<size_t>(65, std::min(mc, BP)));
+    add((rows - 1) * 2 * QSA_DEC_NSPLIT * 12 * 256 * sizeof(float));
+    add((rows - 1) * 2 * QSA_DEC_NSPLIT * 12 * 2 * sizeof(float));
+  }
   add(ngdn * 48 * 128 * 128 * 4);           // d_S
   add(ngdn * 3 * 10240 * 4);                // d_convst
   add(ngdn * 10240 * 4 * 4);                // d_convw
@@ -886,7 +896,8 @@ static void embed_rows(const WView& et, const int* d_tok, int P, void* out,
 // rows. Returns false when the shape/layout is unsupported (caller falls
 // back to the dequant->bf16->hipBLASLt path).
 static bool gemv_multi_q4cp(const WView& w, const void* x, float* y, int P,
-                            uint64_t xstride, bool xbf16 = false) {
+                            uint64_t xstride, bool xbf16 = false,
+                            bool serial_order = false) {
   if (getenv("GDEC_NO_GEMVMR")) return false;
   if (P < 1 || P > 8) return false;
   if (!xstride) xstride = w.cols;
@@ -935,9 +946,14 @@ static bool gemv_multi_q4cp(const WView& w, const void* x, float* y, int P,
     switch (P) {
 #define GDEC_GEMV_MR_CASE(PP)                                              \
   case PP:                                                                 \
-    k_bf16_gemv_mr<PP><<<(unsigned)blocks, threads, 0, g_str>>>(           \
-        (const uint16_t*)w.data, (const float*)x, y, w.rows, w.cols,       \
-        xstride);                                                          \
+    if (serial_order)                                                      \
+      k_bf16_gemv_mr<PP, true><<<(unsigned)blocks, threads, 0, g_str>>>(       \
+          (const uint16_t*)w.data, (const float*)x, y, w.rows, w.cols,         \
+          xstride);                                                          \
+    else                                                                     \
+      k_bf16_gemv_mr<PP><<<(unsigned)blocks, threads, 0, g_str>>>(              \
+          (const uint16_t*)w.data, (const float*)x, y, w.rows, w.cols,         \
+          xstride);                                                          \
     break;
       GDEC_GEMV_MR_CASE(1)
       GDEC_GEMV_MR_CASE(2)

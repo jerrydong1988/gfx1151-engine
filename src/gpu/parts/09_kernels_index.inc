@@ -1,3 +1,19 @@
+// Shared page addressing precedes both standalone index kernels and the
+// engine page pool in 10_ple_io.inc. Address math is unchanged.
+constexpr int KV_PAGE_SHIFT = 8;
+constexpr int KV_PAGE = 1 << KV_PAGE_SHIFT;          // 256 tokens
+constexpr int KV_PAGE_BLOCKS = KV_PAGE / 4;          // 64 indexer blocks
+constexpr int KV_PAGE_BLOCK_SHIFT = KV_PAGE_SHIFT - 2;
+__device__ __forceinline__ int kv_row(const int* __restrict__ ptab, int t) {
+  return ptab ? (ptab[t >> KV_PAGE_SHIFT] << KV_PAGE_SHIFT) | (t & (KV_PAGE - 1))
+              : t;
+}
+__device__ __forceinline__ int ik_blk(const int* __restrict__ ptab, int b) {
+  return ptab ? (ptab[b >> KV_PAGE_BLOCK_SHIFT] << KV_PAGE_BLOCK_SHIFT) |
+                    (b & (KV_PAGE_BLOCKS - 1))
+              : b;
+}
+
 // ---------------- Lightning indexer: fused score + top-512 select kernels ----
 // Self-contained (HIP only, no engine globals) so tools/index_fast_test.cu can
 // include it next to the production kernels it is checked against.
@@ -327,9 +343,11 @@ k_index_scores_tiled(const float* __restrict__ q,
 // out[t * nb + b] written only for t < count, b < nb, b < (first + t + 1) / 4.
 // Tile key j (0..127) -> key S + 64 * (j >> 5) + (j & 31), S = 256m + 32p.
 // grid = (2 * ceil(nb / 256), ceil(count / 64)), block = 256.
+template <bool Paged = false>
 __global__ void __launch_bounds__(256)
 k_index_scores_t64(const float* __restrict__ q, const float* __restrict__ keys,
-                   float* __restrict__ out, int nb, int count, int first) {
+                   float* __restrict__ out, int nb, int count, int first,
+                   const int* __restrict__ ptab = nullptr) {
   const int par = (int)blockIdx.x & 1;
   const int S = ((int)blockIdx.x >> 1) * 256 + par * 32;
   const int q0 = (int)blockIdx.y * 64;
@@ -344,7 +362,13 @@ k_index_scores_t64(const float* __restrict__ q, const float* __restrict__ keys,
 #pragma unroll
   for (int i = 0; i < 2; i++) {
     const int j = (tid + 256 * i) >> 2, key = S + 64 * (j >> 5) + (j & 31);
-    kp[i] = key < nb ? keys + (size_t)key * 128 + (tid & 3) * 4 : nullptr;
+    if (key < nb) {
+      int source = key;
+      if constexpr (Paged) source = ik_blk(ptab, key);
+      kp[i] = keys + (size_t)source * 128 + (tid & 3) * 4;
+    } else {
+      kp[i] = nullptr;
+    }
   }
   float4 pq[4], pk[2];
   auto load = [&](int d0) {

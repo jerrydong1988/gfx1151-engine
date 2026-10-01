@@ -166,7 +166,7 @@ __global__ void k_q4cp_gemv_mr(const uint8_t* __restrict__ codes,
 }
 
 // --- bf16-weight multi-row GEMV: y[P,N] = x[P,K] . W[N,K]^T (bf16 weights) ---
-template <int P>
+template <int P, bool SerialOrder = false>
 __global__ void k_bf16_gemv_mr(const uint16_t* __restrict__ w,
                                const float* __restrict__ x,
                                float* __restrict__ y, uint64_t rows,
@@ -193,20 +193,39 @@ __global__ void k_bf16_gemv_mr(const uint16_t* __restrict__ w,
     float w0[8], w1[8];
 #pragma unroll
     for (int j = 0; j < 8; j++) {
-      w0[j] = __bfloat162float(*(__hip_bfloat16*)(&h0[j]));
-      w1[j] = __bfloat162float(*(__hip_bfloat16*)(&h1[j]));
+      if constexpr (SerialOrder) {
+        // Match k_bf16_gemv's bit expansion, including raw BF16 payloads.
+        uint32_t u0 = (uint32_t)h0[j] << 16;
+        uint32_t u1 = (uint32_t)h1[j] << 16;
+        memcpy(&w0[j], &u0, 4);
+        memcpy(&w1[j], &u1, 4);
+      } else {
+        w0[j] = __bfloat162float(*(__hip_bfloat16*)(&h0[j]));
+        w1[j] = __bfloat162float(*(__hip_bfloat16*)(&h1[j]));
+      }
     }
 #pragma unroll
     for (int p = 0; p < P; p++) {
       const float* xg = x + (size_t)p * xstride + c;
       float4 xa = *(const float4*)xg;
       float4 xb = *(const float4*)(xg + 4);
-      float b0 = w0[0] * xa.x + w0[1] * xa.y + w0[2] * xa.z + w0[3] * xa.w +
-                 w0[4] * xb.x + w0[5] * xb.y + w0[6] * xb.z + w0[7] * xb.w;
-      float b1 = w1[0] * xa.x + w1[1] * xa.y + w1[2] * xa.z + w1[3] * xa.w +
-                 w1[4] * xb.x + w1[5] * xb.y + w1[6] * xb.z + w1[7] * xb.w;
-      acc0[p] += b0;
-      acc1[p] += b1;
+      if constexpr (SerialOrder) {
+        // Keep the serial lane's c-major, then j-major accumulation chain.
+        // Interleaving independent output rows does not regroup either sum.
+        const float xv[8] = {xa.x, xa.y, xa.z, xa.w, xb.x, xb.y, xb.z, xb.w};
+#pragma unroll
+        for (int j = 0; j < 8; j++) {
+          acc0[p] += w0[j] * xv[j];
+          acc1[p] += w1[j] * xv[j];
+        }
+      } else {
+        float b0 = w0[0] * xa.x + w0[1] * xa.y + w0[2] * xa.z + w0[3] * xa.w +
+                   w0[4] * xb.x + w0[5] * xb.y + w0[6] * xb.z + w0[7] * xb.w;
+        float b1 = w1[0] * xa.x + w1[1] * xa.y + w1[2] * xa.z + w1[3] * xa.w +
+                   w1[4] * xb.x + w1[5] * xb.y + w1[6] * xb.z + w1[7] * xb.w;
+        acc0[p] += b0;
+        acc1[p] += b1;
+      }
     }
   }
 #pragma unroll

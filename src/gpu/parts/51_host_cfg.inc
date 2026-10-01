@@ -1041,6 +1041,54 @@ static uint64_t fingerprint(const GpuModel& m) {
   uint64_t h = mix64(0x6764656b76736e70ULL + FMT);
   auto add = [&](uint64_t v) { h = mix64(h ^ v); };
   for (const auto& f : g_model_files) add(file_id(f));
+  // Namespace the bounded tail-proposer policy even when a particular
+  // request falls back to full initialization. Tail-enabled requests require
+  // RAM/SSD caches disabled; existing checkpoint formats cannot encode a hole.
+  if (GpuModel::mtp_prefill_tail_tokens() > 0) {
+    add(0x6d74707461696c01ULL);
+    add((uint64_t)GpuModel::mtp_prefill_tail_tokens());
+  }
+  // Isolate the opt-in synchronization candidate until its device-level
+  // equivalence is established. The default-off cache identity is unchanged.
+  if (GpuModel::v2_moe_lds_sync_enabled()) add(0x76326c6473737901ULL);
+  // Isolate the opt-in scale-load scheduling candidate; default identity stays unchanged.
+  if (GpuModel::v2_moe_defer_scale_enabled()) add(0x7632646566736301ULL);
+  // Isolate the integer Q4 byte-permute candidate; default identity stays unchanged.
+  if (GpuModel::v2_moe_permute_q4_enabled()) add(0x76327065726d7101ULL);
+  // Isolate the combined reduce/inverse-Hadamard candidate while validated.
+  if (GpuModel::v2_moe_reduce_had_enabled()) add(0x7632726564686401ULL);
+  // Preserve GU=1's R12b identity; GU=2 has its own namespace.
+  if (GpuModel::v2_moe_fused_gu_mode() == 1) add(0x7632667573677501ULL);
+  else if (GpuModel::v2_moe_fused_gu_mode() == 2) add(0x7632667573677502ULL);
+  // Keep the reduction experiment separate until device equivalence is checked.
+  if (GpuModel::hc_norm_wave_enabled()) add(0x68636e7761766501ULL);
+  // Isolate the raw PLE lookahead experiment while its lifecycle is validated.
+  if (GpuModel::ple_lookahead_enabled()) add(0x706c656168656101ULL);
+  // Isolate the opt-in verify-head scheduling change while it is validated.
+  if (GpuModel::spec_skip_unused_final_enabled()) add(0x6d74706e6f666901ULL);
+  // Aligned verify changes the numerical history in saved KV/GDN states.
+  // Keep legacy cache identity unchanged and namespace each aligned revision.
+  if (m.spec_precision_aligned) {
+    add(0x73706563616c0002ULL);
+    // The BF16 MR repair changes verify's numerical history; isolate opt-in
+    // caches while preserving the old aligned identity when disabled.
+    if (m.spec_serial_order_mr) add(0x737065636d726f01ULL);
+    add(!GpuModel::env_zero("GDEC_SPEC_INDEX_SERIAL"));
+    add(!GpuModel::env_zero("GDEC_SPEC_ATTN_SERIAL"));
+    // Isolate the opt-in row-batched experiment without changing the existing
+    // aligned-v2 identity when it is off.
+    if (m.spec_qsa_batch) add(0x717361726f777301ULL);
+  }
+  // R13 descriptor-stride experiment has its own opt-in identity.
+  if (GpuModel::mtp_branch_strided_enabled()) add(0x6d74706273743101ULL);
+  // R13 opt-in tap source; isolate checkpoints until fully validated.
+  if (GpuModel::mtp_tap_norm_fused_enabled()) add(0x6d7470746e663101ULL);
+  const char* kv_only_ingest = getenv("GDEC_MTP_INGEST_KV_ONLY");
+  if (kv_only_ingest && kv_only_ingest[0] == '1') {
+    add(0x6d74706b766f0001ULL);
+    const char* fused_ingest = getenv("GDEC_MTP_INGEST_FUSED");
+    if (fused_ingest && fused_ingest[0] == '1') add(0x6d7470696e676601ULL);
+  }
   for (uint64_t v : {(uint64_t)m.ple_on, (uint64_t)G.kvb, (uint64_t)G.has_ik,
                      (uint64_t)G.nqsa, (uint64_t)g_cfg.layers, (uint64_t)g_cfg.d,
                      (uint64_t)g_cfg.branches, (uint64_t)KV_PAGE})
@@ -1341,20 +1389,28 @@ struct HostSampler {
           logits[h.first] -= presence + frequency * (float)h.second;
     float lmax = -INFINITY;
     for (int i = 0; i < n; i++) lmax = fmaxf(lmax, logits[i]);
-    // unnormalized probs after temperature
-    for (int i = 0; i < n; i++) logits[i] = expf((logits[i] - lmax) / temp);
     cand.clear();
     if (top_k > 0 && top_k < n) {
+      // Match sms_topk_rows: select on corrected raw logits, then order by
+      // (logit descending, token id ascending). Selecting after expf can
+      // turn distinct logits into a rounded tie and change the top-k support.
       cand.resize(n);
       for (int i = 0; i < n; i++) cand[i] = i;
+      auto better = [&](int a, int b) {
+        if (logits[a] != logits[b]) return logits[a] > logits[b];
+        return a < b;
+      };
       std::nth_element(cand.begin(), cand.begin() + top_k, cand.end(),
-                       [&](int a, int b) { return logits[a] > logits[b]; });
+                       better);
       cand.resize(top_k);
+      std::sort(cand.begin(), cand.end(), better);
       work.resize(cand.size());
-      for (size_t j = 0; j < cand.size(); j++) work[j] = logits[cand[j]];
+      for (size_t j = 0; j < cand.size(); j++)
+        work[j] = expf((logits[cand[j]] - lmax) / temp);
       std::fill(logits.begin(), logits.end(), 0.0f);
       for (size_t j = 0; j < cand.size(); j++) logits[cand[j]] = work[j];
     } else {
+      for (int i = 0; i < n; i++) logits[i] = expf((logits[i] - lmax) / temp);
       cand.reserve(n);
       for (int i = 0; i < n; i++)
         if (logits[i] > 0.0f) cand.push_back(i);
@@ -1398,8 +1454,8 @@ struct HostSampler {
     for (int i : cand) logits[i] = (float)(logits[i] / z);
   }
 
-  // Draw from a distribution produced by prepare(). Candidate order is kept
-  // stable with the serial sampler so existing seeded behavior is unchanged.
+  // Draw from prepare()'s distribution. With top-k, candidate order matches
+  // the sparse GPU path; without top-k it remains ascending token id.
   int draw_prepared(const std::vector<float>& probs, float* lp,
                     bool add_hist) {
     double z = 0;
@@ -2090,6 +2146,19 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
       mcp++;
     bool cont = !hist.empty() && mcp == hist.size() && mcp < g.ids.size();
     int n_cached = cont ? (int)mcp : 0;
+    bool mtp_tail_warm_recompute = false;
+    if (cont && m.mtp_tail_begin > 0) {
+      // The previous cold request did not populate the old MTP prefix. Merely
+      // clearing its lower bound would expose stale/uninitialized rows. This
+      // first version gives warm requests a full target+MTP recompute instead.
+      fprintf(stderr, "[mtp-tail] warm continuation requires full recompute; "
+                      "cached=%d previous_begin=%d\n", n_cached, m.mtp_tail_begin);
+      mtp_tail_warm_recompute = true;
+      cont = false;
+      mcp = 0;
+      n_cached = 0;
+      mtp_live = false;
+    }
     // M-RoPE restrictions, decided before any state mutation:
     // KV reuse (cont) IS sound for M-RoPE — prefix positions are
     // suffix-independent and RoPE is applied before K is cached, so the
@@ -2281,6 +2350,26 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
                           (!g.sample ||
                            getenv("GDEC_NOSPEC_SAMPLE") == nullptr) &&
                           getenv("GDEC_NOSPEC") == nullptr;
+    // Tail-only initialization is an explicit serve-only cold experiment.
+    // Do not silently apply it to checkpoint, dense, concurrent, chain or
+    // multimodal paths that this candidate has not validated.
+    const int tail_requested = GpuModel::mtp_prefill_tail_tokens();
+    if (tail_requested > 0) {
+      const char* kv_only = getenv("GDEC_MTP_INGEST_KV_ONLY");
+      const char* why = nullptr;
+      if (mtp_tail_warm_recompute) why = "previous-tail-warm-full-recompute";
+      else if (cont) why = "warm-or-checkpoint";
+      else if (rckpt::enabled() || !kvs.dir.empty()) why = "checkpoint-cache-enabled";
+      else if (!use_spec) why = "not-pure-mtp";
+      else if (m.nslots != 1) why = "multiple-slots";
+      else if (m.qsa_dense) why = "dense-qsa";
+      else if (!kv_only || kv_only[0] != '1') why = "kv-only-required";
+      else if (m.mrope_active_) why = "multimodal";
+      else if (!m.mtp_start_tail((int)g.ids.size())) why = "short-or-unaligned-chunks";
+      if (why)
+        fprintf(stderr, "[mtp-tail] full-prefill fallback requested=%d reason=%s\n",
+                tail_requested, why);
+    }
     m.last_spec_rounds = m.last_spec_commit = m.last_spec_rollbacks = 0;
     // Prompt ingest. A failure here (or a KvOverflow anywhere below) lands
     // in the catch at the end: the slot is reset, the client gets D error.
@@ -2348,7 +2437,15 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
     m.prog_total = 0;
     m.mtp_tap_capture = false;  // decode/verify must not capture taps
     hist = g.ids;  // prompt fully ingested on both paths
-    if (use_spec || chain_mtp) mtp_live = true;  // MTP KV complete & in lockstep
+    if (m.mtp_tail_begin > 0) {
+      if (m.mtp_pos != m.mtp_tail_prompt_end || m.pos != m.mtp_tail_prompt_end + 1)
+        throw std::runtime_error("[mtp-tail] incomplete prompt initialization");
+      fprintf(stderr, "[mtp-tail] ready valid_rows=[%d,%d) pooled_blocks=[%d,%d)\n",
+              m.mtp_tail_begin, m.mtp_pos, m.mtp_tail_begin / 4, m.mtp_pos / 4);
+    }
+    // Tail state is valid for this request, but is never persisted/restored;
+    // the next warm request above forces a full recompute.
+    if (use_spec || chain_mtp) mtp_live = true;
     if (g.sample) {  // d_logits still holds the last position's logits
       m.get_logits(lbuf);
       cur = smp.sample(lbuf, &cur_lp);
