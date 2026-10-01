@@ -1923,6 +1923,16 @@ int main() {
       printf("%-28s %s\n", "qsa_wmma_rm_paged_bits", ok7 ? "PASS" : "FAIL");
       fails += !ok5;
       fails += !ok7;
+      // Only launch order changes; include nonzero FIRST, reversed pages and
+      // partial tail blocks from the fixture above.
+      k_qsa_wmma<true, true, true><<<dim3((P - FIRST) * HKV), 256>>>(
+          dq, dkp, dvp, dvctp, dp5, P, DH, HKV, HQ, sel0, FIRST, 0, dptab);
+      TCK(hipGetLastError());
+      p5 = dget(dp5, (size_t)P * HQ * DH);
+      const bool interleave_ok =
+          memcmp(p5.data() + off, o5.data() + off, cnt * 4) == 0;
+      printf("%-28s %s\n", "qsa_head_interleave_bits", interleave_ok ? "PASS" : "FAIL");
+      fails += !interleave_ok;
       TCK(hipFree(dkp));
       TCK(hipFree(dvp));
       TCK(hipFree(dvctp));

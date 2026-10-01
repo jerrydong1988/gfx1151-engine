@@ -228,6 +228,47 @@ __global__ void k_f32_to_bf16_v4_bt(const float* __restrict__ x,
   }
 }
 
+// Paged dual-layout V store: convert each input once, retain both cache layouts.
+__global__ void k_f32_to_bf16_v4_dual(const float* __restrict__ x,
+                                    uint16_t* __restrict__ out, uint64_t xs,
+                                    int P, int n, int base, uint16_t* __restrict__ vc, const int* __restrict__ ptab) {
+  const int dims = n / 2;
+  const int b0 = base / 4;
+  const int b1 = (base + P + 3) / 4;
+  uint64_t gid = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
+  uint64_t work = (uint64_t)(b1 - b0) * n;
+  if (gid >= work) return;
+    int b = b0 + (int)(gid / n);
+    int hd = (int)(gid % n);
+  int kvh = hd / dims;
+  int dim = hd - kvh * dims;
+  uint16_t v[4] = {};
+  int valid = 0;
+#pragma unroll
+  for (int slot = 0; slot < 4; ++slot) {
+    int abs = b * 4 + slot;
+    if (abs >= base) {
+      if (abs < base + P) {
+        v[slot] = f2bf(x[(size_t)(abs - base) * xs + kvh * (n / 2) + dim]);
+        vc[(size_t)kv_row(ptab,abs)*n+hd]=v[slot];
+      }
+      valid |= 1 << slot;
+    }
+  }
+  uint16_t* dst = out + (((size_t)ik_blk(ptab,b) * 2 + kvh) * (n / 2) + dim) * 4;
+  if (valid == 0xf) {
+    uint2 pk;
+    pk.x = (uint32_t)v[0] | ((uint32_t)v[1] << 16);
+    pk.y = (uint32_t)v[2] | ((uint32_t)v[3] << 16);
+    *(uint2*)dst = pk;
+  } else {
+#pragma unroll
+    for (int slot = 0; slot < 4; ++slot)
+      if (valid & (1 << slot)) dst[slot] = v[slot];
+  }
+}
+
+
 // Rebuild block-transposed V for absolute rows [r0, r1) from the row-major
 // BF16 cache (kvsnap restore: the snapshot stores only the row-major cache).
 // Same packing as k_f32_to_bf16_v4_bt (n = 512); bits are copied, so the
@@ -1307,7 +1348,7 @@ __device__ __forceinline__ void tr16x16_bf16(unsigned a[8]) {
 // Paged (A1c): KV rows / vct blocks go through the page table ptab
 // (kv_row / ik_blk). Compile-time switch so the unpaged production
 // instantiations keep their exact codegen (this kernel is VGPR-sensitive).
-template <bool TransposedV = false, bool Paged = false>
+template <bool TransposedV = false, bool Paged = false, bool InterleaveHeads = false>
 __global__ void __launch_bounds__(256)
     k_qsa_wmma(const float* __restrict__ q, const uint16_t* __restrict__ kc,
                const uint16_t* __restrict__ vc, const uint16_t* __restrict__ vct,
@@ -1316,7 +1357,9 @@ __global__ void __launch_bounds__(256)
                int first, int kbase = 0, const int* __restrict__ ptab = nullptr) {
   (void)P;
   (void)ptab;
-  const int token = first + (int)blockIdx.x, kvh = blockIdx.y;
+  const int query_index = InterleaveHeads ? blockIdx.x / 2 : blockIdx.x;
+  const int token = first + query_index;
+  const int kvh = InterleaveHeads ? blockIdx.x % 2 : blockIdx.y;
   const int qrow = token - kbase;  // batch-local q/out row; token stays absolute
   const int lane = threadIdx.x & 31, w = threadIdx.x >> 5;
   __shared__ uint16_t Qs[16][QW_DH + 8];   // 8704B
@@ -1341,7 +1384,7 @@ __global__ void __launch_bounds__(256)
     }
   }
   __syncthreads();
-  const int* blocks = selected + (size_t)blockIdx.x * 512;
+  const int* blocks = selected + (size_t)query_index * 512;
   const int ntok = 2048 + (token + 1) % 4;
   const long tail0 = ((token + 1) / 4) * 4L;   // dense tail (visible = token+1)
   float m_run[8], l_run[8];   // per-elem qrow state (row = lane<16 ? e : 8+e)
@@ -2150,11 +2193,12 @@ __global__ void k_qsa_qsplit(const float* __restrict__ qg, const float* __restri
                              float* __restrict__ qs, float* __restrict__ gs, int dh,
                              float eps, int rope_base = 0,
                              const float2* __restrict__ ropecs = nullptr);
-template <bool Bf16 = false>
+template <bool Bf16 = false, bool Paged = false>
 __global__ void k_qsa_kprep(const float* __restrict__ kb, const float* __restrict__ knw,
                             float* __restrict__ kout, uint16_t* __restrict__ kc,
                             float eps, int rope_base,
-                            const float2* __restrict__ ropecs);
+                            const float2* __restrict__ ropecs,
+                            const int* __restrict__ ptab = nullptr);
 __global__ void k_axpy_sg(float* __restrict__ acc, const float* __restrict__ y,
                           const float* __restrict__ sg, int n, int total);
 

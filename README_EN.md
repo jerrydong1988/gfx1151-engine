@@ -16,12 +16,18 @@ not arbitrary language models.
 Format support, measured coverage, and which optimizations apply are separate questions;
 retaining a format does not promise bitwise-identical output across engine versions.
 
-As of **2026-10-02**, the cumulative engine contains R1–R13, default-off R15/R16
-candidates and R16 timing guards; R14 is the tool-task evaluation. Bounded R15/R16
-numerical checks passed, but stable complete-request gains were not established.
+As of **2026-10-02**, the cumulative engine contains R1–R13, default-off R15–R17
+candidates and R16 timing guards. R14/R17 include real tool-task evaluation.
+Bounded numerical checks and local speedups do not establish stable overall gains
+across input lengths.
 These are local research stages, not upstream releases.
 Results do not establish production readiness, universal losslessness, or an overall
 performance lead over upstream.
+
+As of the R17 checkpoint (2026-10-02), two paged QSA candidates are available
+but default off. Tool-output failures after normal stopping now report
+`invalid_tool_call` rather than falsely claiming token-budget exhaustion.
+This interface correction does not fix model tool selection or SQL correctness.
 
 ## What this fork changes
 
@@ -128,7 +134,7 @@ Code task mean time fell 45.9%, but the first serial prefill had substantial var
 this is not evidence of a stable MTP prefill gain.
 Office runs generated unknown `query_ledser` instead of `query_ledger`, with invalid
 SQL. The API also mapped the parser failure to `length` although the output budget
-was not exhausted. This remains unresolved.
+was not exhausted. R17 fixes the error classification; model/tool-task reliability remains a separate limitation.
 
 These are two repetitions per mode of fixed tasks, not a full Octop UI test or broad
 agent ranking. Maximum actual prompts were 45496 office and 4114 code tokens,
@@ -165,6 +171,27 @@ is not an all-state/input proof. Final kernel and policy tests produced 251 PASS
 lines. A validated indexer-solution pin and invalid-duration guards improve
 measurement control; the scheduling candidates remain off by default.
 [All samples, numerical limits and build boundaries](docs/R16_PREFILL_RESEARCH.md)
+
+### R17: captured workloads, QSA dataflow, GDN and tool loops
+
+R17 captured 144 model-routing samples, replayed actual QSA tensors, scanned
+32 GDN projection shapes, and tested a dual-projection dispatch at eight sizes.
+Small expert tiles, LDS address caching and broad GDN replacements were rejected.
+Two QSA environment flags remain default off: `GDEC_QSA_HEAD_INTERLEAVE` and
+`GDEC_QSA_KV_FUSED`. Head dispatch reduced local QSA time by 10.6%–18.2%; two
+128K requests were 0.98%/3.02% faster, but short-input results were mixed.
+KV fusion and the combination did not establish stable general end-to-end gains.
+All slower samples and a model-loading timeout remain recorded.
+
+All 3,072 output tokens across 24 formal requests matched the same binary with
+the new flags off. Separate chunk hidden/logit audits and 252 kernel plus 72 KV
+dataflow cases passed; these are bounded same-quantization checks. Chat/Responses
+JSON/SSE now distinguish invalid tool calls from actual budget exhaustion.
+The existing serial/MTP paths each passed 2/2 code tasks: weighted decode was
+24.18/40.71 tokens/s and mean task time was 83.96/51.96 seconds. Office tasks
+passed 0/2 per mode; one error-feedback message still produced no delivery within
+12 turns. These MTP comparisons are not gains from the new QSA switches.
+[Full four-track results and inclusive Agent timings (Chinese)](docs/R17_REAL_WORKLOAD_RESEARCH.md).
 
 ## Precision, defaults and unfinished work
 
@@ -237,6 +264,7 @@ every table here automatically.
 | [R1–R14 checkpoint](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md) | Committed implementation, long-input timing, tool loops and reproduction conditions |
 | [R15 integration](docs/R15_INTEGRATION.md) / [Earlier probe](docs/R15_NORM_OUTPUT_PROBE.md) | Default-off implementation, numerical checks and complete-request measurements without stable overall gains |
 | [R16 Prefill research](docs/R16_PREFILL_RESEARCH.md) | Hotspots, four-arm accumulation test and timing guards; no stable whole-request gain |
+| [R17 real-workload research](docs/R17_REAL_WORKLOAD_RESEARCH.md) | Captured routes, QSA dataflow, GDN rejections, complete requests and real Agent checks |
 
 Inherited documentation: [Quick start](QUICKSTART_EN.md), [GGUF](GGUF.md),
 [Older HGN HQ](HGN-HQ.md), [HGN container](HGN-FORMAT_EN.md), [MTP](MTP_EN.md),

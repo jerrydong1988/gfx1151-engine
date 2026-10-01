@@ -3274,11 +3274,25 @@ struct GpuModel {
               d_qsb, kc, vc, vc_transposed, d_attnb, P, 256, 2, 24, sel,
               first_abs, base);
         else if (qsa_wmma_btv && vc_transposed) {
-          if (ptab)  // A1c paged instantiation (never taken unpaged)
-            k_qsa_wmma<true, true><<<dim3(nsparse, 2), 256, 0, g_str>>>(
-                d_qsb, kc, vc, vc_transposed, d_attnb, P, 256, 2, 24, sel, first_abs,
-                base, ptab);
-          else
+          if (ptab) {  // Same per-CTA arithmetic; adjacent KV heads share L2 locality.
+            static const bool interleave = [] {
+              const char* v = getenv("GDEC_QSA_HEAD_INTERLEAVE");
+              return v && !strcmp(v, "1");
+            }();
+            if (interleave) {
+              static const bool noted = [] {
+                fprintf(stderr, "[qsa] experimental adjacent-head dispatch active\n");
+                return true;
+              }();
+              (void)noted;
+              k_qsa_wmma<true, true, true><<<dim3(nsparse * 2), 256, 0, g_str>>>(
+                  d_qsb, kc, vc, vc_transposed, d_attnb, P, 256, 2, 24, sel,
+                  first_abs, base, ptab);
+            } else
+              k_qsa_wmma<true, true><<<dim3(nsparse, 2), 256, 0, g_str>>>(
+                  d_qsb, kc, vc, vc_transposed, d_attnb, P, 256, 2, 24, sel,
+                  first_abs, base, ptab);
+          } else
             k_qsa_wmma<true><<<dim3(nsparse, 2), 256, 0, g_str>>>(
                 d_qsb, kc, vc, vc_transposed, d_attnb, P, 256, 2, 24, sel, first_abs,
                 base);
@@ -3944,6 +3958,22 @@ struct GpuModel {
                                               512 + 255) /
                                                  256),
                                  256, 0, g_str>>>(d_vbb, vct, 512, P, 512, base);
+        } else if (vct && !aligned_spec_active() && [] {
+                     const char* v = getenv("GDEC_QSA_KV_FUSED");
+                     return v && !strcmp(v, "1");
+                   }()) {
+          // Keep the FP32 K scratch, norm tree, RoPE and BF16 RNE unchanged.
+          // The V kernel preserves leading slots and zeros the trailing block.
+          static const bool noted = [] {
+            fprintf(stderr, "[qsa] experimental paged KV preparation fusion active\n");
+            return true;
+          }();
+          (void)noted;
+          k_qsa_kprep<true, true><<<dim3(2, P), 256, 0, g_str>>>(
+              d_kbb, knw, d_kbb, kc, g_cfg.norm_eps, base, d_ropecs, kvpt());
+          const unsigned work = (unsigned)((base + P + 3) / 4 - base / 4) * 512;
+          k_f32_to_bf16_v4_dual<<<(work + 255) / 256, 256, 0, g_str>>>(
+              d_vbb, vct, 512, P, 512, base, vc, kvpt());
         } else {
           // A1c paged: kprep writes the fp32 K rows only (kprep<true> stores
           // f2bf of exactly those values, so converting afterwards is the same
@@ -8922,11 +8952,12 @@ __global__ void k_qsa_qsplit(const float* __restrict__ qg, const float* __restri
 // (same f2bf as k_f32_to_bf16_v4). Bit-exact vs the rmsnorm + k_rope_b
 // [+ k_f32_to_bf16_v4] sequence.
 // grid = dim3(2, P); kc (when Bf16) already includes the base*512 offset.
-template <bool Bf16>
+template <bool Bf16, bool Paged>
 __global__ void k_qsa_kprep(const float* __restrict__ kb, const float* __restrict__ knw,
                             float* __restrict__ kout, uint16_t* __restrict__ kc,
                             float eps, int rope_base,
-                            const float2* __restrict__ ropecs) {
+                            const float2* __restrict__ ropecs, const int* __restrict__ ptab) {
+  const size_t cache_row = Paged ? kv_row(ptab, rope_base + (int)blockIdx.y) : blockIdx.y;
   int h = blockIdx.x;
   int t = threadIdx.x;
   const float* xg = kb + ((size_t)blockIdx.y * 2 + h) * 256;
@@ -8952,14 +8983,14 @@ __global__ void k_qsa_kprep(const float* __restrict__ kb, const float* __restric
     og[t] = r0;
     og[t + 32] = r1;
     if (Bf16) {
-      uint16_t* dst = kc + (size_t)blockIdx.y * 512 + h * 256;
+      uint16_t* dst = kc + cache_row * 512 + h * 256;
       dst[t] = f2bf(r0);
       dst[t + 32] = f2bf(r1);
     }
   } else if (t >= 64) {
     float o = v * inv * (1.f + wg[t]);
     og[t] = o;
-    if (Bf16) kc[(size_t)blockIdx.y * 512 + h * 256 + t] = f2bf(o);
+    if (Bf16) kc[cache_row * 512 + h * 256 + t] = f2bf(o);
   }
   (void)rope_base;
 }

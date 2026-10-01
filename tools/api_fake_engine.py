@@ -144,6 +144,19 @@ def handle(conn):
                 continue
 
             seed = int(fields[fields.index("SAMPLE") + 5]) if "SAMPLE" in fields else 0
+            # api_tool_failure_test uses the byte-only synthetic tokenizer.
+            if 717100 <= seed <= 717106:
+                valid = "<tool_call>\n<function=read_file>\n<parameter=path>\na\n</parameter>\n</function>\n</tool_call>"
+                unknown = valid.replace("read_file", "unknown_file")
+                unfinished = valid.split("</parameter>")[0]
+                variants = [valid, unknown, "<tool_call>\n<function=read_file>\n</function>\n</tool_call>",
+                            unfinished, unfinished, "ordinary answer", valid + unknown]
+                tokens = [1024 + b for b in variants[seed - 717100].encode()]
+                for token in tokens:
+                    send_line(conn, f"T {req} {token} -0.1")
+                reason = "length" if seed == 717104 else "done"
+                send_line(conn, f"D {req} {reason} {n_ids} {len(tokens)} 1.0 2.0 0 0 0 0 0")
+                continue
             if seed in (616161, 616162, 616163):
                 cancellable(req, seed)
                 continue

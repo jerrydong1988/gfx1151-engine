@@ -2223,6 +2223,11 @@ void handle_chat(const http::Request& q, http::Response* r, http::Stream* st) {
         parser.feed(tool_setup.choice.parser_prefix());
         parser.feed(answer);
         parser.finish();
+        // A malformed call after a normal model stop is not token exhaustion.
+        // Do not send clients into a larger-budget retry for an unknown tool.
+        if (parser.has_partial_call() && o.reason != "length")
+            http::fail(502, "The model stopped with an invalid or unfinished tool call.",
+                       "model_output_error", "invalid_tool_call");
         json msg;
         msg["role"] = "assistant";
         msg["content"] = parser.content();
@@ -2305,6 +2310,9 @@ void handle_chat(const http::Request& q, http::Response* r, http::Stream* st) {
         if (!dispatch_tool_events(parser.feed(ct))) return;
     }
     if (!dispatch_tool_events(parser.finish())) return;
+    if (parser.has_partial_call() && o.reason != "length")
+        http::fail(502, "The model stopped with an invalid or unfinished tool call.",
+                   "model_output_error", "invalid_tool_call");
     const std::string finish = (o.reason == "length" || parser.has_partial_call())
                                    ? "length"
                                    : (parser.calls().empty() ? o.reason : "tool_calls");
@@ -2463,6 +2471,12 @@ void handle_responses(const http::Request& q, http::Response* r, http::Stream* s
                                            call.name, call.arguments));
         }
         json response = response_object(incomplete ? "incomplete" : "completed", output, &o);
+        if (parser.has_partial_call() && o.reason != "length") {
+            response["status"] = "failed";
+            response.erase("incomplete_details");
+            response["error"] = {{"code", "invalid_tool_call"},
+                                  {"message", "The model stopped with an invalid or unfinished tool call."}};
+        }
         r->body = json_py::dumps(response, /*spaced=*/false);
         return;
     }
@@ -2653,6 +2667,14 @@ void handle_responses(const http::Request& q, http::Response* r, http::Stream* s
     }
     json final_response =
         response_object(incomplete ? "incomplete" : "completed", output_slots, &o);
+    if (partial_call && o.reason != "length") {
+        final_response["status"] = "failed";
+        final_response.erase("incomplete_details");
+        final_response["error"] = {{"code", "invalid_tool_call"},
+                                   {"message", "The model stopped with an invalid or unfinished tool call."}};
+        event("response.failed", json{{"response", std::move(final_response)}});
+        return;
+    }
     event(incomplete ? "response.incomplete" : "response.completed",
           json{{"response", std::move(final_response)}});
 }
