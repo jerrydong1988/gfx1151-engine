@@ -1041,6 +1041,13 @@ static uint64_t fingerprint(const GpuModel& m) {
   uint64_t h = mix64(0x6764656b76736e70ULL + FMT);
   auto add = [&](uint64_t v) { h = mix64(h ^ v); };
   for (const auto& f : g_model_files) add(file_id(f));
+  // A forced runtime solution can change FP32 reduction order. Keep it out
+  // of automatic-policy checkpoints, even when that policy happens to pick it.
+  const int pinned_iproj = GpuModel::iproj_solution_override();
+  if (pinned_iproj != INT_MIN) {
+    add(0x6970726f6a706901ULL);
+    add((uint64_t)(uint32_t)pinned_iproj);
+  }
   // Namespace the bounded tail-proposer policy even when a particular
   // request falls back to full initialization. Tail-enabled requests require
   // RAM/SSD caches disabled; existing checkpoint formats cannot encode a hole.
@@ -1060,6 +1067,9 @@ static uint64_t fingerprint(const GpuModel& m) {
   // Preserve GU=1's R12b identity; GU=2 has its own namespace.
   if (GpuModel::v2_moe_fused_gu_mode() == 1) add(0x7632667573677501ULL);
   else if (GpuModel::v2_moe_fused_gu_mode() == 2) add(0x7632667573677502ULL);
+  // Keep the experimental double-buffer schedule separate; off is unchanged.
+  if (GpuModel::v2_moe_gu_double_buffer_enabled()) add(0x7632677564626601ULL);
+  if (GpuModel::v2_moe_down_group4_enabled()) add(0x763264776e677401ULL);
   // Keep the reduction experiment separate until device equivalence is checked.
   if (GpuModel::hc_norm_wave_enabled()) add(0x68636e7761766501ULL);
   // Isolate the raw PLE lookahead experiment while its lifecycle is validated.

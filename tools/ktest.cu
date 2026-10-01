@@ -261,7 +261,107 @@ static void test_mtp_tap_norm_dual() {
       }
 }
 
+// R16 scheduling-only candidates. Test complete FP16 high/low GU outputs and
+// complete FP32 down outputs, including ragged tiles and oversubscribed grids.
+static void test_v2_r16_schedules() {
+  std::mt19937 gen(1619);
+  constexpr int E=8, D=2560, MID=640, G=64;
+  auto read_raw=[](auto* p,size_t n) {
+    using T=std::remove_pointer_t<decltype(p)>;
+    std::vector<T> v(n);
+    TCK(hipMemcpy(v.data(),p,n*sizeof(T),hipMemcpyDeviceToHost));
+    return v;
+  };
+  for (int variant=0; variant<4; ++variant) {
+    const int edges[]={0,1,16,17,31,32,33,64};
+    std::vector<MoeTile> tiles;
+    int slots=0;
+    for (int e=0;e<E;++e) {
+      const int count=edges[e]+(variant>=2?64:0);
+      for (int off=0;off<count;off+=64) {
+        MoeTile t{};t.expert=e;t.first=slots+off;t.count=std::min(64,count-off);
+        tiles.push_back(t);
+      }
+      slots+=count;
+    }
+    std::vector<uint8_t> gu((size_t)E*2*MID*D/2),dn((size_t)E*D*MID/2);
+    std::vector<__half> gs((size_t)E*2*MID*(D/128)),ds((size_t)E*D*(MID/128));
+    std::vector<__half> x((size_t)slots*D*2),sv(2*MID),su(MID);
+    for(auto&v:gu)v=(uint8_t)gen();for(auto&v:dn)v=(uint8_t)gen();
+    for(auto&v:gs)v=__float2half(.001f+(gen()%100)*.0001f);
+    for(auto&v:ds)v=__float2half(.001f+(gen()%100)*.0001f);
+    for(size_t i=0;i<x.size();++i)x[i]=__float2half((int(gen()%2001)-1000)*.001f*(i%(D*2)<D?1.f:.0001f));
+    for(auto&v:sv)v=__float2half(.5f+(gen()%100)*.001f);
+    for(auto&v:su)v=__float2half(.5f+(gen()%100)*.001f);
+    std::vector<int> ids(slots);for(int i=0;i<slots;++i)ids[i]=slots-1-i;
+    std::vector<int> counts{(int)tiles.size()};
+    auto*wgu=dup(gu);auto*wdn=dup(dn);auto*sgu=dup(gs);auto*sdn=dup(ds);
+    auto*dx=dup(x);auto*dsv=dup(sv);auto*dsu=dup(su);auto*di=dup(ids);auto*dt=dup(tiles);auto*dc=dup(counts);
+    moelut::LutW wg{},wd{};wg.w=wgu;wg.sc=(const uint8_t*)sgu;wg.sstride=D/128*2;wg.e_rows=2*MID;
+    wd.w=wdn;wd.sc=(const uint8_t*)sdn;wd.sstride=MID/128*2;wd.e_rows=D;
+    const size_t hn=(size_t)slots*MID*2,yn=(size_t)slots*D;
+    std::vector<uint16_t> hp(hn+G*2,0x7e01);
+    std::vector<uint32_t> yp(yn+G*2,0x7fc00001);
+    auto*h0=dup(hp);auto*h1=dup(hp);auto*y0=dup(yp);auto*y1=dup(yp);
+    const int* map=variant%2?di:nullptr;
+    bool gu_ok=true,dn_ok=true;
+    for(int repeat=0;repeat<2;++repeat) {
+      TCK(hipMemset(h0+G,0xff,hn*2));TCK(hipMemset(h1+G,0xff,hn*2));
+      TCK(hipMemset(y0+G,0xff,yn*4));TCK(hipMemset(y1+G,0xff,yn*4));
+      const int nt=(int)tiles.size()+7;
+      r12guv3::k_v2_fused_gu_rotate_r12<false,true,true><<<dim3(MID/128,nt),512>>>(wg,dx,map,dt,dc,(__half*)(h0+G),dsv,dsu,MID,D);
+      r12guv3::k_v2_fused_gu_rotate_r12<false,true,true,true><<<dim3(MID/128,nt),512>>>(wg,dx,map,dt,dc,(__half*)(h1+G),dsv,dsu,MID,D);
+      k_moe_lut<moelut::kQ4R128,false,64,true,true,false,true,true><<<dim3(D/128,nt),256>>>(wd,h0+G,nullptr,dt,dc,(float*)(y0+G),nullptr,D,MID);
+      k_moe_lut<moelut::kQ4R128,false,64,true,true,false,true,true,4><<<dim3(D/128*4,(nt+3)/4),256>>>(wd,h0+G,nullptr,dt,dc,(float*)(y1+G),nullptr,D,MID);
+      TCK(hipGetLastError());TCK(hipDeviceSynchronize());
+      auto ha=read_raw(h0,hp.size()),hb=read_raw(h1,hp.size());
+      auto ya=read_raw(y0,yp.size()),yb=read_raw(y1,yp.size());
+      gu_ok=gu_ok&&ha==hb;dn_ok=dn_ok&&ya==yb;
+      for(size_t i=0;i<ha.size();++i)gu_ok=gu_ok&&(i<G||i>=hn+G?ha[i]==0x7e01:(ha[i]&0x7c00)!=0x7c00);
+      for(size_t i=0;i<ya.size();++i)dn_ok=dn_ok&&(i<G||i>=yn+G?ya[i]==0x7fc00001:(ya[i]&0x7f800000)!=0x7f800000);
+    }
+    auto same=[&](auto*p,const auto&v){auto r=read_raw(p,v.size());return !memcmp(r.data(),v.data(),v.size()*sizeof(v[0]));};
+    const bool readonly=same(wgu,gu)&&same(wdn,dn)&&same(sgu,gs)&&same(sdn,ds)&&same(dx,x)&&same(dsv,sv)&&same(dsu,su)&&same(di,ids)&&same(dt,tiles)&&same(dc,counts);
+    char name[64];snprintf(name,sizeof name,"r16_gu_double_%d",variant);check(name,gu_ok&&readonly?0:1,0);
+    snprintf(name,sizeof name,"r16_down_group4_%d",variant);check(name,dn_ok&&readonly?0:1,0);
+    TCK(hipFree(wgu));TCK(hipFree(wdn));TCK(hipFree(sgu));TCK(hipFree(sdn));TCK(hipFree(dx));TCK(hipFree(dsv));TCK(hipFree(dsu));
+    TCK(hipFree(di));TCK(hipFree(dt));TCK(hipFree(dc));TCK(hipFree(h0));TCK(hipFree(h1));TCK(hipFree(y0));TCK(hipFree(y1));
+  }
+}
+
 int main() {
+  {
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    struct Sample { float ms; bool gemm; bool profile; };
+    const Sample cases[]={{-1.f,false,false},{0.f,false,true},{-0.f,false,true},
+        {.0001f,true,true},{42.f,true,true},{inf,false,false},{-inf,false,false},{nan,false,false}};
+    bool ok=true;
+    for (const auto& c:cases)
+      ok = ok && iproj_policy::valid_duration(c.ms)==c.gemm &&
+                 iproj_policy::valid_duration(c.ms,true)==c.profile;
+    check("iproj_timing_policy",ok?0:1,0);
+  }
+  test_v2_r16_schedules();
+  {
+    struct Case { const char* text; bool valid; int value; };
+    const Case cases[] = {
+        {nullptr,true,INT_MIN}, {"",true,INT_MIN}, {"auto",true,INT_MIN},
+        {"-711",true,-711}, {"-712",true,-712}, {"0",true,0},
+        {"42",true,42}, {"2147483646",true,2147483646},
+        {"-2147483647",true,-2147483647}, {"2147483647",false,0},
+        {"-2147483648",false,0}, {"9999999999999999999999",false,0},
+        {"-",false,0}, {" 42",false,0}, {"42x",false,0},
+        {"1.5",false,0}, {"auto ",false,0}, {"-711\n",false,0}};
+    bool ok = true;
+    for (const auto& c : cases) {
+      int value = 123;
+      const bool valid = iproj_policy::parse(c.text, value);
+      ok = ok && valid == c.valid && (!valid || value == c.value);
+    }
+    printf("iproj_solution_policy       %s\n", ok ? "PASS" : "FAIL");
+    fails += !ok;
+  }
   test_mtp_tap_norm_dual();
   // ---- 1. k_rmsnorm_zc_grouped batched wrap (grid = 4*P, ngroups = 4) ----
   {

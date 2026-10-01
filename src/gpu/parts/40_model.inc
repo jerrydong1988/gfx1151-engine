@@ -1,3 +1,5 @@
+#include "../iproj_policy.h"
+
 // Concurrent serve (GDEC_PARALLEL > 1): thrown by kv_reserve / kv_cow when the
 // shared KV pool cannot back this sequence's rows (the later request loses),
 // and by the serve yield hook when another request aborted this one. Always
@@ -151,7 +153,8 @@ struct GpuModel {
         // A changed caller must not accidentally turn this into an extra wait.
         if (!r.closed || hipEventQuery(r.stop) != hipSuccess) { ++invalid; continue; }
         float ms = 0;
-        if (hipEventElapsedTime(&ms, r.start, r.stop) != hipSuccess) { ++invalid; continue; }
+        if (hipEventElapsedTime(&ms, r.start, r.stop) != hipSuccess ||
+            !iproj_policy::valid_duration(ms, true)) { ++invalid; continue; }
         gpu[r.stage] += ms;
         host[r.stage] += r.host_ms;
         ++calls[r.stage];
@@ -1885,6 +1888,22 @@ struct GpuModel {
     return enabled;
   }
 
+  static bool v2_moe_gu_double_buffer_enabled() {
+    static const bool enabled = [] {
+      const char* value = getenv("GDEC_V2_MOE_GU_DOUBLE_BUFFER");
+      return value && !strcmp(value, "1");
+    }();
+    return enabled;
+  }
+
+  static bool v2_moe_down_group4_enabled() {
+    static const bool enabled = [] {
+      const char* value = getenv("GDEC_V2_MOE_DOWN_GROUP4");
+      return value && !strcmp(value, "1");
+    }();
+    return enabled;
+  }
+
   static bool v2_moe_lds_sync_enabled() {
     static const bool enabled = [] {
       const char* value = getenv("GDEC_V2_MOE_LDS_SYNC");
@@ -1937,6 +1956,20 @@ struct GpuModel {
         // The common router always emits <=64-slot tiles. GU consumes each
         // tile once; the unchanged down kernel may split it into BN32 halves.
         PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertGuActivation);
+        // R16 is restricted to the measured single-slot, large-prompt shape.
+        // Serial/aligned verification and all other arithmetic flags fall back.
+        if (!LdsSync && DeferredScale && PermuteQ4 && P >= 6144 &&
+            d == 2560 && mid == 640 && nslots == 1 && bound_ == 0 &&
+            !borrow_fn && !borrow_query_fn && !borrow_skip_fn &&
+            v2_moe_gu_double_buffer_enabled()) {
+          static const bool double_noted = [] {
+            fprintf(stderr, "[v2-moe] experimental GU double buffer active\n");
+            return true;
+          }();
+          (void)double_noted;
+          r12guv3::k_v2_fused_gu_rotate_r12<LdsSync,DeferredScale,PermuteQ4,true><<<dim3(mid/128,nt),512,0,g_str>>>(
+              a,(const __half*)xr,d_tokidx,d_moetiles,d_moentiles,(__half*)hr,gu.sv,dn.su,mid,d);
+        } else
         r12guv3::k_v2_fused_gu_rotate_r12<LdsSync,DeferredScale,PermuteQ4><<<dim3(mid/128,nt),512,0,g_str>>>(
             a,(const __half*)xr,d_tokidx,d_moetiles,d_moentiles,(__half*)hr,gu.sv,dn.su,mid,d);
       } else {
@@ -1959,6 +1992,22 @@ struct GpuModel {
     }
     }
     { PrefillProfileSpan expert_stage(expert_profile, PrefillGpuProfile::ExpertDown);
+    bool grouped_down = false;
+    if constexpr (BN == 64 && Precise && Group128 && !LdsSync && DeferredScale && PermuteQ4) {
+      if (!aligned_spec_active() && P >= 6144 && d == 2560 && mid == 640 &&
+          nslots == 1 && bound_ == 0 && !borrow_fn && !borrow_query_fn &&
+          !borrow_skip_fn && v2_moe_down_group4_enabled()) {
+        static const bool noted = [] {
+          fprintf(stderr, "[v2-moe] experimental down group4 traversal active\n");
+          return true;
+        }();
+        (void)noted;
+        k_moe_lut<moelut::kQ4R128,false,64,true,true,false,true,true,4><<<dim3(d/128*4,(nt+3)/4),256,0,g_str>>>(
+            b,hr,nullptr,d_moetiles,d_moentiles,d_guvb,nullptr,d,mid);
+        grouped_down = true;
+      }
+    }
+    if (!grouped_down)
     k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group128,LdsSync,DeferredScale,PermuteQ4><<<dim3(d/128,nt,64/BN),256,0,g_str>>>(
         b,hr,nullptr,d_moetiles,d_moentiles,d_guvb,nullptr,d,mid);
     }
@@ -3496,6 +3545,20 @@ struct GpuModel {
   // beats sgemm, and any non-success launch falls back to sgemm.
   // GDEC_IPROJ_SGEMM=1 keeps plain rocblas_sgemm (A/B).
   int iproj_sol = INT_MIN;  // INT_MIN = not picked yet, INT_MAX = use sgemm
+  std::vector<int> iproj_pinned_shapes;
+  static int iproj_solution_override() {
+    static const int solution = [] {
+      int value;
+      if (!iproj_policy::parse(getenv("GDEC_IPROJ_SOLUTION"), value) ||
+          (value != INT_MIN && getenv("GDEC_IPROJ_SGEMM"))) {
+        fprintf(stderr, "GDEC_IPROJ_SOLUTION requires auto or a signed solution ID; "
+                        "a pinned ID conflicts with GDEC_IPROJ_SGEMM\n");
+        exit(2);
+      }
+      return value;
+    }();
+    return solution;
+  }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"  // beta API
   void iproj_sgemm(const float* w, const float* x, float* y, int P) {
@@ -3506,6 +3569,7 @@ struct GpuModel {
     }
     const float one = 1.f, zero = 0.f;
     static const bool plain = getenv("GDEC_IPROJ_SGEMM") != nullptr;
+    const int pinned = iproj_solution_override();
     // decode-P (<=8) multi-row fp32 GEMV in place of rocblas_sgemm's
     // MT32x32x8 (20 blocks, ~110 us at P=4 vs ~36 us streaming the 6.5 MB
     // weight once). NOT bit-exact vs sgemm (lane-split reorder); ktest
@@ -3544,6 +3608,40 @@ struct GpuModel {
                            rocblas_operation_none, 640, P, 2560, &one, w, 2560,
                            x, 2560, &zero, y, 640);
     };
+    // Experimental measurement control, not a new default algorithm. Check
+    // the requested ID for each actual large shape, then use that exact ID.
+    // Never silently substitute a different kernel in a pinned comparison.
+    if (pinned != INT_MIN && P >= 1024) {
+      if (std::find(iproj_pinned_shapes.begin(), iproj_pinned_shapes.end(), P) ==
+          iproj_pinned_shapes.end()) {
+        rocblas_int count = 0;
+        auto query = [&](rocblas_int* solutions) {
+          return rocblas_gemm_ex_get_solutions(
+              rbh, rocblas_operation_transpose, rocblas_operation_none, 640, P,
+              2560, &one, w, rocblas_datatype_f32_r, 2560, x,
+              rocblas_datatype_f32_r, 2560, &zero, y, rocblas_datatype_f32_r,
+              640, y, rocblas_datatype_f32_r, 640, rocblas_datatype_f32_r,
+              rocblas_gemm_algo_solution_index, 0, solutions, &count);
+        };
+        if (query(nullptr) != rocblas_status_success || count <= 0) {
+          fprintf(stderr, "iproj: cannot enumerate pinned solution %d for P=%d\n", pinned, P);
+          exit(1);
+        }
+        std::vector<rocblas_int> solutions(count);
+        if (query(solutions.data()) != rocblas_status_success ||
+            count <= 0 || (size_t)count > solutions.size() ||
+            std::find(solutions.begin(), solutions.begin() + count, pinned) ==
+                solutions.begin() + count) {
+          fprintf(stderr, "iproj: pinned solution %d is unsupported for P=%d\n", pinned, P);
+          exit(1);
+        }
+        iproj_pinned_shapes.push_back(P);
+        fprintf(stderr, "[iproj-pinned] P=%d solution=%d listed=1\n", P, pinned);
+      }
+      if (sol_run(pinned) == rocblas_status_success) return;
+      fprintf(stderr, "iproj: pinned solution %d launch failed for P=%d\n", pinned, P);
+      exit(1);
+    }
     if (!plain && P >= 1024) {
       if (iproj_sol == INT_MIN) {
         iproj_sol = INT_MAX;
@@ -3566,31 +3664,42 @@ struct GpuModel {
         CK(hipEventCreate(&e0));
         CK(hipEventCreate(&e1));
         auto time2 = [&](auto&& fn) {  // validate once, then time 2 runs
+          const float rejected = std::numeric_limits<float>::quiet_NaN();
           if (fn() != rocblas_status_success ||
               hipStreamSynchronize(g_str) != hipSuccess) {
             (void)hipGetLastError();
-            return 1e30f;
+            return rejected;
           }
-          float ms = 0;
-          CK(hipEventRecord(e0, g_str));
-          fn();
-          fn();
-          CK(hipEventRecord(e1, g_str));
-          CK(hipEventSynchronize(e1));
-          CK(hipEventElapsedTime(&ms, e0, e1));
-          return ms;
+          for (int attempt = 0; attempt < 3; ++attempt) {
+            float ms = 0;
+            CK(hipEventRecord(e0, g_str));
+            const auto first_status = fn(), second_status = fn();
+            CK(hipEventRecord(e1, g_str));
+            CK(hipEventSynchronize(e1));
+            if (first_status != rocblas_status_success || second_status != rocblas_status_success)
+              return rejected;
+            CK(hipEventElapsedTime(&ms, e0, e1));
+            if (iproj_policy::valid_duration(ms)) return ms;
+            fprintf(stderr, "[iproj-timing] rejected duration %.9g ms for P=%d (attempt %d/3)\n",
+                    ms, P, attempt + 1);
+          }
+          return rejected;
         };
         const float t_sgemm = time2(sgemm_run);
         float best = t_sgemm;
-        for (int i = 0; i < (int)n; i++) {
+        // Without a valid baseline duration no 5% speedup can be established.
+        // Preserve plain SGEMM rather than selecting from a bad comparison.
+        for (int i = 0; iproj_policy::valid_duration(t_sgemm) && i < (int)n; i++) {
           const float t = time2([&] { return sol_run(sols[i]); });
-          if (t < best * 0.95f) {
+          if (iproj_policy::valid_duration(t) && t < best * 0.95f) {
             best = t;
             iproj_sol = sols[i];
           }
         }
         CK(hipEventDestroy(e0));
         CK(hipEventDestroy(e1));
+        if (!iproj_policy::valid_duration(t_sgemm))
+          fprintf(stderr, "[iproj-timing] baseline timing unavailable for P=%d; retaining SGEMM\n", P);
         fprintf(stderr, "iproj: fp32 indexer projection P=%d sgemm %.2f ms, %s\n",
                 P, t_sgemm / 2,
                 iproj_sol == INT_MAX

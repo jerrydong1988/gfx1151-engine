@@ -16,9 +16,9 @@ not arbitrary language models.
 Format support, measured coverage, and which optimizations apply are separate questions;
 retaining a format does not promise bitwise-identical output across engine versions.
 
-As of **2026-10-01**, the cumulative engine contains R1–R13 and default-off R15
-dual-output normalization; R14 is the tool-task evaluation. R15 numerical checks
-passed, but stable complete-request gains were not established.
+As of **2026-10-02**, the cumulative engine contains R1–R13, default-off R15/R16
+candidates and R16 timing guards; R14 is the tool-task evaluation. Bounded R15/R16
+numerical checks passed, but stable complete-request gains were not established.
 These are local research stages, not upstream releases.
 Results do not establish production readiness, universal losslessness, or an overall
 performance lead over upstream.
@@ -151,6 +151,21 @@ between launches. `GDEC_MTP_TAP_NORM_DUAL` therefore remains off by default.
 [Integration, request timings and numerical boundaries](docs/R15_INTEGRATION.md) /
 [Earlier microbenchmark](docs/R15_NORM_OUTPUT_PROBE.md)
 
+### R16: profiling, accumulated micro gains and timing guards
+
+Expert/GDN/QSA profiling led to default-off GU double buffering and down traversal
+candidates. Approximately 2.2%–2.4% / 1.5%–2.0% local kernel-time reductions did not
+reliably accumulate: eight fresh four-arm launches gave paired median complete-
+request reductions of just **0.009% at 32K** and **0.031% at 128K** with both on,
+one faster and one slower pair at each length. No stable overall gain is claimed.
+
+Twenty captured chunk-boundary residuals/full target logits and 256 corresponding
+tokens matched; all 2048 formal timing-run tokens also matched across arms. This
+is not an all-state/input proof. Final kernel and policy tests produced 251 PASS
+lines. A validated indexer-solution pin and invalid-duration guards improve
+measurement control; the scheduling candidates remain off by default.
+[All samples, numerical limits and build boundaries](docs/R16_PREFILL_RESEARCH.md)
+
 ## Precision, defaults and unfinished work
 
 - Defaults remain `GDEC_V2_MOE=exact`, native HT off and `GDEC_SPEC_PRECISION=legacy`.
@@ -221,6 +236,7 @@ every table here automatically.
 | [MTP numerical alignment](docs/SPEC_NUMERIC_ALIGNMENT.md) | Alignment policy, usage and unverified scope |
 | [R1–R14 checkpoint](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md) | Committed implementation, long-input timing, tool loops and reproduction conditions |
 | [R15 integration](docs/R15_INTEGRATION.md) / [Earlier probe](docs/R15_NORM_OUTPUT_PROBE.md) | Default-off implementation, numerical checks and complete-request measurements without stable overall gains |
+| [R16 Prefill research](docs/R16_PREFILL_RESEARCH.md) | Hotspots, four-arm accumulation test and timing guards; no stable whole-request gain |
 
 Inherited documentation: [Quick start](QUICKSTART_EN.md), [GGUF](GGUF.md),
 [Older HGN HQ](HGN-HQ.md), [HGN container](HGN-FORMAT_EN.md), [MTP](MTP_EN.md),

@@ -94,7 +94,8 @@ __device__ __forceinline__ void stage_sync() {
 }  // namespace moelut
 
 template <int kLut, bool kPair, int BN = 64, bool Precise = false, bool Group128 = false,
-          bool LdsSync = false, bool DeferredScale = false, bool PermuteQ4 = false>
+          bool LdsSync = false, bool DeferredScale = false, bool PermuteQ4 = false,
+          int TileGroup = 1>
 __launch_bounds__(256) __global__
     void k_moe_lut(moelut::LutW p, const void* __restrict__ input, const int* __restrict__ tokidx,
                    const MoeTile* __restrict__ tiles, const int* __restrict__ ntiles,
@@ -102,6 +103,9 @@ __launch_bounds__(256) __global__
   using namespace moegg;
   using namespace moelut;
   constexpr int BM = 128, BK = 2;
+  static_assert(TileGroup == 1 || (TileGroup == 4 && BN == 64 &&
+                kLut == kQ4R128 && !kPair && Precise && Group128),
+                "grouped traversal is a bounded v2 BN64 experiment");
   static_assert(BN % 16 == 0 && BN <= 64, "BN must match the MoeTile size (<= 64)");
   static_assert(kLut == kQ4CP || kLut == kQ4R128 || kLut == kIQ4NL || kLut == kIQ4XS, "LUT type");
   static_assert(kLut != kQ4R128 || !kPair, "rotated gate/up must be unrotated before SiLU");
@@ -129,7 +133,8 @@ __launch_bounds__(256) __global__
   auto* s_act = reinterpret_cast<uint4*>(lds + kCodeBytes + kScaleBytes);
   auto* s_act_lo = s_act + kActBytes/16;
 
-  if ((int)blockIdx.y >= *ntiles) return;
+  const int tile_index = (int)blockIdx.y * TileGroup + (int)blockIdx.x % TileGroup;
+  if (tile_index >= *ntiles) return;
   const int tid = threadIdx.x;
   for(int cbidx=tid;!Group128 && cbidx<256;cbidx+=BM*2){
     float lo, hi;
@@ -146,7 +151,7 @@ __launch_bounds__(256) __global__
     s_cbp[cbidx] = __builtin_bit_cast(uint32_t, __floats2half2_rn(lo, hi));
   }  // visible after the first __syncthreads of the main loop
 
-  MoeTile tile = tiles[blockIdx.y];
+  MoeTile tile = tiles[tile_index];
   if constexpr(BN<64){
     const int start=blockIdx.z*BN;
     if(start>=tile.count)return;
@@ -164,7 +169,7 @@ __launch_bounds__(256) __global__
   const int sub_lane = lane_id & 15;
   const int half_id = lane_id >> 4;
   constexpr int kRows = kPair ? BM / 2 : BM;
-  const int r_block = (int)blockIdx.x * kRows;
+  const int r_block = ((int)blockIdx.x / TileGroup) * kRows;
 
   // Weight fetch: thread = (row tid/2, K block kb0 + tid%2).
   const int f_c = tid & 1;

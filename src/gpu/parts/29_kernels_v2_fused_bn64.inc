@@ -1,5 +1,5 @@
 // R12c: independently validated BN64 candidate, isolated from the R12b kernel.
-// Candidate body below is byte-exact, including its historical standalone notes.
+// R16 adds optional double buffering; the default template keeps the R12c loop.
 // Production eligibility and mode selection are controlled by 40_model.inc.
 namespace r12guv3 {
 // Exact helper excerpt from r12-activate-wave4.cuh.
@@ -25,7 +25,7 @@ __device__ __forceinline__ void r12_had128_wave4(float (&v)[4]) {
 }
 
 // R12 v3 standalone candidate: BN64 / 512 threads with row-distributed waves.
-// R1/R2 candidates remain unchanged. This v3 is NOT included by production.
+// Production dispatch is guarded in 40_model.inc; the original staging is default.
 // Requires moegg::{v16h,v8f,wmma}, moelut::{LutW,stage_sync}, and MoeTile.
 // The embedded wave4 helper preserves had128 operations with new ownership.
 // Launch: grid(mid/128, max_tiles, 1), block(512). mid,k are multiples of 128.
@@ -35,7 +35,7 @@ __device__ __forceinline__ void r12_had128_wave4(float (&v)[4]) {
 // No GU global intermediate. Every floating-point dot/scale/activation/Had
 // expression preserves the original grouped GU + activate_rotate expression.
 // That is a hypothesis about bitwise output until verified on the target GPU.
-template<bool LdsSync=false, bool DeferredScale=false, bool PermuteQ4=false>
+template<bool LdsSync=false, bool DeferredScale=false, bool PermuteQ4=false, bool Double=false>
 __launch_bounds__(512) __global__
 void k_v2_fused_gu_rotate_r12(moelut::LutW p, const __half* __restrict__ input,
     const int* __restrict__ tokidx, const MoeTile* __restrict__ tiles,
@@ -52,11 +52,7 @@ void k_v2_fused_gu_rotate_r12(moelut::LutW p, const __half* __restrict__ input,
   constexpr int kGuFloats=2*8*256; // gate/up, each 8 row waves; one 16-token tile
   constexpr int kHadFloats=0; // Had128 wave4 stays in registers
   static_assert(kStageBytes >= (kGuFloats+kHadFloats)*sizeof(float), "epilogue fits LDS");
-  __shared__ __attribute__((aligned(16))) uint8_t lds[kStageBytes];
-  auto* s_codes=reinterpret_cast<uint4*>(lds);
-  auto* s_scale=reinterpret_cast<uint32_t*>(lds+kCodeBytes);
-  auto* s_act=reinterpret_cast<uint4*>(lds+kCodeBytes+kScaleBytes);
-  auto* s_act_lo=s_act+kActBytes/16;
+  __shared__ __attribute__((aligned(16))) uint8_t lds[kStageBytes*(Double?2:1)];
 
   if((int)blockIdx.y>=*ntiles)return;
   MoeTile tile=tiles[blockIdx.y];
@@ -95,7 +91,11 @@ void k_v2_fused_gu_rotate_r12(moelut::LutW p, const __half* __restrict__ input,
     a_data=a_src?*reinterpret_cast<const uint4*>(a_src+kb0*32):make_uint4(0,0,0,0);
     a_low=a_src?*reinterpret_cast<const uint4*>(a_src+k+kb0*32):make_uint4(0,0,0,0);
   };
-  const auto commit_stage=[&](){
+  const auto commit_stage=[&](int buf=0){
+    auto* s_codes=reinterpret_cast<uint4*>((lds+buf*kStageBytes));
+    auto* s_scale=reinterpret_cast<uint32_t*>((lds+buf*kStageBytes)+kCodeBytes);
+    auto* s_act=reinterpret_cast<uint4*>((lds+buf*kStageBytes)+kCodeBytes+kScaleBytes);
+    auto* s_act_lo=s_act+kActBytes/16;
     s_codes[swizzle(stage_row,f_c)]=f_codes;
     uint32_t s16;
     if constexpr(DeferredScale)s16=uint32_t(f_s16);else s16=f_s;
@@ -108,7 +108,11 @@ void k_v2_fused_gu_rotate_r12(moelut::LutW p, const __half* __restrict__ input,
 #pragma unroll
   for(int j=0;j<kTokTiles;j++){acc[j]=v8f{};group[j]=v8f{};group_lo[j]=v8f{};}
 
-  const auto compute_stage=[&](int kb0){
+  const auto compute_stage=[&](int kb0,int buf=0){
+    auto* s_codes=reinterpret_cast<uint4*>((lds+buf*kStageBytes));
+    auto* s_scale=reinterpret_cast<uint32_t*>((lds+buf*kStageBytes)+kCodeBytes);
+    auto* s_act=reinterpret_cast<uint4*>((lds+buf*kStageBytes)+kCodeBytes+kScaleBytes);
+    auto* s_act_lo=s_act+kActBytes/16;
       const int row=row_tile*128+row_wave*16+sub_lane;
       uint4 raw[BK];
 #pragma unroll
@@ -165,13 +169,26 @@ void k_v2_fused_gu_rotate_r12(moelut::LutW p, const __half* __restrict__ input,
       }
   };
   fetch_stage(0);
-  for(int kb0=0;kb0<num_kb;kb0+=BK){
-    commit_stage();moelut::stage_sync<LdsSync>();
-    if(kb0+BK<num_kb)fetch_stage(kb0+BK);
-    compute_stage(kb0);moelut::stage_sync<LdsSync>();
+  // Double buffering halves loop barriers without changing per-output math.
+  // At K=2560: 41 barriers instead of 80; LDS 53,760 instead of 26,880 B.
+  if constexpr(Double){
+    commit_stage(0);moelut::stage_sync<LdsSync>();
+    for(int kb0=0;kb0<num_kb;kb0+=BK){
+      const int cur=(kb0/BK)&1;
+      if(kb0+BK<num_kb)fetch_stage(kb0+BK);
+      compute_stage(kb0,cur);
+      if(kb0+BK<num_kb)commit_stage(cur^1);
+      moelut::stage_sync<LdsSync>();
+    }
+  }else{
+    for(int kb0=0;kb0<num_kb;kb0+=BK){
+      commit_stage();moelut::stage_sync<LdsSync>();
+      if(kb0+BK<num_kb)fetch_stage(kb0+BK);
+      compute_stage(kb0);moelut::stage_sync<LdsSync>();
+    }
   }
 
-  // Reuse 16KiB of the 26,880-byte dead staging LDS for one 16-token tile.
+  // Reuse 16KiB of the now-dead staging LDS for one 16-token tile.
   // The 16 waves stage gate/up, then each wave owns one token / four values.
   // Both barriers are CTA-uniform, including partial token and expert tiles.
   float* base=reinterpret_cast<float*>(lds);
