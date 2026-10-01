@@ -5,6 +5,10 @@ machine ran Windows 11 on a Ryzen AI Max+ 395 / Radeon 8060S (`gfx1151`), with
 128 GiB UMA. The cumulative R13b engine was also used for the R14 tool-task
 experiment. This checkpoint records bounded results, not production readiness.
 
+The subsequent [R15 dual-output normalization probe](R15_NORM_OUTPUT_PROBE.md)
+is an independent candidate, not integrated into this cumulative engine.
+Its local microkernel timings must not be counted as engine speedups.
+
 See [v2 formats and configuration](HGN_V2.md),
 [grouped expert arithmetic](HGN_V2_GROUPED_OPTIMIZATION.md), and
 [speculative numerical alignment](SPEC_NUMERIC_ALIGNMENT.md) for implementation

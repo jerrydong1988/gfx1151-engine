@@ -1,243 +1,227 @@
-# gfx1151-engine
+# gfx1151-engine: Windows HGN v2 inference research
 
 ![Strix Halo — Qwen3.8-Flash-Next](media/strix_banner_21x9_v2.png)
 
-*中文版:[README.md](README.md)*
+*中文：[README.md](README.md)*
 
-> This branch adds experimental **Halogen Flash-Next v2 HGN** support. Windows
-> builds, CPU/GPU kernel checks, full model loading, basic generation and a tool
-> round trip passed. Initial throughput is about 59 prompt tokens/s and 12 output
-> tokens/s on the prose fixture, substantially below the old weight path. Keep
-> the working deployment for daily use. See [implementation](docs/HGN_V2.md) and
-> [measured results](docs/HGN_V2_VALIDATION.md). Upstream figures below do not
-> describe this experimental path.
+This is a research fork of the experimental
+[upstream gfx1151-engine](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine),
+on branch `codex/halogen-v2-support`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
+Radeon 8060S (gfx1151) / 128 GiB unified memory**: Halogen Flash-Next v2 HGN loading,
+expert and prefill kernels, and numerical alignment between serial and MTP decoding.
+The target remains Qwen3.8-Flash-Next (`qwen4_exp`) and compatible architectures,
+not arbitrary language models.
 
-A local inference engine that runs a 177B MoE model on a single AMD Strix
-Halo APU (gfx1151). Target model: Qwen3.8-Flash-Next (qwen4_exp architecture)
-and fine-tunes with the same architecture.
+**The older w4b / Q4CP path is retained. V2 support is additive, not a replacement.**
+Format support, measured coverage, and which optimizations apply are separate questions;
+retaining a format does not promise bitwise-identical output across engine versions.
 
-The routed experts are stored in host memory in 4-bit quantization and read
-directly by the GPU kernels — no large VRAM needed. The memory-resident
-weights are ~67–77 GiB depending on the weight format (the PLE n-gram table
-stays on disk and is read on demand); a machine with 122 GiB of RAM can serve
-a 256K context.
+As of **2026-10-01**, the committed cumulative engine contains R1–R13 work; R14 is its
+tool-task evaluation. R15 dual-output normalization is an **independent candidate not
+integrated into the engine**. These are local research stages, not upstream releases.
+Results do not establish production readiness, universal losslessness, or an overall
+performance lead over upstream.
 
-## Measured Performance
+## What this fork changes
 
-Development machine: **GMK EVO-X2 (AMD Ryzen AI Max+ 395, Strix Halo /
-gfx1151)**, 122 GiB RAM:
+| Area | Additions and improvements | Current boundary |
+|---|---|---|
+| HGN v2 loading | Observed HT / rotated grouped Q4 / Q6 layouts, separate PLE sidecar in Windows loading, layout and missing-tensor checks | Not every HGN variant; older Q4CP and GGUF dispatch remain |
+| V2 experts | FP32-order-preserving exact batch/small-batch kernels; optional group-scale matrix kernels, high/low activation splitting, native HT projections | Grouped arithmetic changes floating-point evaluation; not bitwise equivalent |
+| MTP numerics and state | Optional aligned residual/GDN/QSA/short-verification policy, a reproduced multi-row accumulation fix, slot/checkpoint guards and sampler corrections | Finite passing cases do not establish arbitrary sampling, cache or multi-slot equivalence |
+| Ordinary prefill | Deferred expert scaling, permuted Q4 reads, PLE lookahead, gate/up plus activation fusion, reduction plus Hadamard fusion | R10/R12 have same-weight, same-binary switch comparisons |
+| MTP preparation | Optional KV-only ingest, fused reads, skipping an unused verifier head, tap/RMSNorm fusion and four original-shape projections | Shape/slot/runtime guards and fallbacks remain; complete requests are not always faster |
+| Evidence | Format/kernel checks, numerical comparisons, long-input timing, real tool loops and failure records | Kernel speed or successful loading is not treated as task-quality evidence |
 
-| Metric | Value |
-| --- | --- |
-| Prefill (128K context) | ~1400–1470 tok/s (measured 09-28) |
-| Decode (speculative, greedy, γ=4) | ~45 tok/s at 8K, ~46 at 64K (real text, 09-29) |
-| Decode (speculative, sampling, adaptive γ) | ~40 tok/s at 8K, ~45 at 64K (real text, 09-29) |
-| Decode (no speculation) | ~25–30 tok/s (measured 09-28, depends on weight format) |
-| Average power draw | ~120 W |
-| Peak (instantaneous) power draw | ~130 W (bursts for a few seconds, then settles back to ~120 W) |
+The upstream Windows port, OpenAI-style API, Q4CP/GGUF, MTP, PLE, vision and caching
+provide the foundation; these are not features invented by this fork.
+See the [cumulative research checkpoint](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md).
 
-Speculative decode varies strongly with text repetitiveness: the two rows
-above were measured on real-text prompts; highly repetitive content (code,
-template text) hits the chain drafter well and exceeds 60 tok/s in the same
-configuration. Numbers vary with the weight format (GGUF / hgn); all dates
-are in 2026.
+## Weight compatibility: older formats remain
 
-## Weight Formats and Quality
+| Weight path | Current implementation | Validation in this fork |
+|---|---|---|
+| `qwen38-flash-next-w4b.hgn` + older overlay / external MTP | Older HGN/Q4CP decoding and serial/batched expert dispatch retained; still the repository's default service configuration | An early v2-fork Windows EXE loaded and generated with it; **the latest cumulative R13 engine has not rerun the complete older-weight regression** |
+| Other older HQ / overlay combinations | Existing container and overlay paths retained, subject to their tensor layouts and model architecture | Not every HQ file/combination tested; a file extension is insufficient evidence |
+| `qwen38-flash-next-v2.hgn` + `qwen38-flash-next-ngram.hgn` | Observed storage 16 / 23 / 24 layouts added; main file includes MTP | Main Windows research path, with kernel, whole-model, long-input and tool-loop records |
+| Same-architecture GGUF | Inherited loader, expert path and Linux entry point retained | No Windows GGUF end-to-end regression in this v2 research; not a claim of complete Windows GGUF support |
 
-The engine supports two weight formats. Service, API and speculative
-decoding are identical; switch by using the other launcher:
+Code: [HGN decoding](src/hgn.h), [model dispatch](src/gpu/parts/40_model.inc),
+[model loading](src/gpu/parts/52_main.inc).
+V2 expert kernels are selected by tensor type: older Q4CP does not automatically gain
+the v2-specific speedups below. Shared sampler and MTP code also changed, so retained
+compatibility does not mean all older-path behavior is unchanged.
 
-| | hgn standard | hgn high quality (HQ) | GGUF UD-Q4_K_XL |
-| --- | --- | --- | --- |
-| Files | current default (`qwen38-flash-next-w4b.hgn` + overlay) | converted from the original weights, see [HGN-HQ.md](HGN-HQ.md) (Chinese) | released by Unsloth, the same files llama.cpp uses |
-| Routed experts | 4-bit (q4cp) | 4-bit (q4cp, imatrix-weighted) | mostly Q4_K / Q5_1 |
-| Dense (attention, GDN, shared expert, embed, lm_head) | 4-bit | 8-bit (q8g32 overlay) | 8-bit (Q8_0) |
-| KLD vs BF16 (lower is better) | 0.163 | **0.0558** | 0.0511 |
-| top1 agreement with BF16 | 86.8% | 92.4% | 92.6% |
-| Resident weights bpw / size | 4.55 / 66.6 GiB | 4.70 / 68.8 GiB | 5.25 / 76.9 GiB |
-| Prefill (8K prompt, chunk 2048) | ~1200 tok/s | ~1200 tok/s | ~1200 tok/s |
-| Decode (no speculation) | ~30 tok/s | ~25 tok/s | ~25 tok/s |
-| Launch | `start_hgn.sh` | `start_hgn.sh` (set `MODEL_FILE` / `OVERLAY_FILE`) | `start_gguf.sh` |
-| Windows | yes | yes (not yet measured) | no |
+V2's `NGRAM_FILE` holds **PLE lookup weights**; it is not an ngram speculation switch.
+Clear the old `OVERLAY_FILE` when measuring v2 to avoid replacing its weights.
+Empty `MTP_FILE` omits an external draft sidecar but **does not disable embedded MTP**.
+See [formats and isolated configuration](docs/HGN_V2.md).
 
-- KLD: BF16 reference, wikitext-2, 64 chunks × 512, measured the same way as
-  unsloth / llama.cpp (see [KLD.md](KLD.md), Chinese); llama.cpp on the same
-  GGUF gives 0.049.
-- Almost the whole quality gap comes from the dense bit width: 8-bit dense
-  takes KLD from 0.163 to 0.063, imatrix-weighted experts bring it to 0.0558.
-  The cost is more bytes read per decode token, ~16% slower decode (same as
-  GGUF); prefill is unaffected.
-- Resident weights exclude the PLE n-gram table (hgn fp8 47.7 GiB, GGUF
-  IQ4_NL 26.8 GiB), which stays on disk and is read on demand.
-  `python3 tools/bpw.py` reports bpw per category for each file (reads headers
-  only, a few seconds).
-- The default configuration is still hgn standard. The HQ files pass
-  `tools/hq_verify.sh`; deployment is described in section 6 of
-  [HGN-HQ.md](HGN-HQ.md).
+## Measurements and comparison rules
 
-## Features
+Tests used the Windows 11 / 395 / 8060S / 128 GiB machine above. These are historical
+results from individual stages, not a fresh ranking of every setting at the newest
+commit. Model files were not rewritten or requantized; that alone does not establish
+equal arithmetic or model quality.
 
-- **Speculative decoding chain**: ngram drafts first, MTP as fallback, with
-  round-by-round fallback; greedy does bit-exact comparison, sampling
-  resamples and compares against the target distribution, so the output
-  distribution is identical to serial decoding. Enabled by default, no
-  parameters needed; the draft length γ is chosen per mode (fixed 4 for
-  greedy, adaptive by acceptance rate for sampling) and can be pinned with
-  `MTP_GAMMA=1-8`. Highly repetitive content (code comments, template
-  text) shows significant measured speedups.
-- **Standalone 8-bit MTP draft weights** sidecar, with a higher acceptance
-  rate than the built-in 4-bit draft head.
-- **Vision**: supports image input (OpenAI `image_url`), with KV reuse
-  across turns.
-- **OpenAI-compatible API**: streaming, tool calling,
-  `/v1/chat/completions`.
-- **256K context**, with a paged KV pool and two-tier prompt caching:
-  in-RAM checkpoints at message boundaries (edit-and-resend replies
-  instantly) plus KV snapshots recovered across restarts.
-- **Concurrent requests**: multiple requests share one paged KV pool (4
-  slots by default, 256K total — similar to llama.cpp's shared context);
-  the GPU round-robins between requests and each request's output is
-  bit-identical to running alone; long-prompt prefill is chunked to yield
-  the GPU, capping other sessions' worst stall at ~0.6 s. Configuration
-  and semantics in [CONCURRENCY.md](CONCURRENCY.md) (Chinese).
-- **Two weight formats**: the native `.hgn` (Linux / Windows) and llama.cpp
-  GGUF (Unsloth UD-Q4_K_XL, Linux); comparison above.
-- **Model conversion tool**: HF safetensors → `.hgn`. The default output is
-  the high-quality variant (8-bit dense overlay + weighted 4-bit experts); a
-  llama.cpp-format imatrix is used if you have one, and conversion works
-  without one too. Usable for your own fine-tunes of the same architecture
-  (see [HGN-HQ.md](HGN-HQ.md), [CONVERT_EN.md](CONVERT_EN.md)).
+### Earlier expert optimization versus upstream with older weights
 
-## Requirements
+Medians of three repetitions; context capacity 16384, one slot, BF16 KV, greedy,
+thinking/vision off, no reused prompt tokens. Rates are phase tokens/second.
 
-- Linux + ROCm (HIP 7.x), GPU architecture `gfx1151`; or Windows + AMD GPU
-  driver (the GPU needs VRAM carved out in BIOS), see the "Windows" section
-- Available memory ≥ 100 GiB (pinned (page-locked) weights: ~68 GiB for hgn,
-  ~80 GiB for GGUF, plus KV)
-- Build dependencies: rocBLAS, hipBLASLt, rocPRIM; the API frontend also
-  needs libpng, libjpeg, libwebp; nlohmann/json is vendored in the repository
+| Workload | Earlier v2 exact | V2 grouped + native HT | Upstream experimental: older w4b + quality overlay + external MTP |
+|---|---:|---:|---:|
+| Prefill, 8138 input tokens | 358.45 | 1164.40 | 1397.20 |
+| Serial decode, 128 output tokens | 15.37 | 26.57 | 32.75 |
+| MTP decode, 128 output tokens | 15.60 | 27.38 | 32.69 |
 
-## Quick Start
+Grouped prefill reached **3.25x** the earlier exact throughput and **83.3%** of that
+upstream configuration. The upstream revision was `78a41cc`, earlier exact `1825905`.
+Weights, MTP and execution paths differ; this is not an engine-only controlled
+comparison or a new R13-versus-upstream measurement.
+The more heavily rounded `grouped-f16` experiment reached 1351.85 tok/s (96.8% of
+that upstream configuration), but is neither an equivalent acceleration nor the default.
+[Conditions and numerical checks](docs/HGN_V2_GROUPED_OPTIMIZATION.md)
 
-```bash
-bash build.sh        # Build engine + API, output goes to build/
-bash start_hgn.sh    # hgn weights: load the model and start the service (reads service.conf)
-bash start_gguf.sh   # or GGUF weights (Unsloth UD-Q4_K_XL, the same files llama.cpp uses)
-```
+### Later controlled comparisons with the same v2 configuration
 
-Both launchers read weights from `./models` and list any missing files before
-exiting; configuration is centralized in `service.conf` (one section each for
-hgn and GGUF; GGUF details in [GGUF.md](GGUF.md)). See [QUICKSTART_EN.md](QUICKSTART_EN.md)
-for details.
+One binary with switches off/on; fixed input IDs, serial greedy, 128 outputs, one
+slot, BF16 KV, context capacity 262144, chunks of 8192 and actual cached tokens zero.
+These later experiments retain grouped/native HT research settings, not default exact.
+Three pairs per length, retaining slow samples. Percentages are **medians of paired
+time reductions**, not throughput increases.
 
-Converting your own fine-tuned model (HF safetensors, same architecture):
+| Stage / input tokens | Prefill time reduction | Complete request time reduction |
+|---|---:|---:|
+| R10 / 32768 | 5.34% | 4.69% |
+| R10 / 131072 | 6.65% | 6.37% |
+| R10 / 260000 | 6.25% | 6.18% |
+| R12c / 32768 | 2.264% | 1.861% |
+| R12c / 131072 | 2.387% | 2.269% |
 
-```bash
-# without an imatrix
-python3 tools/flashnext2hgn.py /path/to/hf-model --out ./models
-# with an imatrix (llama.cpp format: GGUF or legacy imatrix.dat)
-python3 tools/flashnext2hgn.py /path/to/hf-model --out ./models --imatrix /path/to/imatrix.gguf
-```
+All listed prefill comparisons were faster in 3/3 pairs; decode was not uniformly
+faster. R10's 260K complete-request medians were **247.659 → 232.758 seconds**.
+Request time excludes process startup, model loading, tokenization and cleanup.
+Do not add stage gains or multiply them into the earlier historical table.
+[Configuration, methods and boundaries](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
 
-It writes the base `.hgn`, the 8-bit dense overlay, the 8-bit MTP draft, the
-vision tower, the tokenizer and a ready-to-run `start.sh`; ~1.5 hours on 32
-cores, ~125 GiB of disk, needs only numpy. `--classic` is the old data-free
-converter (byte-identical output to before). High-quality conversion: see
-[HGN-HQ.md](HGN-HQ.md); format and the old converter: see
-[CONVERT_EN.md](CONVERT_EN.md).
+### MTP: faster decode does not always mean a faster task
 
-## Windows
+R13's two additional preparation switches reduced paired complete-request time by
+only 0.1667% / 0.1734% at 131072 / 260000 inputs relative to MTP with them off.
+Variation and automatic kernel selection limit attribution.
+**At 260000 inputs and 128 outputs, enabled MTP still took 0.2585% longer than
+serial, with all three pairs slower.** Stable overall gains for long-input,
+short-output requests remain unproven.
 
-The Windows version has feature parity with the Linux version (engine +
-OpenAI API + multimodal). Porting notes and measurements are in
-[PORTING-WINDOWS_EN.md](PORTING-WINDOWS_EN.md). Builds run in Git Bash
-(or double-click `build_win.bat`; Git is only needed at build time):
+R14 ran four isolated instances in serial/MTP/MTP/serial order, each executing one
+office aggregation and one code-repair fixture: 64 model requests. Tools actually
+executed; evaluation did not merely inspect generated JSON.
 
-```bash
-bash build_win.sh           # Engine
-bash build_win.sh api       # OpenAI API frontend
-bash build_win.sh launcher  # Script-free launcher start_win.exe
-```
+| Scenario | Serial decode | MTP decode | Completion |
+|---|---:|---:|---|
+| Code repair | 22.28 tok/s | 40.72 tok/s | 2/2 successful per mode; mean task time 96.01 → 51.91 s |
+| Office aggregation | 23.05 tok/s | 40.55 tok/s | 0/2 successful per mode; both hit a tool-protocol failure |
 
-For daily use, double-click `start_win.exe` (native Win32, no
-Git/PowerShell needed): it brings up the engine + API dual processes,
-without a console window: it only puts a tray icon in the notification area
-(right-click: open dashboard / copy API URL / view logs / quit; double-click:
-open dashboard), and output goes to `logs\`. For troubleshooting,
-`start_win.exe --console` restores the console mode (Ctrl+C or closing the
-window stops it). Configuration is **shared with Linux via
-`service.conf`** (edit it to change the model file name or context
-window); environment variables can temporarily override it. Clients
-connect to `http://<host>:8731/v1`.
+Code task mean time fell 45.9%, but the first serial prefill had substantial variation;
+this is not evidence of a stable MTP prefill gain.
+Office runs generated unknown `query_ledser` instead of `query_ledger`, with invalid
+SQL. The API also mapped the parser failure to `length` although the output budget
+was not exhausted. This remains unresolved.
 
-Distribution: copy `build/` + `start_win.exe` + `models/` to any gfx1151
-Windows machine and it just works — **no ROCm/TheRock installation
-needed**; only the AMD GPU driver, plus enough VRAM carved out for the GPU
-in BIOS (a 256K context needs 96 GiB).
+These are two repetitions per mode of fixed tasks, not a full Octop UI test or broad
+agent ranking. Maximum actual prompts were 45496 office and 4114 code tokens,
+not a 256K agent test.
+[Research record and timing definitions](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
 
-Differences from the Linux version:
+### Latest candidate: R15 dual-output normalization (not integrated)
 
-- Only hgn weights are supported: usable VRAM on Windows is capped at
-  about 96 GiB, and GGUF weights are larger (hgn saves ~11 GiB over GGUF)
-  and do not fit — `start_gguf.sh` does not apply; hgn weights are
-  produced by the conversion tool, see [CONVERT_EN.md](CONVERT_EN.md).
-  The high-quality hgn works by swapping files: weight arena +2.2 GiB,
-  estimated ~93.2 GiB at 256K / chunk 8192 (limit 95); not yet measured
-  on Windows
-- Image decoding supports PNG/JPEG via stb_image (WebP not wired up)
-- Prefill chunk defaults to 8192
-- Cold loading reads the full weights from disk (minute-scale, progress
-  shown in console/logs)
-- The launchers do not enable `GDEC_GEMM_WMMA` or `GDEC_GDN_FUSED` (the
-  self-written WMMA GEMM and fused GDN kernel already promoted on Linux
-  launchers, worth ~8-10% PP combined but unverified under TheRock — so
-  Windows prefill uses hipBLASLt plus the legacy GDN path)
+A candidate replaces R13's norm → FP32 → BF16 conversion with one norm that writes
+both outputs, retaining the original FP32 evaluation order and rounding.
+Complete FP32/BF16 outputs matched bitwise in 88 finite-input cases.
+With the pinned app-local HIP runtime, the hot microbenchmark at P=8192, four groups
+measured **5.470750 → 3.647000 ms (33.3% less time)**.
 
-Known issues (root causes unknown; there are quite a few quirks, fixes
-pending, priority very low):
+This covers normalization/conversion only, not downstream projections, complete
+prefill, decode or task time. **Candidate code is not integrated; its gains are not
+included in published engine performance.**
+[Candidate record and raw timings](docs/R15_NORM_OUTPUT_PROBE.md)
 
-- VRAM allocations above 41 GiB or 63 GiB fail
-- The model hangs during decode (suspected console output backpressure: once
-  the console is paused by a click/selection, child processes block on logging.
-  Fixed: the launcher is now a tray app whose logs bypass the console, and
-  kvsnap no longer prints while holding its lock; pending verification)
+## Precision, defaults and unfinished work
 
-Build details are in [BUILD_EN.md](BUILD_EN.md).
+- Defaults remain `GDEC_V2_MOE=exact`, native HT off and `GDEC_SPEC_PRECISION=legacy`.
+  Exact means expert arithmetic preserves its FP32 reference order, not unquantized
+  model-quality equivalence. Default dense HT/Q6 conversion also retains about
+  7.83 GiB of BF16 copies.
+- Grouped, grouped-f16, native HT, aligned and subsequent optional fusions require
+  explicit selection. High-speed results here are not factory defaults.
+  Shared sampler fixes are not all gated by aligned.
+- In an earlier 1020-position teacher-forced comparison, exact top-token agreement
+  with stored reference logits was 100%; grouped was 87.843%.
+  This is behavioral agreement, **not answer accuracy**. Small local error or similar
+  PPL does not guarantee whole-model output or statistical-task quality.
+- Some reproduced serial/MTP differences have been repaired and finite tested
+  configurations align. Arbitrary sampling, warm/cache operation, multiple slots,
+  all long inputs and multimodal requests are not universally verified equivalent.
+- Remaining work includes a complete older-weight regression on the cumulative
+  engine, Linux validation of new paths, office tool failures, stable MTP gains for
+  long-input/short-output requests and R15 end-to-end validation.
 
-## Documentation
+[Precision policy](docs/SPEC_NUMERIC_ALIGNMENT.md) /
+[Expert numerical experiments](docs/HGN_V2_GROUPED_OPTIMIZATION.md) /
+[Evidence boundaries](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
 
-- [QUICKSTART_EN.md](QUICKSTART_EN.md) — build, launch, configuration
-- [BUILD_EN.md](BUILD_EN.md) — build environment details and
-  troubleshooting
-- [GGUF.md](GGUF.md) (Chinese) — GGUF weight loading, performance vs hgn
-- [HGN-HQ.md](HGN-HQ.md) (Chinese) — high-quality hgn: one-step conversion
-  (optional imatrix), results, deployment
-- [CONVERT_EN.md](CONVERT_EN.md) — model conversion tool
-- [KLD.md](KLD.md) (Chinese) — quality testing (KLD, same method as
-  unsloth / llama.cpp)
-- [MTP_EN.md](MTP_EN.md) — speculative decoding parameters and comparison
-  methods
-- [NGRAM_EN.md](NGRAM_EN.md) — ngram verification design, benefits, and
-  known divergences
-- [CONCURRENCY.md](CONCURRENCY.md) — concurrent requests (PARALLEL)
-  configuration and semantics (Chinese)
-- [HGN-FORMAT_EN.md](HGN-FORMAT_EN.md) — the `.hgn` weight container
-  format
-- [GGUF.md](GGUF.md) — running directly from llama.cpp GGUF weights
-  (Chinese)
-- [data/README_EN.md](data/README_EN.md) — numerical regression benchmark
-  (data/qsa-oracle) description
-- [PORTING-WINDOWS_EN.md](PORTING-WINDOWS_EN.md) — Windows porting notes
-  and measurements
+## Windows build and first run
 
-## Tests
+Use a separate checkout of this branch, Git Bash, the TheRock ROCm toolchain and a
+compatible driver. Set `THEROCK` to your local toolchain directory in Git Bash, then:
 
 ```bash
-bash build.sh test     # Kernel unit tests, no model loading, expect ALL PASS
-python3 tools/bpw.py   # bpw of the weights under models/ by category (headers only)
+git clone --branch codex/halogen-v2-support https://github.com/jerrydong1988/gfx1151-engine.git
+cd gfx1151-engine
+bash build_win.sh
+bash build_win.sh api
+bash build_win.sh launcher
+bash build_win.sh v2-test
+bash build_win.sh test
 ```
 
-Quality (KLD) testing needs a BF16 reference; see [KLD.md](KLD.md).
+1. Adapt `service.conf` using the [isolated v2 configuration](docs/HGN_V2.md):
+   main weights, matching PLE sidecar and tokenizer; begin with a short context
+   and one slot. The repository configuration still defaults to older w4b.
+2. In PowerShell, run `.\start_win.exe --check`, then `.\start_win.exe`.
+   Successful full loading and requests must be verified separately from unit tests.
+3. For later research settings, use the [R13 parameters and limits](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
+   as process environment variables before launch, not additional `service.conf`
+   keys. Empty external MTP or gamma zero does not mean serial decoding.
+
+The current Windows launcher sets `GDEC_GEMM_WMMA` and `GDEC_GDN_FUSED`; the older
+README statement that these were disabled on Windows no longer applies.
+Actual runtime identity, memory/commit headroom, context and concurrency still matter;
+128 GiB capacity alone does not establish 256K multi-request feasibility.
+
+See [BUILD_EN.md](BUILD_EN.md) for build details. Some inherited documents retain
+historical parameters, performance or platform conclusions; use the linked research
+records for this fork's new paths and measured scope. Not all local manifests, input
+captures and task harnesses are distributed; these build commands do not reproduce
+every table here automatically.
+
+## Research records and documentation
+
+| Record | Contents |
+|---|---|
+| [HGN v2](docs/HGN_V2.md) / [Initial validation](docs/HGN_V2_VALIDATION.md) | Formats, loading, configuration, initial Windows results and older-weight checks |
+| [First kernel optimization](docs/HGN_V2_OPTIMIZATION.md) | Exact / WMMA exploration and rejected precision tradeoffs |
+| [Order-preserving optimization](docs/HGN_V2_EXACT_OPTIMIZATION.md) | Same-v2 exact speedups and token comparisons |
+| [Grouped matrix kernels](docs/HGN_V2_GROUPED_OPTIMIZATION.md) | Grouped/native HT, historical upstream comparison, numerical and task failures |
+| [MTP numerical alignment](docs/SPEC_NUMERIC_ALIGNMENT.md) | Alignment policy, usage and unverified scope |
+| [R1–R14 checkpoint](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md) | Committed implementation, long-input timing, tool loops and reproduction conditions |
+| [R15 candidate](docs/R15_NORM_OUTPUT_PROBE.md) | Independent dual-output normalization microbenchmark, not integrated |
+
+Inherited documentation: [Quick start](QUICKSTART_EN.md), [GGUF](GGUF.md),
+[Older HGN HQ](HGN-HQ.md), [HGN container](HGN-FORMAT_EN.md), [MTP](MTP_EN.md),
+[Ngram](NGRAM_EN.md), [Concurrency](CONCURRENCY.md), [Conversion](CONVERT_EN.md),
+[KLD](KLD.md).
 
 ## Acknowledgements
 

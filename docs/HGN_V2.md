@@ -6,6 +6,26 @@ of parity with Halogen's optimized kernels or of production readiness.
 The original weights are read-only; no conversion file or requantized copy
 is produced.
 
+## Compatibility with older weights
+
+V2 support is additive. `src/hgn.h` still decodes older storage types,
+including Q4CP. The serial and batched MoE dispatch in
+`src/gpu/parts/40_model.inc` selects the new expert path for storage 23,
+while retaining the older Q4CP and GGUF paths. The repository's
+`service.conf` still defaults to older w4b plus overlay/external MTP.
+
+An early v2-fork Windows EXE ran both v2 and older w4b with the quality
+overlay and external MTP; see [initial validation](HGN_V2_VALIDATION.md).
+The latest cumulative R13 engine has not repeated the complete older-weight
+regression. Other HQ combinations and Windows GGUF have not all been
+validated. Retaining a loader is not proof that every old configuration is
+unchanged: shared sampler/MTP code has also evolved, and v2-specific expert
+speedups do not apply automatically to Q4CP.
+
+`NGRAM_FILE` here is the PLE lookup-weight sidecar, not an ngram speculative
+decoding switch. This implementation targets the observed Flash-Next layouts,
+not all HGN variants or arbitrary GGUF model architectures.
+
 ## Implementation
 
 * Dense HT (storage 16, parameter `0x1208`) and Q6 (storage 24, parameter 64)
@@ -124,8 +144,12 @@ Group-scale matrix kernels and their separate numerical/behavioral tests are
 recorded in `HGN_V2_GROUPED_OPTIMIZATION.md`.
 The subsequent R1-R13 implementation and bounded R14 tool-task results are
 summarized in the [Windows v2 research checkpoint](WINDOWS_V2_RESEARCH_CHECKPOINT.md).
-Linux execution, long context, concurrent requests and quality/performance
-parity require separate evidence.
+Later Windows long-input and bounded tool-task results are in that checkpoint;
+they do not establish arbitrary sampling, cache/multi-slot behavior or broad
+task-quality equivalence. Linux execution of the new paths and complete
+older-weight regression on the cumulative engine remain unverified.
+The [R15 normalization candidate](R15_NORM_OUTPUT_PROBE.md) is a separate
+microbenchmark and has not been integrated into this engine.
 
 ## Kernel modes
 

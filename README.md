@@ -1,190 +1,197 @@
-# gfx1151-engine
+# gfx1151-engine：Windows HGN v2 推理优化分支
 
 ![Strix Halo — Qwen3.8-Flash-Next](media/strix_banner_21x9_v2.png)
 
 *English: [README_EN.md](README_EN.md)*
 
-> 本分支正在开发 **Halogen Flash-Next v2 HGN** 兼容支持。Windows 编译、格式检查和
-> CPU/GPU 内核测试、完整模型加载、基础生成和工具调用已通过；首轮实测约 59 token/s
-> 预填充、12 token/s 正文生成，明显慢于旧版权重路径，暂不替换正式部署。
-> 实现范围和测试方法见 [HGN v2](docs/HGN_V2.md)，当前证据见
-> [验证记录](docs/HGN_V2_VALIDATION.md)。下方上游性能数据不代表此实验路径的性能。
+这是 [gfx1151-engine 上游实验项目](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine)
+的研究 Fork，当前分支为 `codex/halogen-v2-support`。面向 **Windows 11 /
+Ryzen AI Max+ 395 / Radeon 8060S（gfx1151）/ 128 GiB 统一内存**，重点是
+Halogen Flash-Next v2 HGN 格式支持、专家计算与 Prefill 优化，以及串行/MTP 的数值对齐。
+目标模型仍是 Qwen3.8-Flash-Next（`qwen4_exp`）及兼容结构，不是通用模型推理框架。
 
-在单张 AMD Strix Halo APU(gfx1151)上运行 177B MoE 模型的本地推理引擎,
-目标模型为 Qwen3.8-Flash-Next(qwen4_exp 架构)及其同结构微调。
+**旧版 w4b / Q4CP 路径仍保留，v2 是新增支持，并非替换旧格式。**
+不同格式的验证范围见下表；格式兼容不表示所有新内核都适用于旧权重，也不保证新旧版本逐位输出相同。
 
-路由专家以 4-bit 量化存放在主机内存,GPU kernel 直读,不需要大显存;常驻内存的权重
-约 67–77 GiB(视权重格式,PLE n-gram 表留在磁盘按需读),整机 122 GiB 内存即可提供
-256K 上下文。
+截至 **2026-10-01**：已提交的累计引擎实现为 R1–R13，R14 是该引擎的工具任务测试；
+R15 双输出归一化仍是**未接入引擎的独立候选**。这些编号是本分支研究阶段，不是上游发布版本。
+当前结果不构成生产可用、全场景无损或全面超过上游的承诺。
 
-## 性能实测
+## 我们相对上游做了什么
 
-开发机器为 **GMK EVO-X2(AMD Ryzen AI Max+ 395,Strix Halo / gfx1151)**,
-122 GiB 内存:
+| 方向 | 本分支增加或改进的内容 | 当前边界 |
+|---|---|---|
+| HGN v2 加载 | 支持已观察到的 HT / rotated grouped Q4 / Q6 布局，Windows 加载器识别独立 PLE sidecar，校验布局和缺失张量 | 不是所有 HGN 变体；旧 Q4CP 与 GGUF 分派保留 |
+| v2 专家计算 | 保持 FP32 运算顺序的 `exact` 批量/小批次内核；可选分组缩放矩阵核、激活高低位拆分、native HT 投影 | `grouped` 等路径会改变浮点计算，不能称为逐位等价 |
+| MTP 数值与状态 | 可选 `aligned` 策略，对齐残差、GDN、QSA 和短验证计算；修复已复现的多行累加差异，补充槽位/检查点保护与采样器修正 | 有限样例通过不等于随机采样、缓存、多槽位全部等价 |
+| 普通 Prefill | 延后专家缩放、重排 Q4 读取、PLE 预读、gate/up 与激活融合、归约与 Hadamard 融合 | R10/R12 有同权重、同二进制的开关对照 |
+| MTP 前置处理 | 可选 KV-only ingest、融合读取、跳过未使用验证头、tap/RMSNorm 融合及四路原尺寸投影 | 按形状、槽位和运行库条件启用，保留回退；并非总能缩短完整请求 |
+| 研究记录 | 格式/内核检查、数值对照、长输入计时、真实工具循环与失败案例 | 未把局部微核速度或“能加载”当作完整任务质量证明 |
 
-| 指标 | 数值 |
-| --- | --- |
-| Prefill(128K 上下文) | 约 1400–1470 tok/s(09-28 实测) |
-| Decode(投机,greedy,γ=4) | 8K 约 45、64K 约 46 tok/s(09-29 真实文本) |
-| Decode(投机,采样,自适应 γ) | 8K 约 40、64K 约 45 tok/s(09-29 真实文本) |
-| Decode(不投机) | 约 25–30 tok/s(09-28 实测,视权重格式) |
-| 平均功耗 | 约 120 W |
-| 瞬时最大功耗 | 约 130 W(爆发持续几秒后回落至 120 W 左右) |
+这项工作建立在上游已有的 Windows 移植、OpenAI 风格 API、Q4CP/GGUF、MTP、
+PLE、视觉和缓存实现之上；这些不是本分支从零新增的功能。
+实现与开关详情见 [累计研究记录](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)。
 
-投机 decode 随文本重复度变化很大:上面两行用真实文本 prompt 测得;高重复内容(代码、
-模板文本)chain 起草命中率高,同配置实测可达 60 tok/s 以上。权重格式(GGUF / hgn)不同
-数字会有出入;表中 09-28/09-29 均为 2026 年。
+## 权重兼容性：旧格式没有移除
 
-## 权重格式与质量
+| 权重路径 | 当前代码 | 本分支实测范围 |
+|---|---|---|
+| `qwen38-flash-next-w4b.hgn` + 旧版 overlay / 外部 MTP | 旧 HGN、Q4CP 解码及串行/批量专家分派保留；仓库 `service.conf` 仍以此为默认 | 早期 v2 分支同一 Windows EXE 已实际加载和生成；**最新 R13 累计版本未完整重跑旧权重回归** |
+| 其他旧格式 HQ / overlay 组合 | 继承旧容器与 overlay 路径，仍须满足原张量布局与模型结构 | 未逐一验证全部 HQ 文件/组合，不能按文件后缀承诺兼容 |
+| `qwen38-flash-next-v2.hgn` + `qwen38-flash-next-ngram.hgn` | 新增 storage 16 / 23 / 24 的已观察布局；主文件含内置 MTP | 当前 Windows 研究主线，有内核、整模型、长输入及工具循环记录 |
+| 同结构 GGUF | 继承 GGUF 加载和专家计算分支，Linux 入口仍在 | 本轮 Windows v2 研究未做 GGUF 端到端回归，不能据此声称 Windows GGUF 全面可用 |
 
-引擎支持两种权重格式,服务、API、投机解码完全相同,换启动器即可切换:
+代码依据：[HGN 解码](src/hgn.h)、[模型分派](src/gpu/parts/40_model.inc)、
+[主程序加载](src/gpu/parts/52_main.inc)。
+新 v2 专家核按张量类型选择，旧 Q4CP 不会自动获得下面的 v2 专属提速。
+公共采样器与 MTP 逻辑也有修改，因此“保留兼容”不是“旧路径所有行为完全不变”。
 
-| | hgn 标准 | hgn 高质量(HQ) | GGUF UD-Q4_K_XL |
-| --- | --- | --- | --- |
-| 文件 | 当前默认(`qwen38-flash-next-w4b.hgn` + overlay) | 从原始权重转换,见 [HGN-HQ.md](HGN-HQ.md) | Unsloth 发布,与 llama.cpp 同一份文件 |
-| 路由专家 | 4-bit(q4cp) | 4-bit(q4cp,imatrix 加权) | Q4_K / Q5_1 为主 |
-| dense(注意力、GDN、shared expert、embed、lm_head) | 4-bit | 8-bit(q8g32 overlay) | 8-bit(Q8_0) |
-| KLD vs BF16(越低越好) | 0.163 | **0.0558** | 0.0511 |
-| top1 与 BF16 一致 | 86.8% | 92.4% | 92.6% |
-| 常驻权重 bpw / 大小 | 4.55 / 66.6 GiB | 4.70 / 68.8 GiB | 5.25 / 76.9 GiB |
-| Prefill(8K prompt,chunk 2048) | 约 1200 tok/s | 约 1200 tok/s | 约 1200 tok/s |
-| Decode(不投机) | 约 30 tok/s | 约 25 tok/s | 约 25 tok/s |
-| 启动 | `start_hgn.sh` | `start_hgn.sh`(改 `MODEL_FILE` / `OVERLAY_FILE`) | `start_gguf.sh` |
-| Windows | 支持 | 支持(尚未实测) | 不支持 |
+v2 的 `NGRAM_FILE` 是 **PLE 查表权重**，不是开启 ngram 推测解码的开关。
+测试 v2 时应清空旧 `OVERLAY_FILE`，避免覆盖新权重；清空 `MTP_FILE` 只是不加载
+外部草稿，**不会关闭主文件内置 MTP**。参见 [格式和隔离配置](docs/HGN_V2.md)。
 
-- KLD:BF16 基准,wikitext-2 64 chunk × 512,测法与 unsloth / llama.cpp 相同(见 [KLD.md](KLD.md));
-  llama.cpp 跑同一份 GGUF 为 0.049。
-- 质量差距几乎全部来自 dense 的位宽:dense 改成 8-bit 后 KLD 0.163 → 0.063,imatrix 专家再降到
-  0.0558。代价是 decode 每 token 读量增加,慢约 16%(与 GGUF 相同);prefill 不受影响。
-- 常驻权重不含 PLE n-gram 表(hgn fp8 47.7 GiB,GGUF IQ4_NL 26.8 GiB),该表留在磁盘按需读。
-  `python3 tools/bpw.py` 按类别复核各文件的 bpw(只读文件头,几秒)。
-- 默认配置仍是 hgn 标准。HQ 文件已通过 `tools/hq_verify.sh`;部署方法见
-  [HGN-HQ.md](HGN-HQ.md) 第 6 节。
+## 实测性能与比较口径
 
-## 特性
+测试设备为上述 Windows 11 / 395 / 8060S / 128 GiB 机器。以下是各阶段的历史结果，
+不是对最新提交所有开关组合重新做出的统一排行。未修改或重新量化模型文件；
+这并不代表所有计算路径的数值和模型质量相同。
 
-- **投机解码 chain**:ngram 优先起草、MTP 兜底,逐轮回退;贪心逐位比对,
-  采样按目标分布重采样比对,输出分布与串行一致。默认生效,无需参数;
-  草稿长度 γ 按模式自选(greedy 固定 4、采样按接受率自适应),也可用
-  `MTP_GAMMA=1-8` 固定。高度重复内容(代码注释、模板文本)实测显著加速。
-- **独立 8-bit MTP 草稿权重** sidecar,接受率高于内置 4-bit 草稿头。
-- **视觉**:支持图像输入(OpenAI `image_url`),KV 复用跨轮生效。
-- **OpenAI 兼容 API**:流式、工具调用、`/v1/chat/completions`。
-- **256K 上下文**,分页 KV 页池 + 两级 prompt 缓存:消息边界的内存检查点
-  (编辑重发秒回) + KV 快照跨重启恢复。
-- **并发请求**:多条请求共享同一个分页 KV 页池(默认 4 路、总共 256K,
-  类似 llama.cpp 的共享上下文),GPU 按请求轮转,每条输出与单独运行逐位
-  一致;长 prompt prefill 分段让出 GPU,其它会话最长卡顿约 0.6 s。配置与
-  语义见 [CONCURRENCY.md](CONCURRENCY.md)。
-- **两种权重格式**:自有 `.hgn`(Linux / Windows)与 llama.cpp 的 GGUF
-  (Unsloth UD-Q4_K_XL,Linux),对比见上。
-- **模型转换工具**:HF safetensors → `.hgn`,默认输出高质量版(8-bit dense overlay
-  + 加权 4-bit 专家);有 llama.cpp 格式的 imatrix 就用,没有也能转。可用于自己的
-  同架构微调模型(见 [HGN-HQ.md](HGN-HQ.md)、[CONVERT.md](CONVERT.md))。
+### 早期专家优化与上游旧权重组合
 
-## 要求
+三次重复的中位数；上下文容量 16384，单槽位、BF16 KV、greedy、关闭思考/视觉，
+无复用 prompt token。单位为阶段 token/s。
 
-- Linux + ROCm(HIP 7.x),GPU 架构 `gfx1151`;或 Windows + AMD 显卡驱动
-  (GPU 需 BIOS 划分显存),见「Windows」一节
-- 可用内存 ≥ 100 GiB(权重锁页:hgn 约 68 GiB、GGUF 约 80 GiB,另加 KV)
-- 编译依赖:rocBLAS、hipBLASLt、rocPRIM;API 前端另需
-  libpng、libjpeg、libwebp（nlohmann/json 已随仓库提供）
+| 测项 | 较早 v2 exact | v2 grouped + native HT | 上游实验版本：旧 w4b + quality overlay + 外部 MTP |
+|---|---:|---:|---:|
+| Prefill，8138 输入 token | 358.45 | 1164.40 | 1397.20 |
+| 串行 Decode，128 输出 token | 15.37 | 26.57 | 32.75 |
+| MTP Decode，128 输出 token | 15.60 | 27.38 | 32.69 |
 
-## 快速开始
+`grouped` 的 Prefill 达到较早 `exact` 的 **3.25 倍**、该上游配置的 **83.3%**。
+上游对照为 `78a41cc`，较早 exact 为 `1825905`；两边权重、MTP 和执行路径不同，
+所以这不是“只改引擎”的对照，也不是最新 R13 对上游的结论。
+额外舍入更大的 `grouped-f16` 曾达到 1351.85 token/s（该上游配置的 96.8%），
+但不是等价加速或默认设置。[完整条件与数值检查](docs/HGN_V2_GROUPED_OPTIMIZATION.md)
 
-```bash
-bash build.sh        # 编译引擎 + API,输出在 build/
-bash start_hgn.sh    # hgn 权重:加载模型并启动服务(读取 service.conf)
-bash start_gguf.sh   # 或 GGUF 权重(Unsloth UD-Q4_K_XL,与 llama.cpp 同一份文件)
-```
+### 后续同一 v2 配置下的受控优化
 
-两个启动器都从 `./models` 读取权重,缺文件时列出缺失项并退出;配置集中在
-`service.conf`(hgn、GGUF 各一段)。GGUF 见 [GGUF.md](GGUF.md)。
-详见 [QUICKSTART.md](QUICKSTART.md)。
+同一二进制开关对照，固定输入、串行 greedy、128 输出 token、单槽位、
+BF16 KV、262144 上下文容量、8192 分块，实际 cached token 为 0。
+后续实验沿用 grouped/native HT 等研究配置，并非默认 exact 配置。
+每个长度三对，保留慢样本。表中是**逐对耗时降幅的中位数**，不是吞吐增幅。
 
-自有微调模型(HF safetensors,同架构)转换:
+| 阶段 / 输入 token | Prefill 耗时减少 | 完整请求耗时减少 |
+|---|---:|---:|
+| R10 / 32768 | 5.34% | 4.69% |
+| R10 / 131072 | 6.65% | 6.37% |
+| R10 / 260000 | 6.25% | 6.18% |
+| R12c / 32768 | 2.264% | 1.861% |
+| R12c / 131072 | 2.387% | 2.269% |
 
-```bash
-# 没有 imatrix
-python3 tools/flashnext2hgn.py /path/to/hf-model --out ./models
-# 有 imatrix(llama.cpp 格式,GGUF 或旧版 imatrix.dat)
-python3 tools/flashnext2hgn.py /path/to/hf-model --out ./models --imatrix /path/to/imatrix.gguf
-```
+这些 Prefill 对照均为 3/3 更快；Decode 并非每次更快。
+R10 的 260K 完整请求中位耗时为 **247.659 → 232.758 秒**。
+请求时间不含进程启动、模型加载、tokenization 和清理。不同阶段收益不能相加，
+也不能直接乘到前一张历史表上。[配置、方法与边界](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
 
-输出基座 `.hgn`、8-bit dense overlay、8-bit MTP 草稿、视觉塔、分词器,以及可直接运行的
-`start.sh`;32 核约 1.5 小时,磁盘约 125 GiB,只依赖 numpy。`--classic` 为旧的无数据转换器
-(输出与以前逐字节相同)。高质量转换见 [HGN-HQ.md](HGN-HQ.md),格式与旧转换器见
-[CONVERT.md](CONVERT.md)。
+### MTP：Decode 加速不等于任务必然加速
 
-## Windows
+R13 新增两项前置处理开关，在 131072 / 260000 输入下相对关闭它们的 MTP，
+完整请求逐对耗时仅减少 0.1667% / 0.1734%；抖动和自动 kernel 选择限制了归因。
+**260000 输入、128 输出时，开启它们的 MTP 仍比串行慢 0.2585%，三对均更慢。**
+因此尚未实现长输入短输出下稳定的整体收益。
 
-Windows 版与 Linux 版功能一致(引擎 + OpenAI API + 多模态),移植记录与
-实测见 [PORTING-WINDOWS.md](PORTING-WINDOWS.md)。编译在 Git Bash 中执行
-(或双击 `build_win.bat`,仅编译期需要 Git):
+R14 在四个隔离实例中依次运行串行/MTP/MTP/串行，每个实例执行一个办公聚合任务和
+一个代码修复任务，共 64 次模型请求。工具实际执行，不是只检查生成的 JSON。
 
-```bash
-bash build_win.sh           # 引擎
-bash build_win.sh api       # OpenAI API 前端
-bash build_win.sh launcher  # 免脚本启动器 start_win.exe
-```
+| 场景 | 串行 Decode | MTP Decode | 完成情况 |
+|---|---:|---:|---|
+| 代码修复 | 22.28 token/s | 40.72 token/s | 两种模式各 2/2 成功；任务平均 96.01 → 51.91 秒 |
+| 办公聚合 | 23.05 token/s | 40.55 token/s | 两种模式各 0/2 成功，均在工具协议处失败 |
 
-日常运行双击 `start_win.exe`(原生 Win32,不需要 Git/PowerShell):拉起引擎
-+ API 双进程,不开控制台,只在任务栏右下角放托盘图标(右键:打开面板 / 复制
-API 地址 / 查看日志 / 退出;双击:打开面板),输出写入 `logs\`;排查问题可用
-`start_win.exe --console` 回到控制台模式(Ctrl+C 或关窗停止)。配置与 Linux
-**共用 `service.conf`**(换模型文件名、改上下文窗口都编辑它),环境变量可
-临时覆盖。客户端连 `http://<主机>:8731/v1`。
+代码任务平均耗时减少 45.9%，但首次串行 Prefill 波动较大，不能据此声称 MTP 稳定提升
+Prefill。办公任务生成了未知工具 `query_ledser`（应为 `query_ledger`）和无效 SQL；
+API 又将解析失败映射为 `length`，实际并未耗尽输出预算。这仍是未解决问题。
 
-分发:`build/` + `start_win.exe` + `models/` 拷到任意 gfx1151 Windows
-机器即用,**无需安装 ROCm/TheRock**;仅需 AMD 显卡驱动,并在 BIOS 为 GPU
-划分足够显存(256K 上下文需 96 GiB)。
+上述是每种固定场景各两次测试，不是完整 Octop UI 测试或广泛 Agent 排名；
+实际最长 prompt 为办公 45496、代码 4114 token，不能称为 256K Agent 测试。
+[研究记录与计时定义](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
 
-与 Linux 版的差异:
+### 最新候选：R15 归一化双输出（尚未接入）
 
-- 只支持 hgn 权重:Windows 下可用显存上限约 96 GiB,GGUF 权重体积更大
-  (hgn 比 GGUF 省约 11 GiB)放不下,`start_gguf.sh` 不适用;hgn 权重由
-  转换工具生成,见 [CONVERT.md](CONVERT.md)。高质量 hgn 换文件即可用:
-  weight arena +2.2 GiB,256K / chunk 8192 估算约 93.2 GiB(上限 95),
-  尚未在 Windows 实测
-- 图片解码经 stb_image 支持 PNG/JPEG(WebP 未接)
-- prefill chunk 默认 8192
-- 冷加载为整权重读盘(分钟级,进度见控制台/日志)
-- 启动器未开 `GDEC_GEMM_WMMA` 与 `GDEC_GDN_FUSED`(Linux 启动器已转正的
-  自写 WMMA GEMM 与 GDN 融合 kernel,合计约 8-10% PP,TheRock 下未验证——
-  故 Windows 端 prefill 走 hipBLASLt + 旧 GDN 路径)
+将 R13 的 norm → FP32 → BF16 转换改为同一次 norm 同时写两种输出，
+保持原 FP32 运算顺序与舍入。已测 88 个有限输入用例的完整 FP32/BF16 输出逐位一致。
+在固定应用目录 HIP 运行库的热微测试中，P=8192、4 组的局部耗时为
+**5.470750 → 3.647000 ms（减少 33.3%）**。
 
-已知问题(原因均未查明;疑难杂症较多,待解决,优先级很低):
+这仅是归一化与转换步骤，不含后续投影、完整 Prefill、Decode 或任务时间。
+**候选代码尚未合入引擎，收益不计入已发布引擎指标。**
+[候选记录与原始计时](docs/R15_NORM_OUTPUT_PROBE.md)
 
-- 显存分配超过 41 GiB 或 63 GiB 时失败
-- 模型 decode 过程中卡死(疑为控制台输出反压:控制台被点选暂停后,子进程写日志
-  阻塞。已修复:启动器改为托盘程序、日志不经过控制台,kvsnap 不再持锁打印;待验证)
+## 精度、默认值与未完成事项
 
-编译细节见 [BUILD.md](BUILD.md)。
+- 默认 `GDEC_V2_MOE=exact`、native HT 关闭、`GDEC_SPEC_PRECISION=legacy`。
+  `exact` 指专家运算保持该 FP32 参考的顺序，不是未量化模型质量保证；
+  默认密集 HT/Q6 转 BF16 还有约 7.83 GiB 常驻副本开销。
+- `grouped`、`grouped-f16`、native HT、`aligned` 和后续可选融合需显式选择。
+  本页高速数据并非出厂默认值。公共采样器修正并非全部由 `aligned` 门控。
+- 较早 1020 个 teacher-forced 位置，exact 首选 token 与存储参考一致率 100%，
+  grouped 为 87.843%。这是行为一致率，**不是答题正确率**；局部误差小、PPL 接近，
+  也不能保证整模型输出或统计任务质量。
+- 部分串行/MTP 差异已定位并修复，测试过的有限配置可对齐；
+  任意随机采样、warm/cache、多槽位、所有长输入与多模态仍不能承诺全场景等价。
+- 最新累计版本的旧权重完整回归、Linux 新路径实机验证、办公工具失败修复、
+  长输入短输出 MTP 稳定收益和 R15 端到端验证仍待完成。
 
-## 文档
+[精度策略](docs/SPEC_NUMERIC_ALIGNMENT.md) /
+[专家数值实验](docs/HGN_V2_GROUPED_OPTIMIZATION.md) /
+[完整边界说明](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
 
-- [QUICKSTART.md](QUICKSTART.md) — 编译、启动、配置
-- [BUILD.md](BUILD.md) — 编译环境细节与排错
-- [GGUF.md](GGUF.md) — GGUF 权重加载、与 hgn 的性能对比
-- [HGN-HQ.md](HGN-HQ.md) — 高质量 hgn:一键转换(可选 imatrix)、结果与部署
-- [CONVERT.md](CONVERT.md) — 模型转换工具
-- [KLD.md](KLD.md) — 质量测试(KLD,与 unsloth / llama.cpp 同口径)
-- [MTP.md](MTP.md) — 投机解码参数与对比方法
-- [NGRAM.md](NGRAM.md) — ngram 验证的设计、收益与已知分歧
-- [CONCURRENCY.md](CONCURRENCY.md) — 并发请求(PARALLEL)的配置与语义
-- [HGN-FORMAT.md](HGN-FORMAT.md) — `.hgn` 权重容器格式
-- [GGUF.md](GGUF.md) — 直接用 llama.cpp GGUF 权重运行
-- [data/README.md](data/README.md) — 数值回归基准(data/qsa-oracle)说明
-- [PORTING-WINDOWS.md](PORTING-WINDOWS.md) — Windows 移植记录与实测
+## Windows 构建与开始使用
 
-## 测试
+使用单独目录检出本分支，准备 Git Bash、TheRock ROCm 工具链及匹配的驱动。
+在 Git Bash 中设置 `THEROCK` 为本机工具链目录，再构建：
 
 ```bash
-bash build.sh test     # kernel 单测,不加载模型,预期 ALL PASS
-python3 tools/bpw.py   # 统计 models/ 下各权重的 bpw(按类别,只读文件头)
+git clone --branch codex/halogen-v2-support https://github.com/jerrydong1988/gfx1151-engine.git
+cd gfx1151-engine
+bash build_win.sh
+bash build_win.sh api
+bash build_win.sh launcher
+bash build_win.sh v2-test
+bash build_win.sh test
 ```
 
-质量(KLD)测试需要 BF16 基准,流程见 [KLD.md](KLD.md)。
+1. 按 [v2 隔离配置](docs/HGN_V2.md) 修改 `service.conf`：主权重、匹配的 PLE sidecar、
+   tokenizer，先用短上下文和单槽位。仓库默认配置仍指向旧 w4b，克隆不会自动切换 v2。
+2. 在 PowerShell 运行 `.\start_win.exe --check` 检查配置，再运行 `.\start_win.exe`。
+   首次完整加载和请求成功是运行验证，单元测试通过不能替代它们。
+3. 要复现后续研究配置，按 [R13 参数与限制](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
+   在启动前设置进程环境变量；它们不是新增 `service.conf` 键。
+   空外部 MTP 文件或 gamma=0 都不表示串行模式。
+
+Windows 当前启动器已设置 `GDEC_GEMM_WMMA` 和 `GDEC_GDN_FUSED`；
+不要沿用旧 README 中“Windows 未启用”的描述。实际运行库身份、内存/提交额度、
+上下文长度和并发数仍会影响加载与运行，不能由 128 GiB 容量单独推定 256K 多并发可用。
+
+详细构建步骤见 [BUILD.md](BUILD.md)。部分上游文档保留了历史参数、性能和平台结论；
+本分支的新路径与验证范围以这里链接的研究记录为准。本仓库未发布全部本地测试清单、
+输入捕获和任务驱动，现有构建命令不能一键复现本页全部表格。
+
+## 优化记录与文档导航
+
+| 记录 | 内容 |
+|---|---|
+| [HGN v2](docs/HGN_V2.md) / [首次验证](docs/HGN_V2_VALIDATION.md) | 格式、加载、配置、早期 Windows 实测和旧权重检查 |
+| [首轮内核优化](docs/HGN_V2_OPTIMIZATION.md) | exact / WMMA 探索及被拒绝的精度折中 |
+| [顺序保持优化](docs/HGN_V2_EXACT_OPTIMIZATION.md) | 同一 v2 下的 exact 提速与 token 对照 |
+| [分组矩阵核](docs/HGN_V2_GROUPED_OPTIMIZATION.md) | grouped/native HT、历史上游对照、数值及任务失败 |
+| [MTP 数值对齐](docs/SPEC_NUMERIC_ALIGNMENT.md) | 对齐策略、使用方法与未覆盖范围 |
+| [R1–R14 累计记录](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md) | 已提交实现、长输入性能、工具循环及复现条件 |
+| [R15 候选](docs/R15_NORM_OUTPUT_PROBE.md) | 尚未接入引擎的双输出归一化微测试 |
+
+继承的格式与使用文档：[快速开始](QUICKSTART.md)、[GGUF](GGUF.md)、
+[旧 HGN HQ](HGN-HQ.md)、[HGN 容器](HGN-FORMAT.md)、[MTP](MTP.md)、
+[ngram](NGRAM.md)、[并发](CONCURRENCY.md)、[转换](CONVERT.md)、[KLD](KLD.md)。
 
 ## 致谢
 
