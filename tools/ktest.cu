@@ -190,7 +190,79 @@ static std::vector<float> dget(const float* p, size_t n) {
   return v;
 }
 
+// Production R15 producer versus the original norm + cast consumer contract.
+// Use a local RNG so this regression does not change the older test fixtures.
+static void test_mtp_tap_norm_dual() {
+  std::mt19937 gen(1515);
+  constexpr size_t guard = 16;
+  for (int P : {1, 2, 7, 16, 17, 31, 32, 33, 1024})
+    for (int groups : {1, 4})
+      for (int pattern = 0; pattern < 3; ++pattern) {
+        const int width = 10240 / groups;
+        const size_t n = (size_t)P * 10240;
+        std::vector<uint16_t> x(n);
+        std::vector<float> w(10240);
+        const uint16_t edge[] = {0, 0x8000, 1, 0x8001, 0x0080, 0x8080,
+                                0x3f80, 0x3f81, 0xbf80, 0xbf81, 0x4700, 0xc700};
+        for (size_t i = 0; i < n; ++i) {
+          const float v = std::uniform_real_distribution<float>(-3.f, 3.f)(gen);
+          uint32_t bits; memcpy(&bits, &v, sizeof bits);
+          x[i] = pattern == 0 ? (uint16_t)((bits + 0x7fff + ((bits >> 16) & 1)) >> 16)
+                 : pattern == 1 ? edge[i % (sizeof edge / sizeof *edge)]
+                                : (i & 1 ? 0x8000 : 0);
+        }
+        for (auto& v : w) v = std::uniform_real_distribution<float>(-1.f, 1.f)(gen);
+        auto* dx = dup(x); auto* dw = dup(w);
+        std::vector<uint32_t> fguard(n + 2 * guard, 0xa5a5a5a5);
+        std::vector<uint16_t> bguard(n + 2 * guard, 0xa5a5);
+        auto* df0 = dup(fguard); auto* df1 = dup(fguard);
+        auto* db0 = dup(bguard); auto* db1 = dup(bguard);
+        bool ok = true;
+        for (int repeat = 0; repeat < 2; ++repeat) {
+          for (auto* p : {df0, df1}) TCK(hipMemset(p + guard, 0xff, n * 4));
+          for (auto* p : {db0, db1}) TCK(hipMemset(p + guard, 0xff, n * 2));
+          r13tap::norm_bf16_to_f32<<<groups * P, 1024>>>(
+              dx, dw, (float*)(df0 + guard), width, 1e-6f, groups);
+          k_f32_to_bf16_v4<<<(unsigned)((n / 4 + 255) / 256), 256>>>(
+              (float*)(df0 + guard), db0 + guard, 2560, 4 * P, 2560);
+          r15tap::norm_bf16_dual_output<<<groups * P, 1024>>>(
+              dx, dw, (float*)(df1 + guard), db1 + guard, width, 1e-6f, groups);
+          TCK(hipGetLastError());
+          std::vector<uint32_t> f0(fguard.size()), f1(fguard.size());
+          std::vector<uint16_t> b0(bguard.size()), b1(bguard.size());
+          TCK(hipMemcpy(f0.data(), df0, f0.size() * 4, hipMemcpyDeviceToHost));
+          TCK(hipMemcpy(f1.data(), df1, f1.size() * 4, hipMemcpyDeviceToHost));
+          TCK(hipMemcpy(b0.data(), db0, b0.size() * 2, hipMemcpyDeviceToHost));
+          TCK(hipMemcpy(b1.data(), db1, b1.size() * 2, hipMemcpyDeviceToHost));
+          ok = ok && f0 == f1 && b0 == b1;
+          for (size_t i = 0; i < f0.size(); ++i) {
+            if (i < guard || i >= n + guard) {
+              ok = ok && f0[i] == 0xa5a5a5a5 && f1[i] == 0xa5a5a5a5 &&
+                         b0[i] == 0xa5a5 && b1[i] == 0xa5a5;
+            } else {
+              const uint32_t bits = f0[i];
+              const uint16_t expected = (uint16_t)((bits + 0x7fff + ((bits >> 16) & 1)) >> 16);
+              ok = ok && (bits & 0x7f800000) != 0x7f800000 &&
+                   (b0[i] & 0x7f80) != 0x7f80 && b0[i] == expected;
+            }
+          }
+        }
+        std::vector<uint16_t> xr(n);
+        std::vector<float> wr(w.size());
+        TCK(hipMemcpy(xr.data(), dx, n * 2, hipMemcpyDeviceToHost));
+        TCK(hipMemcpy(wr.data(), dw, w.size() * 4, hipMemcpyDeviceToHost));
+        ok = ok && xr == x && !memcmp(wr.data(), w.data(), w.size() * 4);
+        for (auto* p : {df0, df1}) TCK(hipFree(p));
+        for (auto* p : {db0, db1}) TCK(hipFree(p));
+        TCK(hipFree(dx)); TCK(hipFree(dw));
+        printf("mtp_norm_dual P=%d groups=%d pattern=%d %s\n",
+               P, groups, pattern, ok ? "PASS" : "FAIL");
+        fails += !ok;
+      }
+}
+
 int main() {
+  test_mtp_tap_norm_dual();
   // ---- 1. k_rmsnorm_zc_grouped batched wrap (grid = 4*P, ngroups = 4) ----
   {
     const int P = 3, G = 4, N = 2560;

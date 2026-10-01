@@ -1083,6 +1083,9 @@ static uint64_t fingerprint(const GpuModel& m) {
   if (GpuModel::mtp_branch_strided_enabled()) add(0x6d74706273743101ULL);
   // R13 opt-in tap source; isolate checkpoints until fully validated.
   if (GpuModel::mtp_tap_norm_fused_enabled()) add(0x6d7470746e663101ULL);
+  // R15 is still experimental: namespace saved states when explicitly enabled,
+  // while retaining the existing checkpoint identity for the default-off path.
+  if (GpuModel::mtp_tap_norm_dual_enabled()) add(0x6d7470746e643101ULL);
   const char* kv_only_ingest = getenv("GDEC_MTP_INGEST_KV_ONLY");
   if (kv_only_ingest && kv_only_ingest[0] == '1') {
     add(0x6d74706b766f0001ULL);

@@ -16,9 +16,10 @@ not arbitrary language models.
 Format support, measured coverage, and which optimizations apply are separate questions;
 retaining a format does not promise bitwise-identical output across engine versions.
 
-As of **2026-10-01**, the committed cumulative engine contains R1–R13 work; R14 is its
-tool-task evaluation. R15 dual-output normalization is an **independent candidate not
-integrated into the engine**. These are local research stages, not upstream releases.
+As of **2026-10-01**, the cumulative engine contains R1–R13 and default-off R15
+dual-output normalization; R14 is the tool-task evaluation. R15 numerical checks
+passed, but stable complete-request gains were not established.
+These are local research stages, not upstream releases.
 Results do not establish production readiness, universal losslessness, or an overall
 performance lead over upstream.
 
@@ -30,7 +31,7 @@ performance lead over upstream.
 | V2 experts | FP32-order-preserving exact batch/small-batch kernels; optional group-scale matrix kernels, high/low activation splitting, native HT projections | Grouped arithmetic changes floating-point evaluation; not bitwise equivalent |
 | MTP numerics and state | Optional aligned residual/GDN/QSA/short-verification policy, a reproduced multi-row accumulation fix, slot/checkpoint guards and sampler corrections | Finite passing cases do not establish arbitrary sampling, cache or multi-slot equivalence |
 | Ordinary prefill | Deferred expert scaling, permuted Q4 reads, PLE lookahead, gate/up plus activation fusion, reduction plus Hadamard fusion | R10/R12 have same-weight, same-binary switch comparisons |
-| MTP preparation | Optional KV-only ingest, fused reads, skipping an unused verifier head, tap/RMSNorm fusion and four original-shape projections | Shape/slot/runtime guards and fallbacks remain; complete requests are not always faster |
+| MTP preparation | Optional KV-only ingest, fused reads, skipping an unused verifier head, tap/RMSNorm fusion, four original-shape projections and dual-output normalization | Shape/slot/runtime guards and fallbacks remain; complete requests are not always faster |
 | Evidence | Format/kernel checks, numerical comparisons, long-input timing, real tool loops and failure records | Kernel speed or successful loading is not treated as task-quality evidence |
 
 The upstream Windows port, OpenAI-style API, Q4CP/GGUF, MTP, PLE, vision and caching
@@ -41,7 +42,7 @@ See the [cumulative research checkpoint](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
 
 | Weight path | Current implementation | Validation in this fork |
 |---|---|---|
-| `qwen38-flash-next-w4b.hgn` + older overlay / external MTP | Older HGN/Q4CP decoding and serial/batched expert dispatch retained; still the repository's default service configuration | An early v2-fork Windows EXE loaded and generated with it; **the latest cumulative R13 engine has not rerun the complete older-weight regression** |
+| `qwen38-flash-next-w4b.hgn` + older overlay / external MTP | Older HGN/Q4CP decoding and serial/batched expert dispatch retained; still the repository's default service configuration | An early v2-fork Windows EXE loaded and generated with it; **the latest cumulative engine has not rerun the complete older-weight regression** |
 | Other older HQ / overlay combinations | Existing container and overlay paths retained, subject to their tensor layouts and model architecture | Not every HQ file/combination tested; a file extension is insufficient evidence |
 | `qwen38-flash-next-v2.hgn` + `qwen38-flash-next-ngram.hgn` | Observed storage 16 / 23 / 24 layouts added; main file includes MTP | Main Windows research path, with kernel, whole-model, long-input and tool-loop records |
 | Same-architecture GGUF | Inherited loader, expert path and Linux entry point retained | No Windows GGUF end-to-end regression in this v2 research; not a claim of complete Windows GGUF support |
@@ -134,18 +135,21 @@ agent ranking. Maximum actual prompts were 45496 office and 4114 code tokens,
 not a 256K agent test.
 [Research record and timing definitions](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
 
-### Latest candidate: R15 dual-output normalization (not integrated)
+### R15: dual-output normalization integrated, default off
 
-A candidate replaces R13's norm → FP32 → BF16 conversion with one norm that writes
-both outputs, retaining the original FP32 evaluation order and rounding.
-Complete FP32/BF16 outputs matched bitwise in 88 finite-input cases.
-With the pinned app-local HIP runtime, the hot microbenchmark at P=8192, four groups
-measured **5.470750 → 3.647000 ms (33.3% less time)**.
+One norm now optionally writes FP32 and BF16 while retaining FP32 fallback and
+the original rounding. All 241 kernel cases passed, including 54 new cases.
+Cold and prefix-reuse comparisons matched all 448 corresponding output tokens,
+recorded MTP cache state and draft logits. This is bounded coverage, not proof
+for arbitrary inputs or every model state.
 
-This covers normalization/conversion only, not downstream projections, complete
-prefill, decode or task time. **Candidate code is not integrated; its gains are not
-included in published engine performance.**
-[Candidate record and raw timings](docs/R15_NORM_OUTPUT_PROBE.md)
+Six fresh launches, three complete-request pairs each at 32K/128K, **did not
+establish stable overall acceleration**. Median paired request time increased
+**0.471% at 32K** and decreased **0.028% at 128K**. The earlier 33.3% local microkernel
+reduction is not a prefill/task speedup; automatic kernel selection also differed
+between launches. `GDEC_MTP_TAP_NORM_DUAL` therefore remains off by default.
+[Integration, request timings and numerical boundaries](docs/R15_INTEGRATION.md) /
+[Earlier microbenchmark](docs/R15_NORM_OUTPUT_PROBE.md)
 
 ## Precision, defaults and unfinished work
 
@@ -165,7 +169,7 @@ included in published engine performance.**
   all long inputs and multimodal requests are not universally verified equivalent.
 - Remaining work includes a complete older-weight regression on the cumulative
   engine, Linux validation of new paths, office tool failures, stable MTP gains for
-  long-input/short-output requests and R15 end-to-end validation.
+  long-input/short-output requests and R15 persistent-cache/multi-slot validation.
 
 [Precision policy](docs/SPEC_NUMERIC_ALIGNMENT.md) /
 [Expert numerical experiments](docs/HGN_V2_GROUPED_OPTIMIZATION.md) /
@@ -216,7 +220,7 @@ every table here automatically.
 | [Grouped matrix kernels](docs/HGN_V2_GROUPED_OPTIMIZATION.md) | Grouped/native HT, historical upstream comparison, numerical and task failures |
 | [MTP numerical alignment](docs/SPEC_NUMERIC_ALIGNMENT.md) | Alignment policy, usage and unverified scope |
 | [R1–R14 checkpoint](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md) | Committed implementation, long-input timing, tool loops and reproduction conditions |
-| [R15 candidate](docs/R15_NORM_OUTPUT_PROBE.md) | Independent dual-output normalization microbenchmark, not integrated |
+| [R15 integration](docs/R15_INTEGRATION.md) / [Earlier probe](docs/R15_NORM_OUTPUT_PROBE.md) | Default-off implementation, numerical checks and complete-request measurements without stable overall gains |
 
 Inherited documentation: [Quick start](QUICKSTART_EN.md), [GGUF](GGUF.md),
 [Older HGN HQ](HGN-HQ.md), [HGN container](HGN-FORMAT_EN.md), [MTP](MTP_EN.md),

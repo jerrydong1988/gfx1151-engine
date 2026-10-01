@@ -25,8 +25,11 @@
   // Separate descriptor namespace: never insert strided layouts in lt_algos.
   std::unordered_map<int, std::unique_ptr<MtpBranchLtEntry>> mtp_branch_lt_;
 
-  bool mtp_branch_strided(const WView& w, int P, bool normal_prompt,
-                          uint16_t* scratch, size_t scratch_elems) {
+  // No scratch writes or conversion-cache changes until all capability and
+  // Lt support checks pass. R15 may also use this before producing BF16 input.
+  MtpBranchLtEntry* mtp_branch_strided_prepare(const WView& w, int P,
+                          bool normal_prompt, uint16_t* scratch,
+                          size_t scratch_elems) {
     constexpr size_t D = 2560, ROW = 4 * D;
     // Capability is passed only by normal prefill. A repair/re-ingest caller
     // cannot enable this by leaving prog_total nonzero. No shared small ws.
@@ -43,22 +46,22 @@
         !d_mRhatb || !d_mRb || !scratch || scratch != d_xbf16 ||
         scratch_elems < (size_t)P * ROW ||
         (((uintptr_t)d_mRhatb | (uintptr_t)d_mRb | (uintptr_t)scratch) & 15))
-      return false;
+      return nullptr;
     // For N=K=2560, normal P>16 cannot take MR, aligned or the WMMA
     // shape whitelist. The existing GEMM therefore uses this exact Lt key.
     const uint64_t key = ((uint64_t)D << 40) ^ ((uint64_t)D << 20) ^ (uint64_t)P;
     const auto baseline = lt_algos.find(key);
-    if (baseline == lt_algos.end()) return false; // no tuning/guessing here
+    if (baseline == lt_algos.end()) return nullptr; // no tuning/guessing here
     hipStreamCaptureStatus capture;
     if (hipStreamIsCapturing(g_str, &capture) != hipSuccess ||
-        capture != hipStreamCaptureStatusNone) return false;
+        capture != hipStreamCaptureStatusNone) return nullptr;
 
     const auto& selected = baseline->second.algo;
     auto selected_copy = selected;
     // Empirically validated by R1 on the frozen TheRock gfx1151 runtime only.
     // Same mathematical shape/index is NOT itself a bitwise-equivalence proof.
     // A different selected solution keeps the original route even if supported.
-    if (hipblaslt_ext::getIndexFromAlgo(selected_copy) != 1251) return false;
+    if (hipblaslt_ext::getIndexFromAlgo(selected_copy) != 1251) return nullptr;
     auto found = mtp_branch_lt_.find(P);
     if (found != mtp_branch_lt_.end() &&
         (memcmp(found->second->original.data, selected.data, sizeof selected.data) ||
@@ -93,7 +96,26 @@
               P, original_index, checked_index, workspace, (int)owned->supported);
       found = mtp_branch_lt_.emplace(P, std::move(owned)).first;
     }
-    if (!found->second->supported) return false;
+    return found->second->supported ? found->second.get() : nullptr;
+  }
+
+  static bool mtp_tap_norm_dual_enabled() {
+    static const bool enabled = [] {
+      const char* value = getenv("GDEC_MTP_TAP_NORM_DUAL");
+      return value && !strcmp(value, "1");
+    }();
+    return enabled;
+  }
+
+  bool mtp_branch_strided(const WView& w, int P, bool normal_prompt,
+                          uint16_t* scratch, size_t scratch_elems,
+                          const uint16_t* norm_bf16_ready = nullptr) {
+    constexpr size_t D = 2560, ROW = 4 * D;
+    // Readiness is explicit and local to this call, never a forged xf16 hit.
+    if (norm_bf16_ready && norm_bf16_ready != scratch) return false;
+    auto* entry = mtp_branch_strided_prepare(w, P, normal_prompt, scratch,
+                                            scratch_elems);
+    if (!entry) return false; // the caller still has complete FP32 output
     auto pt0 = std::chrono::steady_clock::now();
     // No GPU writes and no conversion-cache mutation occur before eligibility
     // and support pass. ROW*P BF16 elements fit the caller's explicit scratch;
@@ -101,9 +123,10 @@
     xf16_src = nullptr;
     const uint16_t* wp = gemm_wbf16(w); // same q8g64 conversion, once not four
     const size_t elements = (size_t)P * ROW;
-    k_f32_to_bf16_v4<<<(unsigned)((elements / 4 + 255) / 256), 256, 0, g_str>>>(
-        d_mRhatb, scratch, D, 4 * P, (int)D);
-    const auto& e = found->second->lt;
+    if (!norm_bf16_ready)
+      k_f32_to_bf16_v4<<<(unsigned)((elements / 4 + 255) / 256), 256, 0, g_str>>>(
+          d_mRhatb, scratch, D, 4 * P, (int)D);
+    const auto& e = entry->lt;
     float one = 1.f, zero = 0.f;
     for (int b = 0; b < 4; ++b) {
       float* output = d_mRb + (size_t)b * D;

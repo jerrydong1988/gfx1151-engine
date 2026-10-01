@@ -148,8 +148,10 @@ Later Windows long-input and bounded tool-task results are in that checkpoint;
 they do not establish arbitrary sampling, cache/multi-slot behavior or broad
 task-quality equivalence. Linux execution of the new paths and complete
 older-weight regression on the cumulative engine remain unverified.
-The [R15 normalization candidate](R15_NORM_OUTPUT_PROBE.md) is a separate
-microbenchmark and has not been integrated into this engine.
+The [R15 integration](R15_INTEGRATION.md) adds optional dual-output normalization.
+Cold/warm numerical checks passed; repeated complete-request measurements did not
+establish stable gains, so it remains off by default. Its earlier
+[microbenchmark](R15_NORM_OUTPUT_PROBE.md) is separate historical evidence.
 
 ## Kernel modes
 

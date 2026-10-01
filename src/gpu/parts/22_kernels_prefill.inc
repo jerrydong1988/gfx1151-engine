@@ -2441,3 +2441,38 @@ __global__ void norm_bf16_to_f32(const uint16_t* __restrict__ x,
   }
 }
 }  // namespace r13tap
+
+// R15 dual-output norm: same 1024-thread reduction and FP32 expression
+// as the extracted R13 norm; keep FP32 output and emit its existing f2bf RNE
+// conversion in the same launch. Requires the production f2bf and bf2f helpers.
+namespace r15tap {
+__global__ void norm_bf16_dual_output(const uint16_t* __restrict__ x,
+                                    const float* __restrict__ w,
+                                    float* __restrict__ out,
+                                    uint16_t* __restrict__ out_bf16,
+                                    int gsize, float eps, int ngroups) {
+  const uint16_t* xg = x + (size_t)blockIdx.x * gsize;
+  const float* wg = w + (size_t)(blockIdx.x % ngroups) * gsize;
+  float* og = out + (size_t)blockIdx.x * gsize;
+  uint16_t* bg = out_bf16 + (size_t)blockIdx.x * gsize;
+  __shared__ float sm[1024];
+  int t = threadIdx.x;
+  float ss = 0.f;
+  for (int i = t; i < gsize; i += blockDim.x) {
+    float value = bf2f(xg[i]);
+    ss += value * value;
+  }
+  sm[t] = ss;
+  __syncthreads();
+  for (int off = blockDim.x / 2; off > 0; off >>= 1) {
+    if (t < off) sm[t] += sm[t + off];
+    __syncthreads();
+  }
+  float inv = rsqrtf(sm[0] / gsize + eps);
+  for (int i = t; i < gsize; i += blockDim.x) {
+    float value = bf2f(xg[i]) * inv * (1.f + wg[i]);
+    og[i] = value;
+    bg[i] = f2bf(value);
+  }
+}
+}  // namespace r15tap

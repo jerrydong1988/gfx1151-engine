@@ -1,8 +1,12 @@
 # R15: dual-output normalization candidate
 
-2026-10-01. **Independent microkernel research; not integrated into the engine.**
+2026-10-01. **Historical independent microkernel experiment, performed before engine integration.**
 
-本记录补充最新候选的实际数据，不把局部微核收益计入当前分支引擎性能。
+The subsequent [default-off engine integration](R15_INTEGRATION.md) is now
+implemented and tested separately. This document preserves the earlier probe
+measurements and must not be read as complete-engine performance.
+
+本记录保留接入前候选的实际数据，不把局部微核收益计入当前分支引擎性能。
 以下原始计时来自固定应用目录 HIP 运行库的第二轮，未与第一轮系统 HIP 7.2 的结果混合。
 
 ## Baseline and candidate
@@ -61,7 +65,7 @@ from the median-of-paired-reductions convention in the R10/R12 engine tables.
 Timings cover the complete norm-plus-cast baseline versus dual-output norm.
 They exclude downstream Lt projections, full prefill, decode and tool tasks.
 
-## Evidence and next integration gate
+## Historical evidence and integration gate
 
 [Sanitized measurement data](benchmarks/r15-norm-output.json) contains all
 216 raw timing observations, correctness counts, runtime identity and hashes.
@@ -79,11 +83,12 @@ complete reproduction package are not shipped in this checkpoint. Published
 timing samples allow recalculating summaries, not independently reproducing
 the kernel experiment.
 
-Integration still needs an explicit per-call BF16-ready output, invalidation
-of stale conversion caches before scratch writes, FP32 fallbacks, projection
-comparisons and cold/warm MTP KV/index/ring/draft-logit checks. Only after those
-checks and repeated complete-request measurements can this candidate count
-toward engine performance. No such end-to-end claim is made here.
+The initial integration gate required explicit per-call BF16 readiness, cache
+invalidation before scratch writes, FP32 fallbacks, and cold/warm state/logit
+checks followed by complete-request timings. See the subsequent
+[integration record](R15_INTEGRATION.md) for the implementation and measured
+coverage. The microkernel numbers here remain separate; the integration did not
+establish a stable complete-request speedup.
 
 See the [committed R1–R14 checkpoint](WINDOWS_V2_RESEARCH_CHECKPOINT.md) for
 the engine work that precedes this candidate.

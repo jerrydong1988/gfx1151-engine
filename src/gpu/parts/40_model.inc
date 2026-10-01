@@ -5786,6 +5786,7 @@ struct GpuModel {
     k_rmsnorm_zc_grouped<<<P, 1024, 0, g_str>>>(d_eb, d_mnorm_e, d_eb, 2560,
                                                 g_cfg.norm_eps, 1);
     gemm(wview(ckpt.at("mtp.fc_embedding.weight")), d_eb, d_qnb, P);
+    const uint16_t* norm_bf16_ready = nullptr;
     if (taps_bf16) {
       static const bool noted = [] {
         fprintf(stderr, "[mtp-tap-norm] direct BF16 prompt norm active (FP32 output)\n");
@@ -5794,8 +5795,28 @@ struct GpuModel {
       (void)noted;
       const int groups = mtp_norm_mode == 0 ? 1 : 4;
       const int width = mtp_norm_mode == 0 ? 10240 : 2560;
-      r13tap::norm_bf16_to_f32<<<groups * P, 1024, 0, g_str>>>(
-          taps_bf16, d_mnorm_h, d_mRhatb, width, g_cfg.norm_eps, groups);
+      if (mtp_tap_norm_dual_enabled() &&
+          mtp_branch_strided_prepare(wview(ckpt.at("mtp.fc_hidden.weight")),
+                                    P, normal_prompt, d_xbf16,
+                                    (size_t)maxbatch_cap * 10240)) {
+        // Invalidate before the producer overwrites the shared BF16 buffer.
+        // Preserve FP32 for every fallback; validity is not carried to another
+        // ingest/slot or stored in the conversion-cache identity.
+        xf16_src = nullptr;
+        r15tap::norm_bf16_dual_output<<<groups * P, 1024, 0, g_str>>>(
+            taps_bf16, d_mnorm_h, d_mRhatb, d_xbf16,
+            width, g_cfg.norm_eps, groups);
+        norm_bf16_ready = d_xbf16;
+        static const bool dual_noted = [P, groups] {
+          fprintf(stderr, "[mtp-tap-norm-dual] P=%d groups=%d BF16-ready=1 "
+                          "FP32 fallback retained\n", P, groups);
+          return true;
+        }();
+        (void)dual_noted;
+      } else {
+        r13tap::norm_bf16_to_f32<<<groups * P, 1024, 0, g_str>>>(
+            taps_bf16, d_mnorm_h, d_mRhatb, width, g_cfg.norm_eps, groups);
+      }
     } else if (mtp_norm_mode == 0)
       k_rmsnorm_zc_grouped<<<P, 1024, 0, g_str>>>(taps, d_mnorm_h, d_mRhatb,
                                                   10240, g_cfg.norm_eps, 1);
@@ -5822,7 +5843,8 @@ struct GpuModel {
       // the helper rejects the swapped small/borrowed workspace explicitly.
       if (!mtp_branch_strided(wview(ckpt.at("mtp.fc_hidden.weight")), P,
                               normal_prompt, d_xbf16,
-                              (size_t)maxbatch_cap * 10240)) {
+                              (size_t)maxbatch_cap * 10240,
+                              norm_bf16_ready)) {
         for (int b = 0; b < 4; b++) {
           gemm(wview(ckpt.at("mtp.fc_hidden.weight")), d_mRhatb + (size_t)b * 2560,
                d_convoutb, P, 10240 /*xstride*/);
