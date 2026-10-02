@@ -172,6 +172,8 @@ static bool ple_uring_ready() {
 
 #else  // _WIN32 ------------------------------------------------------------
 
+#include "../ple_page_plan.h"
+
 // IOCP 批量读：与 PleUring::run 相同语义——n 个 160B 行从文件偏移
 // g_ple_foff + (addrs[i] - table_va) 读入 staging + i*g_ple_rb；任何失败/短读
 // 立即 fatal，不做半途回退。
@@ -180,6 +182,7 @@ struct PleWin {
   HANDLE iocp = nullptr;
   static constexpr size_t DEPTH = 512;
   std::string path;
+  uint64_t file_bytes = 0;
 
   PleWin() = default;
   PleWin(const PleWin&) = delete;
@@ -202,6 +205,9 @@ struct PleWin {
                      nullptr, OPEN_EXISTING,
                      FILE_FLAG_OVERLAPPED | FILE_FLAG_RANDOM_ACCESS, nullptr);
     if (fh == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER length;
+    if (!GetFileSizeEx(fh, &length) || length.QuadPart < 0) { close(); return false; }
+    file_bytes = (uint64_t)length.QuadPart;
     iocp = CreateIoCompletionPort(fh, nullptr, 0, 0);
     if (!iocp) {
       CloseHandle(fh);
@@ -212,8 +218,94 @@ struct PleWin {
     return true;
   }
 
+  void run_pages(const uint64_t* addrs, uint8_t* staging, uint64_t table_va,
+                 size_t n) {
+    const auto started = std::chrono::steady_clock::now();
+    std::vector<uint64_t> offsets(n);
+    for (size_t i = 0; i < n; ++i) {
+      if (addrs[i] < table_va || addrs[i] - table_va > UINT64_MAX - g_ple_foff)
+        throw std::out_of_range("PLE row offset overflow");
+      offsets[i] = g_ple_foff + (addrs[i] - table_va);
+    }
+    const auto plan = ple_page::make(offsets.data(), n, g_ple_rb, file_bytes);
+    const auto planned = std::chrono::steady_clock::now();
+    const size_t depth = std::min(DEPTH, plan.pages.size());
+    std::vector<OVERLAPPED> ovs(depth);
+    std::vector<uint8_t> scratch(depth * ple_page::page_bytes);
+    std::vector<size_t> jobs(depth), free_(depth);
+    for (size_t i = 0; i < depth; ++i) free_[i] = depth - i - 1;
+    size_t available = depth, submitted = 0, completed = 0;
+    while (completed < plan.pages.size()) {
+      while (submitted < plan.pages.size() && available) {
+        const size_t slot = free_[--available];
+        jobs[slot] = submitted;
+        const auto& pg = plan.pages[submitted];
+        auto& ov = ovs[slot];
+        std::memset(&ov, 0, sizeof ov);
+        ov.Offset = (DWORD)pg.file; ov.OffsetHigh = (DWORD)(pg.file >> 32);
+        const BOOL ok = ReadFile(fh, scratch.data() + slot * ple_page::page_bytes,
+                                pg.bytes, nullptr, &ov);
+        if (!ok && GetLastError() != ERROR_IO_PENDING) {
+          fprintf(stderr, "ple_page: ReadFile failed: %lu\n", GetLastError());
+          abort();  // outstanding OVERLAPPED/scratch cannot be unwound safely
+        }
+        ++submitted;
+      }
+      DWORD got = 0; ULONG_PTR key = 0; OVERLAPPED* pov = nullptr;
+      const BOOL ok = GetQueuedCompletionStatus(iocp, &got, &key, &pov, INFINITE);
+      if (!ok || !pov) { fprintf(stderr, "ple_page: completion failed: %lu\n", GetLastError()); abort(); }
+      const uintptr_t address = (uintptr_t)pov, first = (uintptr_t)ovs.data();
+      if (address < first || address - first >= depth * sizeof(OVERLAPPED) ||
+          (address - first) % sizeof(OVERLAPPED)) {
+        fprintf(stderr, "ple_page: foreign completion\n"); abort();
+      }
+      const size_t slot = (address - first) / sizeof(OVERLAPPED);
+      if (got != plan.pages[jobs[slot]].bytes) {
+        fprintf(stderr, "ple_page: foreign completion or short read\n"); abort();
+      }
+      ple_page::scatter(plan, plan.pages[jobs[slot]],
+                        scratch.data() + slot * ple_page::page_bytes, staging);
+      free_[available++] = slot; ++completed;
+    }
+    const auto end = std::chrono::steady_clock::now();
+    fprintf(stderr, "[ple-page-io] rows=%zu pages=%zu plan_ms=%.3f read_scatter_ms=%.3f total_ms=%.3f\n",
+            n, plan.pages.size(), std::chrono::duration<double, std::milli>(planned-started).count(),
+            std::chrono::duration<double, std::milli>(end-planned).count(),
+            std::chrono::duration<double, std::milli>(end-started).count());
+  }
+
   void run(const uint64_t* addrs, uint8_t* staging, uint64_t table_va,
            size_t n) {
+    static const bool pages = [] {
+      const char* value = getenv("GDEC_PLE_PAGE_IO");
+      return value && !strcmp(value, "1");
+    }();
+    if (pages && n >= 512) {
+      run_pages(addrs, staging, table_va, n);
+      static const bool verify = [] {
+        const char* value = getenv("GDEC_PLE_PAGE_VERIFY");
+        return value && !strcmp(value, "1");
+      }();
+      if (verify) {
+        std::vector<uint8_t> reference(n * g_ple_rb);
+        run_rows(addrs, reference.data(), table_va, n);
+        if (memcmp(staging, reference.data(), reference.size())) {
+          fprintf(stderr, "ple_page: byte verification FAILED\n"); abort();
+        }
+        fprintf(stderr, "[ple-page-verify] rows=%zu bytes=%zu match=1\n", n, reference.size());
+      }
+      return;
+    }
+    const auto started = std::chrono::steady_clock::now();
+    run_rows(addrs, staging, table_va, n);
+    if (n >= 512)
+      fprintf(stderr, "[ple-row-io] rows=%zu bytes=%zu total_ms=%.3f\n", n,
+              n * (size_t)g_ple_rb, std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - started).count());
+  }
+
+  void run_rows(const uint64_t* addrs, uint8_t* staging, uint64_t table_va,
+                size_t n) {
     // decode 每 token 只读 16 行：槽位数按需收缩，避免每 token 分配 512 槽
     const size_t depth = std::min(DEPTH, n);
     std::vector<OVERLAPPED> ovs(depth);

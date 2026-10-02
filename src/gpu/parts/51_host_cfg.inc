@@ -2528,6 +2528,7 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
     // speculative one would report the previous request's acceptance
     m.live_spec_rounds = m.live_spec_commits = m.live_spec_proposed = 0;
     std::vector<kvsnap::Pending> pend;  // SSD captures, committed at turn end
+    const auto pre_ingest_started = std::chrono::steady_clock::now();
     for (size_t cc : cuts) {
       std::vector<int> seg(g.ids.begin() + done_upto, g.ids.begin() + cc);
       cur = m.prefill_batch(seg, (int)done_upto);
@@ -2546,6 +2547,7 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
     }
     std::vector<int> seg(g.ids.begin() + done_upto, g.ids.end());
     cur = m.prefill_batch(seg, (int)done_upto);
+    const auto pre_ingest_finished = std::chrono::steady_clock::now();
     m.prog_total = 0;
     m.mtp_tap_capture = false;  // decode/verify must not capture taps
     hist = g.ids;  // prompt fully ingested on both paths
@@ -2565,6 +2567,16 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
     double pre_ms = std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - t0)
                         .count();
+    if (GpuModel::request_timing_enabled()) {
+      const double setup_ms = std::chrono::duration<double, std::milli>(
+          pre_ingest_started - t0).count();
+      const double ingest_ms = std::chrono::duration<double, std::milli>(
+          pre_ingest_finished - pre_ingest_started).count();
+      fprintf(stderr, "[request-prefill-wall] req=%lld prompt=%zu cached=%zu "
+                      "setup_ms=%.3f ingest_ms=%.3f first_token_ms=%.3f total_ms=%.3f\n",
+              (long long)g.req, g.ids.size(), cont ? mcp : (size_t)0,
+              setup_ms, ingest_ms, pre_ms - setup_ms - ingest_ms, pre_ms);
+    }
     // Phase 1: snapshot only at end-of-turn. This removes the first-token
     // stall while the full asynchronous capture path is being designed.
     // prompt-end RAM checkpoint (cheap, deduped)

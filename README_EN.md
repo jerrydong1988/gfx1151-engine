@@ -17,7 +17,7 @@ not arbitrary language models.
 Format support, measured coverage, and which optimizations apply are separate questions;
 retaining a format does not promise bitwise-identical output across engine versions.
 
-As of **2026-10-02**, the cumulative engine contains R1–R13, default-off R15–R17
+As of **2026-10-03**, the cumulative engine contains R1–R13, default-off R15–R17
 candidates and R16 timing guards. R14/R17/R18 include real tool-task evaluation;
 R18 adds argument validation, bounded diagnostics and optional client recovery.
 R19 integrates upstream infrastructure and adds a selectable hybrid v2 path with
@@ -32,6 +32,21 @@ As of the R17 checkpoint (2026-10-02), two paged QSA candidates are available
 but default off. Tool-output failures after normal stopping now report
 `invalid_tool_call` rather than falsely claiming token-budget exhaustion.
 This interface correction does not fix model tool selection or SQL correctness.
+
+## R24: research latency diagnostics and output organization
+
+Historical-input replay, MTP depth and frozen-corpus writing were measured separately.
+Prefill stalls coincided with disk-read waits, but their cause remains unresolved.
+Host diagnostics were added. An experimental page reader passed byte and bounded
+token/logprob checks without demonstrating stable speed gains, so it stays off.
+Gamma 3 regressed in a longer-output counterexample; gamma 2 remains the default.
+
+On the same baseline binary/gamma 2, concise prose plus source IDs and deterministic
+link rendering reduced one completed report request from 373.413 to 197.867 seconds
+(47.0%), and output from 10681 to 6175 tokens. Bounded human review scored 74→78/100;
+the selected report still needs factual revisions. This is a workflow observation,
+not a 47% engine improvement or a complete Octop task speedup. The helper has not
+been installed into Octop. [Conditions, negative results and limits](docs/RESEARCH_WORKLOAD_R24.md).
 
 ## R23: output budgets and independently checked delivery
 

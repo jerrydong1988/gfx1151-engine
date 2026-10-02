@@ -1,0 +1,785 @@
+{
+  "scope": "single-slot Windows v2 hybrid, BF16 KV, 262144 capacity; text-only controlled replays of one research workload",
+  "baseline_engine_sha256": "0db12c2073baf550267519ad0ceec6d275f6a7653c9ebffb76681508ccc23728",
+  "candidate_engine_sha256": "fe91c4f38050e4b274c20350c2eeb0ff80049ab877796f3d4b25e2f107d9b577",
+  "gamma_initial": [
+    {
+      "experiment": "decode-g2",
+      "mode": 0,
+      "gamma": 2,
+      "prompt": 20366,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 14.8338,
+      "decode_s": 16.7378,
+      "wall_s": 31.577845799998613,
+      "tps": 30.589444251932754,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g2",
+      "mode": 1,
+      "gamma": 2,
+      "prompt": 20366,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 14.6959,
+      "decode_s": 12.708200000000001,
+      "wall_s": 27.412137000006624,
+      "tps": 40.28894729387324,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g2",
+      "mode": 0,
+      "gamma": 2,
+      "prompt": 74704,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 52.1159,
+      "decode_s": 19.3618,
+      "wall_s": 71.49950340000214,
+      "tps": 26.443822371886913,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g2",
+      "mode": 1,
+      "gamma": 2,
+      "prompt": 74704,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 52.9392,
+      "decode_s": 12.5179,
+      "wall_s": 65.4804570999986,
+      "tps": 40.901429153452256,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g2",
+      "mode": 0,
+      "gamma": 2,
+      "prompt": 126954,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 437.4966,
+      "decode_s": 19.0862,
+      "wall_s": 456.62406380000175,
+      "tps": 26.825664616319642,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g2-long",
+      "mode": 1,
+      "gamma": 2,
+      "prompt": 126954,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 90.1292,
+      "decode_s": 13.200899999999999,
+      "wall_s": 103.36794509997708,
+      "tps": 38.78523434008287,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g2-long",
+      "mode": 1,
+      "gamma": 2,
+      "prompt": 152384,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 203.3112,
+      "decode_s": 13.9472,
+      "wall_s": 217.301845399983,
+      "tps": 36.70987725134794,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g3",
+      "mode": 1,
+      "gamma": 3,
+      "prompt": 20366,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 15.3245,
+      "decode_s": 12.668899999999999,
+      "wall_s": 27.99998379999306,
+      "tps": 40.41392701813101,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g3",
+      "mode": 1,
+      "gamma": 3,
+      "prompt": 74704,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 52.579699999999995,
+      "decode_s": 10.556700000000001,
+      "wall_s": 63.15844249998918,
+      "tps": 48.500004736328584,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g3",
+      "mode": 1,
+      "gamma": 3,
+      "prompt": 126954,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 91.48830000000001,
+      "decode_s": 11.9703,
+      "wall_s": 103.50074600000517,
+      "tps": 42.772528675137636,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g3",
+      "mode": 1,
+      "gamma": 3,
+      "prompt": 152384,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 111.559,
+      "decode_s": 12.9605,
+      "wall_s": 124.5622153999866,
+      "tps": 39.50464874040353,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g4",
+      "mode": 1,
+      "gamma": 4,
+      "prompt": 20366,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 15.1793,
+      "decode_s": 13.4802,
+      "wall_s": 28.666039100004127,
+      "tps": 37.98163231999525,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g4",
+      "mode": 1,
+      "gamma": 4,
+      "prompt": 74704,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 52.749199999999995,
+      "decode_s": 10.9235,
+      "wall_s": 63.6958301999839,
+      "tps": 46.871423994141075,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g4",
+      "mode": 1,
+      "gamma": 4,
+      "prompt": 126954,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 92.3071,
+      "decode_s": 11.718200000000001,
+      "wall_s": 104.06102580000879,
+      "tps": 43.69271731153248,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "decode-g4",
+      "mode": 1,
+      "gamma": 4,
+      "prompt": 152384,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 185.8504,
+      "decode_s": 19.6477,
+      "wall_s": 205.54145720001543,
+      "tps": 26.059029810105,
+      "finish": "length",
+      "checks_passed": true
+    }
+  ],
+  "gamma_long": [
+    {
+      "experiment": "long-output-g2",
+      "mode": 1,
+      "gamma": 2,
+      "prompt": 126954,
+      "cached": 0,
+      "output": 2048,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        991
+      ],
+      "prefill_s": 90.7565,
+      "decode_s": 50.5466,
+      "wall_s": 141.34050590000697,
+      "tps": 40.517067418975756,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "long-output-g3",
+      "mode": 1,
+      "gamma": 3,
+      "prompt": 126954,
+      "cached": 0,
+      "output": 2048,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        991
+      ],
+      "prefill_s": 90.96039999999999,
+      "decode_s": 54.133300000000006,
+      "wall_s": 145.13460099999793,
+      "tps": 37.832535611167245,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "api-default-g2",
+      "mode": 1,
+      "gamma": 2,
+      "prompt": 126954,
+      "cached": 0,
+      "output": 1024,
+      "sample": [
+        1.0,
+        20,
+        0.95,
+        0,
+        3163
+      ],
+      "prefill_s": 91.0215,
+      "decode_s": 24.5172,
+      "wall_s": 115.58605939999688,
+      "tps": 41.76659651183659,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "api-default-g3",
+      "mode": 1,
+      "gamma": 3,
+      "prompt": 126954,
+      "cached": 0,
+      "output": 1024,
+      "sample": [
+        1.0,
+        20,
+        0.95,
+        0,
+        3163
+      ],
+      "prefill_s": 90.72139999999999,
+      "decode_s": 23.749299999999998,
+      "wall_s": 114.50805549998768,
+      "tps": 43.11706029230335,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "page-perf-g2",
+      "mode": 1,
+      "gamma": 2,
+      "prompt": 74704,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 52.9001,
+      "decode_s": 10.8324,
+      "wall_s": 63.75730550001026,
+      "tps": 47.26561057568037,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "page-perf-g2",
+      "mode": 1,
+      "gamma": 2,
+      "prompt": 126954,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 91.95219999999999,
+      "decode_s": 12.1404,
+      "wall_s": 104.1491199999873,
+      "tps": 42.173239761457616,
+      "finish": "length",
+      "checks_passed": true
+    },
+    {
+      "experiment": "page-perf-g2",
+      "mode": 1,
+      "gamma": 2,
+      "prompt": 152384,
+      "cached": 0,
+      "output": 512,
+      "sample": [
+        0.7,
+        20,
+        0.8,
+        0,
+        1729
+      ],
+      "prefill_s": 111.62230000000001,
+      "decode_s": 14.6247,
+      "wall_s": 126.29097220001859,
+      "tps": 35.00926514731926,
+      "finish": "length",
+      "checks_passed": true
+    }
+  ],
+  "workflow": [
+    {
+      "experiment": "workflow-combined",
+      "arm": "compact",
+      "reason": "done",
+      "generated_tokens": 10260,
+      "reasoning_token_count": 2236,
+      "report_token_count_reencoded": 8022,
+      "report_tokens_with_IDs_only_reencoded": 4781,
+      "prefill_s": 55.6678,
+      "decode_s": 213.6911,
+      "wall_s": 269.38011229998665,
+      "report_chars": 14192,
+      "report_CJK": 3802,
+      "without_URL_chars": 7754,
+      "source_occurrences": 84,
+      "unique_ids": 53,
+      "unknown_ids": [],
+      "model_links": 71,
+      "wire_checks": {
+        "valid_token_ids": true,
+        "wire_count_matches_done": true,
+        "within_output_budget": true,
+        "finite_timings": true,
+        "sample_logprobs_finite_nonpositive": true,
+        "eos_not_emitted": true
+      },
+      "mismatched_link_count": 0,
+      "human_review_score": 73
+    },
+    {
+      "experiment": "workflow-ids-g2",
+      "arm": "ids",
+      "reason": "done",
+      "generated_tokens": 6175,
+      "reasoning_token_count": 1043,
+      "report_token_count_reencoded": 5130,
+      "report_tokens_with_IDs_only_reencoded": 5130,
+      "prefill_s": 55.608599999999996,
+      "decode_s": 142.2356,
+      "wall_s": 197.86734619998606,
+      "report_chars": 8386,
+      "report_CJK": 4299,
+      "without_URL_chars": 8386,
+      "source_occurrences": 168,
+      "unique_ids": 84,
+      "unknown_ids": [],
+      "model_links": 0,
+      "wire_checks": {
+        "valid_token_ids": true,
+        "wire_count_matches_done": true,
+        "within_output_budget": true,
+        "finite_timings": true,
+        "sample_logprobs_finite_nonpositive": true,
+        "eos_not_emitted": true
+      },
+      "mismatched_link_count": 0,
+      "human_review_score": 78
+    },
+    {
+      "experiment": "workflow-ids-g3",
+      "arm": "ids",
+      "reason": "done",
+      "generated_tokens": 6773,
+      "reasoning_token_count": 744,
+      "report_token_count_reencoded": 6026,
+      "report_tokens_with_IDs_only_reencoded": 6026,
+      "prefill_s": 55.693,
+      "decode_s": 155.4359,
+      "wall_s": 211.1511792000092,
+      "report_chars": 9536,
+      "report_CJK": 4628,
+      "without_URL_chars": 9536,
+      "source_occurrences": 183,
+      "unique_ids": 78,
+      "unknown_ids": [
+        "S58"
+      ],
+      "model_links": 0,
+      "wire_checks": {
+        "valid_token_ids": true,
+        "wire_count_matches_done": true,
+        "within_output_budget": true,
+        "finite_timings": true,
+        "sample_logprobs_finite_nonpositive": true,
+        "eos_not_emitted": true
+      },
+      "mismatched_link_count": 0,
+      "human_review_score": 72
+    },
+    {
+      "experiment": "workflow-pair",
+      "arm": "baseline",
+      "reason": "done",
+      "generated_tokens": 10681,
+      "reasoning_token_count": 301,
+      "report_token_count_reencoded": 10379,
+      "report_tokens_with_IDs_only_reencoded": 10379,
+      "prefill_s": 55.456,
+      "decode_s": 317.93440000000004,
+      "wall_s": 373.4128874000162,
+      "report_chars": 16966,
+      "report_CJK": 8831,
+      "without_URL_chars": 16966,
+      "source_occurrences": 300,
+      "unique_ids": 107,
+      "unknown_ids": [],
+      "model_links": 0,
+      "wire_checks": {
+        "valid_token_ids": true,
+        "wire_count_matches_done": true,
+        "within_output_budget": true,
+        "finite_timings": true,
+        "sample_logprobs_finite_nonpositive": true,
+        "eos_not_emitted": true
+      },
+      "mismatched_link_count": 0,
+      "human_review_score": 74
+    },
+    {
+      "experiment": "workflow-pair",
+      "arm": "compact",
+      "reason": "done",
+      "generated_tokens": 10935,
+      "reasoning_token_count": 1396,
+      "report_token_count_reencoded": 9537,
+      "report_tokens_with_IDs_only_reencoded": 5340,
+      "prefill_s": 55.2504,
+      "decode_s": 267.719,
+      "wall_s": 322.99188489999506,
+      "report_chars": 18026,
+      "report_CJK": 4184,
+      "without_URL_chars": 8637,
+      "source_occurrences": 116,
+      "unique_ids": 66,
+      "unknown_ids": [],
+      "model_links": 114,
+      "wire_checks": {
+        "valid_token_ids": true,
+        "wire_count_matches_done": true,
+        "within_output_budget": true,
+        "finite_timings": true,
+        "sample_logprobs_finite_nonpositive": true,
+        "eos_not_emitted": true
+      },
+      "mismatched_link_count": 1,
+      "human_review_score": 76
+    }
+  ],
+  "io": {
+    "long-diagnostic": {
+      "timing_records": 16,
+      "invalid_timing_records": [],
+      "max_query_ms": 932.314,
+      "page_calls": 0,
+      "rows": 0,
+      "pages": 0,
+      "byte_compare_calls": 0,
+      "byte_compare_bytes": 0
+    },
+    "page-verify": {
+      "timing_records": 26,
+      "invalid_timing_records": [],
+      "max_query_ms": 170.879,
+      "page_calls": 26,
+      "rows": 2390528,
+      "pages": 1558026,
+      "byte_compare_calls": 26,
+      "byte_compare_bytes": 382484480
+    },
+    "page-perf-g2": {
+      "timing_records": 45,
+      "invalid_timing_records": [],
+      "max_query_ms": 178.175,
+      "page_calls": 45,
+      "rows": 5664672,
+      "pages": 3803120,
+      "byte_compare_calls": 0,
+      "byte_compare_bytes": 0
+    },
+    "long-output-g2": {
+      "timing_records": 16,
+      "invalid_timing_records": [],
+      "max_query_ms": 230.546,
+      "page_calls": 16,
+      "rows": 2031264,
+      "pages": 1361333,
+      "byte_compare_calls": 0,
+      "byte_compare_bytes": 0
+    },
+    "long-output-g3": {
+      "timing_records": 16,
+      "invalid_timing_records": [],
+      "max_query_ms": 194.134,
+      "page_calls": 16,
+      "rows": 2031264,
+      "pages": 1361333,
+      "byte_compare_calls": 0,
+      "byte_compare_bytes": 0
+    }
+  },
+  "validation": {
+    "replay_11": [
+      {
+        "label": "chain-0-req10",
+        "identical": true
+      },
+      {
+        "label": "chain-0-ingest10",
+        "identical": true
+      },
+      {
+        "label": "chain-0-req11",
+        "identical": true
+      },
+      {
+        "label": "chain-0-ingest11",
+        "identical": true
+      },
+      {
+        "label": "chain-0-req12",
+        "identical": true
+      },
+      {
+        "label": "chain-0-ingest12",
+        "identical": true
+      },
+      {
+        "label": "chain-0-req13",
+        "identical": true
+      },
+      {
+        "label": "chain-0-ingest13",
+        "identical": true
+      },
+      {
+        "label": "chain-0-req14",
+        "identical": true
+      },
+      {
+        "label": "chain-0-ingest14",
+        "identical": true
+      },
+      {
+        "label": "chain-0-req15",
+        "identical": true
+      }
+    ],
+    "api_tool_loop": {
+      "passed": true,
+      "read": true,
+      "submitted": true,
+      "requests": 3,
+      "scope": "synthetic single-slot text tool loop; not Octop integration or a general accuracy score"
+    },
+    "page_output_comparisons": [
+      {
+        "prompt": 74704,
+        "count": 512,
+        "same_tokens": true,
+        "same_logprobs": true
+      },
+      {
+        "prompt": 126954,
+        "count": 512,
+        "same_tokens": true,
+        "same_logprobs": true
+      },
+      {
+        "prompt": 152384,
+        "count": 512,
+        "same_tokens": true,
+        "same_logprobs": true
+      }
+    ],
+    "citation_revalidation": [
+      {
+        "experiment": "workflow-ids-g2",
+        "original_report_sha256": "8dde889439bbcf10d642a353a9f162a3d8af554e357ea332ef79fcd8c2a92dff",
+        "original_files_preserved": true,
+        "passed": true,
+        "counts": {
+          "resolved": 168,
+          "existing_links": 0
+        },
+        "render_identical_to_original_delivery": true
+      },
+      {
+        "experiment": "workflow-ids-g3",
+        "original_report_sha256": "f295c4ddebaa7089103bdc78719cbbcd4b19c4bbe680b04661d80d1245fc1a94",
+        "original_files_preserved": true,
+        "passed": false,
+        "error": "unknown citation ID: S58",
+        "prior_validator_gap": "Two-digit S58 was skipped by the old three-or-more-digit matcher. No automatic normalization is allowed."
+      }
+    ]
+  },
+  "limits": [
+    "Historical token prefixes reconstructed by teacher forcing; not the original session RNG/state trajectory.",
+    "Fixed token-count sweeps intentionally finish length; workflow arms must finish naturally.",
+    "Changing gamma changes sampled trajectories, so fixed seeds do not imply token identity.",
+    "The original Octop sampling settings were not independently recovered. Two declared policies were tested.",
+    "PDH disk/page-read counters are system-wide; not proof that PLE or WDDM individually caused a stall.",
+    "No full Octop task rerun, no new upstream comparison, no 262144-token or concurrent performance claim.",
+    "Do not combine request and overlapping chunk/PLE durations."
+  ],
+  "adopted": {
+    "gamma": 2,
+    "page_io": false,
+    "request_timing": true,
+    "report_helper": "source-ID rendering, client-side only; not installed into Octop",
+    "workflow_selected": "workflow-ids-g2",
+    "full_octop_rerun": false
+  }
+}

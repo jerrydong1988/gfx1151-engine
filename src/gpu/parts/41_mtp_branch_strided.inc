@@ -71,6 +71,7 @@
       found = mtp_branch_lt_.end();
     }
     if (found == mtp_branch_lt_.end()) {
+      const auto support_started = std::chrono::steady_clock::now();
       auto owned = std::make_unique<MtpBranchLtEntry>();
       auto& e = owned->lt;
       owned->original = selected;
@@ -92,8 +93,10 @@
       owned->supported = ok && workspace <= lt_ws_bytes &&
           original_index >= 0 && checked_index == original_index;
       fprintf(stderr, "[mtp-branch-strided] P=%d baseline_cached_index=%d checked_index=%d "
-                      "N=2560 K=2560 ldb=10240 ldo=10240 workspace=%zu supported=%d\n",
-              P, original_index, checked_index, workspace, (int)owned->supported);
+                      "N=2560 K=2560 ldb=10240 ldo=10240 workspace=%zu supported=%d support_ms=%.3f\n",
+              P, original_index, checked_index, workspace, (int)owned->supported,
+              std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - support_started).count());
       found = mtp_branch_lt_.emplace(P, std::move(owned)).first;
     }
     return found->second->supported ? found->second.get() : nullptr;

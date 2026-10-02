@@ -1,6 +1,7 @@
 # Windows hybrid mainline deployment
 
-Selected on 2026-10-02: HGN v2 hybrid arithmetic, aligned MTP, gamma 2.
+Selected on 2026-10-02, diagnostics updated on 2026-10-03: HGN v2 hybrid arithmetic,
+aligned MTP, gamma 2.
 The native launcher reads explicit `GDEC_*` configuration entries from
 `service.conf`, in addition to the existing high-level options. It applies them
 after built-in flags; the existing context, KV, gamma and arithmetic configuration
@@ -27,19 +28,28 @@ The selected installation uses:
   for large batches, retaining the fork's short verification path.
 - RAM/SSD checkpoints disabled; one-request image limit 16.
 - Loopback engine/API ports 18860/18861; model ID `qwen3.8-flash-next`.
+- Request/chunk host timing enabled; experimental PLE page I/O and double-read
+  verification disabled. Numerical settings and weights are unchanged by R24.
 
-The installed inference engine SHA-256 remains
-`0db12c2073baf550267519ad0ceec6d275f6a7653c9ebffb76681508ccc23728`;
+The R24 inference engine SHA-256 is
+`fe91c4f38050e4b274c20350c2eeb0ff80049ab877796f3d4b25e2f107d9b577`;
 the API remains
 `a4b38906fe189454670929271a37af5f5d0dfb884148af89b77433e5e60f7da0`.
-Their inference source is `2e68d6845d38bc5e22d8dbdc1877509c310ee427`.
-Only the native launcher was rebuilt for persistent configuration support.
+The API source remains `2e68d6845d38bc5e22d8dbdc1877509c310ee427`.
+The engine includes the R24 diagnostics and default-off experimental reader,
+built on the `93b801a` source baseline. The installed manifest records the exact
+local source revision. The native launcher is unchanged from the prior deployment.
 
-Validation: five native runtime-configuration checks, 32 existing launcher/host
+Prior deployment validation: five native runtime-configuration checks, 32 launcher/host
 checks, real API smoke (Chat, Completions, Responses, streaming, stop and sampled
 logprobs), a streamed tool/result round trip, red-image recognition and rejection
 of 17 images. No 256K performance or all-input numerical-equivalence claim is
-made by these deployment checks.
+made by these deployment checks. R24 separately checks the effective configuration,
+engine identity, an actual tool/result/final-answer exchange, and red-image
+recognition; it does not claim the entire earlier deployment suite was repeated.
+
+See [R24 conditions and limits](RESEARCH_WORKLOAD_R24.md). The optional source-ID
+report helper is client-side and is not automatically integrated into Octop.
 
 Output budgets remain client-controlled. A fixed 8192-token output allowance was
 preferable in the bounded R23 tasks; the server does not silently cap or override

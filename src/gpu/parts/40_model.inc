@@ -87,6 +87,13 @@ struct GpuModel {
     }();
     return enabled;
   }
+  // Low-overhead production diagnostics. These are host elapsed intervals,
+  // NOT kernel busy time; no event allocation or additional GPU sync is added.
+  // Keep the detailed event profiler opt-in for a targeted replay.
+  static bool request_timing_enabled() {
+    static const bool on = !env_zero("GDEC_REQUEST_TIMING");
+    return on;
+  }
   // Requires the parent prompt profiler; no events when either flag is off.
   static bool prefill_gdn_profile_enabled() {
     static const bool enabled = [] {
@@ -3758,6 +3765,7 @@ struct GpuModel {
     if (pinned != INT_MIN && P >= 1024) {
       if (std::find(iproj_pinned_shapes.begin(), iproj_pinned_shapes.end(), P) ==
           iproj_pinned_shapes.end()) {
+        const auto query_started = std::chrono::steady_clock::now();
         rocblas_int count = 0;
         auto query = [&](rocblas_int* solutions) {
           return rocblas_gemm_ex_get_solutions(
@@ -3780,7 +3788,9 @@ struct GpuModel {
           exit(1);
         }
         iproj_pinned_shapes.push_back(P);
-        fprintf(stderr, "[iproj-pinned] P=%d solution=%d listed=1\n", P, pinned);
+        fprintf(stderr, "[iproj-pinned] P=%d solution=%d listed=1 query_ms=%.3f\n",
+                P, pinned, std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - query_started).count());
       }
       if (sol_run(pinned) == rocblas_status_success) return;
       fprintf(stderr, "iproj: pinned solution %d launch failed for P=%d\n", pinned, P);
@@ -5443,6 +5453,7 @@ struct GpuModel {
     chunk_prefetch = prefetch.get();
 #endif
     for (int off = 0; off < N;) {
+      const auto wall_start = std::chrono::steady_clock::now();
       int rem = N - off;
       // Absorb a small tail into this chunk instead of running a tiny final
       // chunk whose per-chunk fixed cost (~0.9 s) dwarfs its token count.
@@ -5472,9 +5483,11 @@ struct GpuModel {
           !mrope_active_ && final && !quiet && prog_total > 0 &&
           !spec_snap && !ngram_verify_active && !spec_fp32_active &&
           g_cfg.d == 2560 && g_cfg.branches == 4;
+      const auto wall_prepared = std::chrono::steady_clock::now();
       id = prefill_chunk(
           std::vector<int>(tokens.begin() + off, tokens.begin() + off + n),
           base + off, final, quiet, skip_head, ple_ahead.get(), direct_mtp_tap, chunk_prefetch);
+      const auto wall_main = std::chrono::steady_clock::now();
       if (skip_head) ++skipped_heads;
       if (mtp_tap_capture && base + off >= mtp_tail_begin) {
         // Ingest this chunk's taps (chunk-local rows in d_mtap) into the MTP
@@ -5496,9 +5509,22 @@ struct GpuModel {
         }
       }
       off += n;
+      const auto wall_mtp = std::chrono::steady_clock::now();
       // Concurrent serve: prompt prefill hands the GPU over between chunks
       // (only persistent slot state is live here; spec verify never yields).
       if (prog_total > 0 && off < N) yield_point();
+      if (request_timing_enabled() && prog_total > 0 && !quiet) {
+        const auto wall_end = std::chrono::steady_clock::now();
+        auto elapsed = [](auto a, auto b) {
+          return std::chrono::duration<double, std::milli>(b - a).count();
+        };
+        fprintf(stderr, "[prefill-wall] req=%lld base=%d P=%d prepare_ms=%.3f "
+                        "main_ms=%.3f mtp_submit_ms=%.3f yield_ms=%.3f total_ms=%.3f\n",
+                (long long)prog_req, base + off - n, n,
+                elapsed(wall_start, wall_prepared), elapsed(wall_prepared, wall_main),
+                elapsed(wall_main, wall_mtp), elapsed(wall_mtp, wall_end),
+                elapsed(wall_start, wall_end));
+      }
     }
     if (skipped_heads)
       fprintf(stderr, "[prefill-head-skip] base=%d tokens=%d skipped_chunks=%d "
