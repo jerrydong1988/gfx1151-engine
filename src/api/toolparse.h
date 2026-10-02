@@ -70,6 +70,8 @@ class StreamParser {
     const std::string& content() const { return content_; }
     const std::vector<ToolCall>& calls() const { return calls_; }
     bool has_partial_call() const { return partial_; }
+    // Bounded diagnostic only: never includes argument values or guesses a tool.
+    const std::string& error() const { return error_; }
 
   private:
     enum class State { Text, Between, Parameter, ToolTail, Broken };
@@ -78,10 +80,10 @@ class StreamParser {
     void emit_content(std::string text, std::vector<Event>* events);
     void emit_arguments(std::string text, std::vector<Event>* events);
     void start_call(std::string name, std::vector<Event>* events);
-    void start_parameter(std::string key, std::vector<Event>* events);
+    bool start_parameter(std::string key, std::vector<Event>* events);
     void finish_parameter(std::string raw, std::vector<Event>* events);
     bool finish_call(std::vector<Event>* events);
-    bool valid_call() const;
+    bool valid_call();
     std::vector<std::string> schema_types(const std::string& function,
                                           const std::string& parameter) const;
 
@@ -100,6 +102,8 @@ class StreamParser {
     bool stream_parameter_ = false;
     bool value_started_ = false;
     bool partial_ = false;
+    std::string error_;
+    std::vector<std::string> parameter_keys_;
 };
 
 }  // namespace toolparse

@@ -13,11 +13,14 @@ from api_regression_test import check, get, request, parse_sse
 
 def checks(base):
     fn = {"name": "read_file", "parameters": {"type": "object", "properties": {
-        "path": {"type": "string"}}, "required": ["path"]}}
+        "path": {"type": "string"}, "count": {"type": "integer"},
+        "action": {"type": "string", "enum": ["read", "write"]},
+        "payload": {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}},
+        "required": ["path"], "additionalProperties": False}}
     for responses in [False, True]:
         path = "/v1/responses" if responses else "/v1/chat/completions"
         for stream in [False, True]:
-            for case in range(7):
+            for case in range(14):
                 body = {"stream": stream, "enable_thinking": False, "seed": 717100 + case,
                         "temperature": 0.7, "max_output_tokens": 2048,
                         "tools": [{"type": "function", **fn}] if responses else
@@ -25,7 +28,13 @@ def checks(base):
                 body.update({"input": "test"} if responses else
                             {"messages": [{"role": "user", "content": "test"}]})
                 status, _, raw = request(base, path, body)
-                invalid = case in [1, 2, 3, 6]
+                if case in (7, 8, 9, 10, 12):
+                    frames = [json.loads(line[6:]) for line in raw.decode().splitlines()
+                              if line.startswith('data: {')] if stream else [json.loads(raw)]
+                    errors = [e.get('error') or e.get('response', {}).get('error') for e in frames]
+                    check(all('secret-value' not in json.dumps(e) for e in errors if e),
+                          'argument values are not repeated in diagnostics', raw)
+                invalid = case in [1, 2, 3, 6, 7, 8, 9, 10, 12]
                 name = f"{'responses' if responses else 'chat'}-{'sse' if stream else 'json'}-{case}"
                 if not responses:
                     if invalid:
@@ -44,7 +53,7 @@ def checks(base):
                         values = parse_sse(raw) if stream else [json.loads(raw)]
                         finishes = [c["finish_reason"] for e in values if isinstance(e, dict)
                                     for c in e.get("choices", []) if c.get("finish_reason")]
-                        check(finishes == ["tool_calls" if case == 0 else "length" if case == 4 else "stop"],
+                        check(finishes == ["tool_calls" if case in [0, 11, 13] else "length" if case == 4 else "stop"],
                               name, raw)
                 else:
                     check(status == 200, name + "-status", raw)

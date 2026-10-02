@@ -2226,7 +2226,7 @@ void handle_chat(const http::Request& q, http::Response* r, http::Stream* st) {
         // A malformed call after a normal model stop is not token exhaustion.
         // Do not send clients into a larger-budget retry for an unknown tool.
         if (parser.has_partial_call() && o.reason != "length")
-            http::fail(502, "The model stopped with an invalid or unfinished tool call.",
+            http::fail(502, parser.error(),
                        "model_output_error", "invalid_tool_call");
         json msg;
         msg["role"] = "assistant";
@@ -2311,7 +2311,7 @@ void handle_chat(const http::Request& q, http::Response* r, http::Stream* st) {
     }
     if (!dispatch_tool_events(parser.finish())) return;
     if (parser.has_partial_call() && o.reason != "length")
-        http::fail(502, "The model stopped with an invalid or unfinished tool call.",
+        http::fail(502, parser.error(),
                    "model_output_error", "invalid_tool_call");
     const std::string finish = (o.reason == "length" || parser.has_partial_call())
                                    ? "length"
@@ -2475,7 +2475,7 @@ void handle_responses(const http::Request& q, http::Response* r, http::Stream* s
             response["status"] = "failed";
             response.erase("incomplete_details");
             response["error"] = {{"code", "invalid_tool_call"},
-                                  {"message", "The model stopped with an invalid or unfinished tool call."}};
+                                  {"message", parser.error()}};
         }
         r->body = json_py::dumps(response, /*spaced=*/false);
         return;
@@ -2671,7 +2671,7 @@ void handle_responses(const http::Request& q, http::Response* r, http::Stream* s
         final_response["status"] = "failed";
         final_response.erase("incomplete_details");
         final_response["error"] = {{"code", "invalid_tool_call"},
-                                   {"message", "The model stopped with an invalid or unfinished tool call."}};
+                                   {"message", parser.error()}};
         event("response.failed", json{{"response", std::move(final_response)}});
         return;
     }

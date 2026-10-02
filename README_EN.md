@@ -17,7 +17,8 @@ Format support, measured coverage, and which optimizations apply are separate qu
 retaining a format does not promise bitwise-identical output across engine versions.
 
 As of **2026-10-02**, the cumulative engine contains R1–R13, default-off R15–R17
-candidates and R16 timing guards. R14/R17 include real tool-task evaluation.
+candidates and R16 timing guards. R14/R17/R18 include real tool-task evaluation;
+R18 adds argument validation, bounded diagnostics and optional client recovery.
 Bounded numerical checks and local speedups do not establish stable overall gains
 across input lengths.
 These are local research stages, not upstream releases.
@@ -193,6 +194,24 @@ passed 0/2 per mode; one error-feedback message still produced no delivery withi
 12 turns. These MTP comparisons are not gains from the new QSA switches.
 [Full four-track results and inclusive Agent timings (Chinese)](docs/R17_REAL_WORKLOAD_RESEARCH.md).
 
+### R18: validated task completion and bounded tool recovery
+
+The synthetic ledger tool incorrectly rejected legitimate CTE `count(*)` reads;
+R18 fixes that fixture defect, checks common argument schema constraints in the
+API and aligns declared submission shapes with the independent scorer. Optional
+client recovery regenerates at most two explicitly rejected calls per task,
+discards the failed response's partial calls, and never blindly replays timeouts
+or network failures. This is not constrained decoding or full JSON Schema.
+
+With reasoning and explicit submission schemas, **5/5 formal synthetic tasks passed**: MTP
+ledger tasks on original/altered amounts plus code repair, and serial ledger/code
+controls. Ledger values were independently recomputed; each code repair passed
+283 private cases. These are fixed, bounded tasks, not a broad success-rate estimate
+or an Octop/real-workbook UI test. Multiple environment/configuration factors changed.
+
+[Root causes, results and limits (Chinese)](docs/R18_TASK_RELIABILITY.md) /
+[Runnable fixtures, client and offline tests](tools/agent_reliability/README.md).
+
 ## Precision, defaults and unfinished work
 
 - Defaults remain `GDEC_V2_MOE=exact`, native HT off and `GDEC_SPEC_PRECISION=legacy`.
@@ -210,7 +229,7 @@ passed 0/2 per mode; one error-feedback message still produced no delivery withi
   configurations align. Arbitrary sampling, warm/cache operation, multiple slots,
   all long inputs and multimodal requests are not universally verified equivalent.
 - Remaining work includes a complete older-weight regression on the cumulative
-  engine, Linux validation of new paths, office tool failures, stable MTP gains for
+  engine, Linux validation of new paths, broader office/Octop validation, stable MTP gains for
   long-input/short-output requests and R15 persistent-cache/multi-slot validation.
 
 [Precision policy](docs/SPEC_NUMERIC_ALIGNMENT.md) /
@@ -265,6 +284,7 @@ every table here automatically.
 | [R15 integration](docs/R15_INTEGRATION.md) / [Earlier probe](docs/R15_NORM_OUTPUT_PROBE.md) | Default-off implementation, numerical checks and complete-request measurements without stable overall gains |
 | [R16 Prefill research](docs/R16_PREFILL_RESEARCH.md) | Hotspots, four-arm accumulation test and timing guards; no stable whole-request gain |
 | [R17 real-workload research](docs/R17_REAL_WORKLOAD_RESEARCH.md) | Captured routes, QSA dataflow, GDN rejections, complete requests and real Agent checks |
+| [R18 task reliability](docs/R18_TASK_RELIABILITY.md) | Argument validation, bounded recovery, reasoning ablation and independent business acceptance |
 
 Inherited documentation: [Quick start](QUICKSTART_EN.md), [GGUF](GGUF.md),
 [Older HGN HQ](HGN-HQ.md), [HGN container](HGN-FORMAT_EN.md), [MTP](MTP_EN.md),

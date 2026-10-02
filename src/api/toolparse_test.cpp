@@ -218,6 +218,63 @@ int main() {
               choice.name == "read_file",
           "named choice");
 
+
+    check(unknown_tool.error().find("delete_file") != std::string::npos,
+          "unknown tool diagnostic names the rejected function");
+    check(missing_required.error().find("content") != std::string::npos,
+          "missing argument diagnostic identifies the schema property");
+    auto validate = [&](const json& schema, const std::string& value, bool accepted,
+                        const char* name) {
+        json defs = json::array({{{"type", "function"}, {"function", {
+            {"name", "submit"}, {"parameters", {{"type", "object"},
+            {"properties", {{"result", schema}}}, {"required", json::array({"result"})},
+            {"additionalProperties", false}}}}}}});
+        std::string call = "<tool_call>\n<function=submit>\n<parameter=result>\n" + value +
+                           "\n</parameter>\n</function>\n</tool_call>";
+        for (bool bytes : {false, true}) {
+            toolparse::StreamParser parser(defs, make_id);
+            if (bytes) for (char c : call) parser.feed(std::string(1, c));
+            else parser.feed(call);
+            parser.finish();
+            check((parser.calls().size() == 1) == accepted &&
+                  parser.has_partial_call() != accepted, name);
+            if (!accepted) check(!parser.error().empty(), "invalid argument has diagnostic");
+        }
+    };
+    validate({{"type","integer"}}, "not-an-integer", false, "reject invalid integer");
+    validate({{"type","integer"}}, "7", true, "accept coerced integer");
+    validate({{"type","boolean"}}, "maybe", false, "reject invalid boolean");
+    validate({{"type","number"}}, "nan", false, "reject nonfinite number");
+    validate({{"type","number"}}, "9223372036854775808", true, "large number avoids signed cast overflow");
+    validate({{"type","string"},{"enum",json::array({"test","replace"})}}, "delete", false, "reject bad enum");
+    validate({{"type","string"},{"enum",json::array({"test","replace"})}}, "test", true, "accept enum");
+    validate({{"type","object"},{"properties",{{"n",{{"type","integer"}}}}},
+              {"required",json::array({"n"})},{"additionalProperties",false}},
+             "{\"n\":\"secret-value\"}", false, "reject nested wrong type");
+    validate({{"type","object"},{"properties",{{"n",{{"type","integer"}}}}},
+              {"additionalProperties",false}}, "{\"n\":2,\"extra\":3}", false, "reject additional property");
+    validate({{"type","array"},{"items",{{"type","integer"}}}}, "[1,\"bad\"]", false, "reject wrong array item");
+    validate({{"type","array"},{"items",{{"type","integer"}}}}, "[1,2]", true, "accept array items");
+    validate({{"type","object"},{"properties",{{"n",{{"oneOf",json::array({json{{"type","integer"}},json{{"type","boolean"}}})}}}}}},
+             "{\"n\":true}", true, "accept oneOf branch");
+    validate({{"type","object"},{"properties",{{"n",{{"oneOf",json::array({json{{"type","integer"}},json{{"type","boolean"}}})}}}}}},
+             "{\"n\":\"bad\"}", false, "reject unmatched oneOf");
+    validate({{"type","object"},{"oneOf",json::array({json{{"$ref","#/$defs/a"}},json{{"$ref","#/$defs/b"}}})}},
+             "{}", true, "unresolved refs do not produce false oneOf rejection");
+    toolparse::StreamParser duplicate(tools(), make_id);
+    duplicate.feed("<tool_call>\n<function=write_file>\n<parameter=path>\na\n</parameter>\n"
+                   "<parameter=path>\nb\n</parameter>\n</function>\n</tool_call>");
+    duplicate.finish();
+    check(duplicate.calls().empty() && duplicate.has_partial_call() &&
+          duplicate.error().find("Duplicate") != std::string::npos,
+          "duplicate XML parameters are rejected instead of last-key-wins");
+
+    toolparse::StreamParser unicode_name(tools(), make_id);
+    unicode_name.feed("<tool_call>\n<function=" + std::string(127, 'x') +
+                      "\xe4\xb8\xad>\n</function>\n</tool_call>");
+    unicode_name.finish();
+    check(unicode_name.has_partial_call() && unicode_name.error().size() < 200,
+          "bounded UTF-8 diagnostic does not split or throw");
     std::puts("RESULT PASS");
     return 0;
 }

@@ -92,7 +92,7 @@ json coerce_value(const std::string& raw, const std::vector<std::string>& types)
             if (errno == 0 && end != raw.c_str() && *end == '\0' && std::isfinite(value)) {
                 if (std::floor(value) == value && raw.find('.') == std::string::npos &&
                     value >= static_cast<double>(std::numeric_limits<long long>::min()) &&
-                    value <= static_cast<double>(std::numeric_limits<long long>::max()))
+                    value < 9223372036854775808.0)
                     return static_cast<long long>(value);
                 return value;
             }
@@ -126,6 +126,120 @@ bool function_exists(const json& tools, const std::string& name) {
             return true;
     }
     return false;
+}
+
+std::string diagnostic_name(const std::string& name) {
+    size_t end = std::min<size_t>(name.size(), 128);
+    while (end > 0 && end < name.size() &&
+           (static_cast<unsigned char>(name[end]) & 0xc0) == 0x80) --end;
+    return json(name.substr(0, end)).dump(-1, ' ', false, json::error_handler_t::replace) +
+           (end < name.size() ? "..." : "");
+}
+
+// Output validation for common tool schemas, not constrained decoding or a full
+// JSON Schema implementation. Unknown keywords remain unsupported. Bound depth
+// and diagnostic size; never echo model argument values in an error response.
+bool matches_type(const json& value, const std::string& type) {
+    if (type == "object") return value.is_object();
+    if (type == "array") return value.is_array();
+    if (type == "string") return value.is_string();
+    if (type == "boolean") return value.is_boolean();
+    if (type == "null") return value.is_null();
+    if (type == "number") return value.is_number();
+    if (type == "integer") {
+        if (value.is_number_integer()) return true;
+        if (!value.is_number_float()) return false;
+        const double d = value.get<double>();
+        return std::isfinite(d) && std::floor(d) == d;
+    }
+    return true; // Not a supported type declaration.
+}
+
+bool supported_schema(const json& schema, int depth = 0) {
+    if (depth > 64) return false;
+    if (schema.is_boolean()) return true;
+    if (!schema.is_object()) return false;
+    for (auto it = schema.begin(); it != schema.end(); ++it) {
+        const auto& k = it.key();
+        if (k == "type" || k == "enum" || k == "const" || k == "required" || k == "nullable" ||
+            k == "description" || k == "title" || k == "default" || k == "examples") continue;
+        if (k == "properties" && it->is_object()) {
+            for (const auto& child : *it) if (!supported_schema(child, depth + 1)) return false;
+        } else if (k == "items" || k == "additionalProperties") {
+            if (!supported_schema(*it, depth + 1)) return false;
+        } else if ((k == "allOf" || k == "anyOf" || k == "oneOf") && it->is_array()) {
+            for (const auto& child : *it) if (!supported_schema(child, depth + 1)) return false;
+        } else return false;
+    }
+    return true;
+}
+
+bool check_value(const json& value, const json& schema, const std::string& path,
+                 std::string* error, int depth = 0) {
+    auto fail = [&](const std::string& reason) {
+        *error = "Invalid tool arguments at " + diagnostic_name(path) + ": " + reason;
+        return false;
+    };
+    if (depth > 64) return fail("validation depth limit exceeded");
+    if (schema.is_boolean()) return schema.get<bool>() || fail("value is forbidden");
+    if (!schema.is_object()) return true;
+    if (schema.contains("type")) {
+        const auto& t = schema["type"];
+        bool ok = !t.is_string() && !t.is_array();
+        if (t.is_string()) ok = matches_type(value, t.get<std::string>());
+        if (t.is_array()) for (const auto& item : t)
+            if (item.is_string() && matches_type(value, item.get<std::string>())) ok = true;
+        if (value.is_null() && schema.value("nullable", json(false)) == true) ok = true;
+        if (!ok) return fail("type does not match the tool schema");
+    }
+    if (schema.contains("enum") && schema["enum"].is_array()) {
+        bool found = false;
+        for (const auto& item : schema["enum"]) if (value == item) found = true;
+        if (!found) return fail("value is not in the declared enum");
+    }
+    if (schema.contains("const") && value != schema["const"])
+        return fail("value does not match the declared const");
+    for (const char* kind : {"allOf", "anyOf", "oneOf"}) {
+        if (!schema.contains(kind) || !schema[kind].is_array()) continue;
+        // In particular, an unresolved $ref cannot be counted as a matching
+        // branch of oneOf: doing that rejects otherwise valid requests.
+        bool supported = true;
+        for (const auto& branch : schema[kind])
+            if (!supported_schema(branch)) supported = false;
+        if (!supported) continue;
+        size_t matched = 0;
+        for (const auto& branch : schema[kind]) {
+            std::string ignored;
+            if (check_value(value, branch, path, &ignored, depth + 1)) ++matched;
+        }
+        if ((std::string(kind) == "allOf" && matched != schema[kind].size()) ||
+            (std::string(kind) == "anyOf" && matched == 0) ||
+            (std::string(kind) == "oneOf" && matched != 1))
+            return fail(std::string("does not satisfy ") + kind);
+    }
+    if (value.is_object()) {
+        if (schema.contains("required") && schema["required"].is_array())
+            for (const auto& key : schema["required"])
+                if (key.is_string() && !value.contains(key.get_ref<const std::string&>()))
+                    return fail("missing required property " + diagnostic_name(key.get<std::string>()));
+        const auto properties = schema.find("properties");
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            const std::string child = path.size() < 160 ? path + "." + it.key() : path;
+            if (properties != schema.end() && properties->is_object() && properties->contains(it.key())) {
+                if (!check_value(it.value(), (*properties)[it.key()], child, error, depth + 1)) return false;
+            } else if (schema.contains("additionalProperties")) {
+                // patternProperties requires a regex dialect not implemented here;
+                // do not falsely reject a possibly pattern-matched property.
+                if (!schema.contains("patternProperties") &&
+                    !check_value(it.value(), schema["additionalProperties"], child, error, depth + 1)) return false;
+            }
+        }
+    }
+    if (value.is_array() && !schema.contains("prefixItems") && schema.contains("items") &&
+        (schema["items"].is_object() || schema["items"].is_boolean()))
+        for (const auto& item : value)
+            if (!check_value(item, schema["items"], path + "[]", error, depth + 1)) return false;
+    return true;
 }
 
 bool append_function(const json& source, json* output, std::string* error) {
@@ -396,11 +510,17 @@ void StreamParser::start_call(std::string name, std::vector<Event>* events) {
     current_.id = make_id_ ? make_id_() : std::string();
     current_.name = std::move(name);
     argument_count_ = 0;
+    parameter_keys_.clear();
     events->push_back(Event{EventType::CallStart, current_.index, current_.id,
                             current_.name, {}});
 }
 
-void StreamParser::start_parameter(std::string key, std::vector<Event>* events) {
+bool StreamParser::start_parameter(std::string key, std::vector<Event>* events) {
+    if (std::find(parameter_keys_.begin(), parameter_keys_.end(), key) != parameter_keys_.end()) {
+        error_ = "Duplicate tool parameter: " + diagnostic_name(key);
+        return false;
+    }
+    parameter_keys_.push_back(key);
     parameter_key_ = std::move(key);
     parameter_types_ = schema_types(current_.name, parameter_key_);
     stream_parameter_ = !parameter_types_.empty() &&
@@ -416,6 +536,7 @@ void StreamParser::start_parameter(std::string key, std::vector<Event>* events) 
         prefix += quote_json(parameter_key_) + ":\"";
         emit_arguments(std::move(prefix), events);
     }
+    return true;
 }
 
 void StreamParser::finish_parameter(std::string raw, std::vector<Event>* events) {
@@ -438,21 +559,20 @@ void StreamParser::finish_parameter(std::string raw, std::vector<Event>* events)
     value_started_ = false;
 }
 
-bool StreamParser::valid_call() const {
+bool StreamParser::valid_call() {
     json args = json::parse(current_.arguments + (argument_count_ == 0 ? "{}" : "}"),
                             nullptr, false);
-    if (!args.is_object()) return false;
+    if (!args.is_object()) {
+        error_ = "Tool arguments are not a valid JSON object.";
+        return false;
+    }
     for (const auto& tool : tools_) {
         const json& function = tool["function"];
         if (function["name"] != current_.name) continue;
         if (!function.contains("parameters") || !function["parameters"].is_object())
             return true;
         const json& schema = function["parameters"];
-        if (!schema.contains("required") || !schema["required"].is_array()) return true;
-        for (const auto& key : schema["required"])
-            if (key.is_string() && !args.contains(key.get_ref<const std::string&>()))
-                return false;
-        return true;
+        return check_value(args, schema, "$", &error_);
     }
     return false;
 }
@@ -550,6 +670,7 @@ std::vector<Event> StreamParser::pump(bool final) {
                 continue;
             }
             if (!function_exists(tools_, buffer_.substr(at, close - at))) {
+                error_ = "Unknown tool function: " + diagnostic_name(buffer_.substr(at, close - at));
                 state_ = State::Broken;
                 continue;
             }
@@ -587,8 +708,7 @@ std::vector<Event> StreamParser::pump(bool final) {
                 }
                 std::string key = buffer_.substr(begin, close - begin);
                 buffer_.erase(0, close + 1);
-                start_parameter(std::move(key), &events);
-                state_ = State::Parameter;
+                state_ = start_parameter(std::move(key), &events) ? State::Parameter : State::Broken;
                 continue;
             }
             if (!final && (is_prefix_of(buffer_, kFunctionClose) ||
@@ -660,6 +780,7 @@ std::vector<Event> StreamParser::pump(bool final) {
         }
     }
     if (state_ == State::Broken || (final && state_ != State::Text)) partial_ = true;
+    if (partial_ && error_.empty()) error_ = "Invalid or unfinished tool-call framing.";
     return events;
 }
 
