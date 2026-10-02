@@ -2,11 +2,11 @@
 # Windows (TheRock) 编译入口：与 Linux build.sh 并列，产物输出到 build/。
 #
 # 用法:
-#   bash build_win.sh            # 引擎 → build/gdec-win.exe
+#   bash build_win.sh            # 全部产物：引擎、benchmark、API、启动器
+#   bash build_win.sh bench      # 性能测试工具 → build/gdec-bench.exe
 #   bash build_win.sh api        # OpenAI HTTP 前端 → build/gdec-api-win.exe
 #   bash build_win.sh launcher   # 免脚本启动器 → ./start_win.exe（双击即用，托盘程序）
 #   bash build_win.sh test       # 编 build/ktest-win.exe 并运行 kernel 单测
-#   bash build_win.sh v2-test    # HGN v2 CPU/GPU differential tests (no model needed)
 #
 # 前置：TheRock 多架构包（默认 C:\therock-dist-windows-multiarch-10.0.0\...，
 # 可用 THEROCK=/path 覆盖）；GPU_ARCH 默认 gfx1151。
@@ -34,8 +34,8 @@ TR_WIN="$(cygpath -w "$TR")"
 export HIP_PATH="$TR_WIN"
 unset ROCM_PATH HIP_PATH_64 HIP_PATH_71 HIP_PATH_72
 GPU_ARCH="${GPU_ARCH:-gfx1151}"
-TARGET="${1:-engine}"
-[[ "$TARGET" == engine || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == test || "$TARGET" == v2-test ]] || { sed -n '2,11p' "$0" >&2; exit 2; }
+TARGET="${1:-all}"
+[[ "$TARGET" == all || "$TARGET" == engine || "$TARGET" == bench || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == test || "$TARGET" == v2-test ]] || { sed -n '2,11p' "$0" >&2; exit 2; }
 
 mkdir -p build build/winlibs
 [[ -f build/winlibs/rocblas.lib ]]   || cp "$TR/lib/rocblas.lib" build/winlibs/
@@ -70,25 +70,27 @@ for f in "$TR/bin/rocblas/library/"*"$GPU_ARCH"*; do
   [[ -f "build/rocblas/library/$b" ]] || cp "$f" build/rocblas/library/
 done
 
+# _CRT_NONSTDC_NO_DEPRECATE：屏蔽 MSVC 头文件对 strdup 等 POSIX 名的
+# deprecated 标记（_CRT_NONSTDC_DEPRECATE → __declspec(deprecated)）。
 FLAGS=(-O3 -std=c++17 --offload-arch="$GPU_ARCH" -D_CRT_SECURE_NO_WARNINGS
+       -D_CRT_NONSTDC_NO_DEPRECATE
        -I"$TR/include" -Lbuild/winlibs -lrocblas -lhipblaslt)
 
-case "$TARGET" in
-  v2-test)
-    "$TR/lib/llvm/bin/clang++.exe" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS tools/hgn_v2_test.cpp -o build/hgn-v2-test.exe
-    build/hgn-v2-test.exe
-    "$HIPCC" -O2 -std=c++17 --offload-arch="$GPU_ARCH" tools/hgn_v2_gpu_test.cpp -o build/hgn-v2-gpu-test.exe
-    build/hgn-v2-gpu-test.exe
-    "$HIPCC" -O3 -std=c++17 --offload-arch="$GPU_ARCH" tools/hgn_v2_moe_test.cpp -o build/hgn-v2-moe-test.exe
-    build/hgn-v2-moe-test.exe
-    ;;
-  engine)
+build_engine() {
     echo "[编译] build/gdec-win.exe"
     # 先编到临时文件再原子替换，编译失败保留上次成功的二进制（对齐 Linux build.sh）
-    "$HIPCC" "${FLAGS[@]}" src/gpu/gdec.cpp -o build/gdec-win.exe.tmp
-    mv -f build/gdec-win.exe.tmp build/gdec-win.exe
-    ;;
-  api)
+    "$HIPCC" "${FLAGS[@]}" src/gpu/gdec.cpp -o build/gdec-win.exe.tmp \
+      && mv -f build/gdec-win.exe.tmp build/gdec-win.exe
+}
+
+build_bench() {
+    echo "[编译] build/gdec-bench.exe"
+    "$HIPCC" "${FLAGS[@]}" -std=c++17 -Ithird_party src/gpu/bench_main.cpp \
+      -o build/gdec-bench.exe.tmp \
+      && mv -f build/gdec-bench.exe.tmp build/gdec-bench.exe
+}
+
+build_api() {
     # OpenAI HTTP 前端：纯主机 C++，用 TheRock 自带 clang++（不拖 HIP 依赖）。
     # vision.cpp 的图片解码在 Windows 上走 stb_image（vendor 单头文件，
     # 编译进 exe，零新增 DLL），支持 PNG/JPEG；WebP 明确报错。
@@ -100,8 +102,9 @@ case "$TARGET" in
       src/api/chat_template.cpp src/api/json_py.cpp src/api/toolparse.cpp \
       src/api/vision.cpp src/api/reqstat.cpp src/api/reqstat_read.cpp \
       src/api/main.cpp -lws2_32 -o build/gdec-api-win.exe
-    ;;
-  launcher)
+}
+
+build_launcher() {
     # 免脚本启动器：原生 Win32，双击即用（不需要 Git Bash / PowerShell）。
     CXX="$TR/lib/llvm/bin/clang++.exe"
     [[ -x "$CXX" ]] || { echo "找不到 TheRock clang++: $CXX" >&2; exit 1; }
@@ -113,6 +116,9 @@ case "$TARGET" in
       # exe 文件图标（可选）：TheRock 带 llvm-rc 就编进去；没有也不影响托盘图标。
       RC="$TR/lib/llvm/bin/llvm-rc.exe"
       if [[ -x "$RC" ]] && "$RC" -no-preprocess -fo build/launch_win.res src/launch_win.rc; then
+        RES=(build/launch_win.res)
+      elif command -v rc.exe >/dev/null 2>&1 && rc.exe -nologo -I src -fo build/launch_win.res src/launch_win.rc; then
+        # TheRock bundles without llvm-rc can use the Windows SDK from vcvars.
         RES=(build/launch_win.res)
       else
         echo "提示：llvm-rc 不可用，start_win.exe 文件不带图标（托盘图标不受影响）" >&2
@@ -128,12 +134,38 @@ case "$TARGET" in
       echo "提示：带图标资源链接失败，改为不带文件图标重试" >&2
       "$CXX" "${LAUNCH_SRC[@]}"
     fi
-    ;;
-  test)
+}
+
+build_test() {
+    python tools/kv_admission_test.py --cxx "$TR/lib/llvm/bin/clang++.exe"
     echo "[编译] build/ktest-win.exe"
     "$HIPCC" "${FLAGS[@]}" -I src/gpu tools/ktest.cu -o build/ktest-win.exe
     echo "[运行] ktest-win（预期末尾 ALL PASS）"
     (cd build && HIP_PATH="$TR_WIN" ROCM_PATH="$TR_WIN" ./ktest-win.exe)
+}
+
+case "$TARGET" in
+  v2-test)
+    "$TR/lib/llvm/bin/clang++.exe" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS tools/hgn_v2_test.cpp -o build/hgn-v2-test.exe
+    build/hgn-v2-test.exe
+    "$HIPCC" -O2 -std=c++17 --offload-arch="$GPU_ARCH" tools/hgn_v2_gpu_test.cpp -o build/hgn-v2-gpu-test.exe
+    build/hgn-v2-gpu-test.exe
+    "$HIPCC" -O3 -std=c++17 --offload-arch="$GPU_ARCH" tools/hgn_v2_moe_test.cpp -o build/hgn-v2-moe-test.exe
+    build/hgn-v2-moe-test.exe
+    "$HIPCC" -O3 -std=c++17 --offload-arch="$GPU_ARCH" tools/hgn_v2_upstream_test.cpp -o build/hgn-v2-upstream-test.exe
+    build/hgn-v2-upstream-test.exe
     ;;
+
+  all)
+    build_engine
+    build_bench
+    build_api
+    build_launcher
+    ;;
+  engine) build_engine ;;
+  bench) build_bench ;;
+  api) build_api ;;
+  launcher) build_launcher ;;
+  test) build_test ;;
 esac
 echo '[完成] 编译输出位于 build/；启动服务用 ./start_win.exe（或 bash start_win.sh）'

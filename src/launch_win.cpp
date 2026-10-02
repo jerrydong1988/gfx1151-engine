@@ -107,6 +107,23 @@ bool file_exists(const std::string& path) {
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+// 两个路径是否同一文件（卷序列号 + 文件 ID；打不开时退回字符串比较）。
+bool same_file(const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    BY_HANDLE_FILE_INFORMATION ia{}, ib{};
+    auto info = [](const std::string& p, BY_HANDLE_FILE_INFORMATION* out) {
+        HANDLE h = CreateFileA(p.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        const bool ok = GetFileInformationByHandle(h, out) != 0;
+        CloseHandle(h);
+        return ok;
+    };
+    if (!info(a, &ia) || !info(b, &ib)) return false;
+    return ia.dwVolumeSerialNumber == ib.dwVolumeSerialNumber &&
+           ia.nFileIndexHigh == ib.nFileIndexHigh && ia.nFileIndexLow == ib.nFileIndexLow;
+}
+
 bool dir_exists(const std::string& path) {
     DWORD a = GetFileAttributesA(path.c_str());
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
@@ -479,6 +496,16 @@ BOOL WINAPI on_ctrl(DWORD ev) {
 // 本程序是 GUI 子系统（双击不出黑窗）。--console / --check 需要控制台：
 // --check 先尝试挂到调用者（cmd）的控制台上，不行就新开一个窗口。
 void console_open(bool attach_parent) {
+    // A scripted --check owns its stdout/stderr pipes. Do not replace them
+    // with CONOUT$ or create a hidden console that can pause waiting for input.
+    const auto redirected = [](DWORD which) {
+        HANDLE h = GetStdHandle(which);
+        if (!h || h == INVALID_HANDLE_VALUE) return false;
+        const DWORD type = GetFileType(h);
+        return type == FILE_TYPE_PIPE || type == FILE_TYPE_DISK;
+    };
+    if (attach_parent && (redirected(STD_OUTPUT_HANDLE) || redirected(STD_ERROR_HANDLE)))
+        return;
     const bool attached = attach_parent && AttachConsole(ATTACH_PARENT_PROCESS);
     if (!attached) {
         if (!AllocConsole()) return;
@@ -862,13 +889,14 @@ int main(int argc, char** argv) {
 
     const std::string model_dir = cfg("MODEL_DIR", "models");
     const std::string model_file = cfg("MODEL_FILE", model_dir + "\\heretic.hgn");
+    // PLE n-gram 表所在文件：默认同 MODEL_FILE（w4b 单文件）；halogen v2 指向独立的 *-ngram.hgn。
+    const std::string ngram_file = cfg("NGRAM_FILE", model_file);
     const std::string mtp_file =
         cfg_optional("MTP_FILE", model_dir + "\\heretic-mtp.hgn");
     const std::string vision_file =
         cfg_optional("VISION_FILE", model_dir + "\\heretic-vision.hgn");
     // 覆盖层（可选的高精度替换张量，叠加在主权重之上、MTP 之前）：默认空。
-    const std::string overlay_file = cfg_optional("OVERLAY_FILE", "");
-    const std::string ngram_file = cfg_optional("NGRAM_FILE", "");
+    std::string overlay_file = cfg_optional("OVERLAY_FILE", "");
     const std::string tokenizer_dir =
         cfg("TOKENIZER_DIR", model_dir + "\\tokenizer");
     const std::string engine_host = cfg("ENGINE_HOST", engine_net::kDefaultHost);
@@ -886,6 +914,9 @@ int main(int argc, char** argv) {
     const int parallel = cfg_int("PARALLEL", 1, 1, 8);
     // 单请求图片数上限（见 service.conf）：多轮视觉对话会累计历史图片。
     const int max_images = cfg_int("MAX_IMAGES", 8, 1, 256);
+    // prefill 分段（见 service.conf）：决定 prefill 工作区在 arena 里的尺寸
+    // （8192≈6.9 GiB，4096≈3.5 GiB）。0 = 引擎内置默认（Windows 8192）。
+    const int prefill_chunk = cfg_int("PREFILL_CHUNK", 0, 0, 1 << 20);
     const int start_timeout = env_int("START_TIMEOUT", 1800, 30, 86400);
 
     sockaddr_in engine_addr{};
@@ -896,13 +927,18 @@ int main(int argc, char** argv) {
     if (!file_exists("build\\gdec-win.exe")) fail("缺少 build\\gdec-win.exe");
     if (!file_exists("build\\gdec-api-win.exe")) fail("缺少 build\\gdec-api-win.exe");
     if (!file_exists(model_file)) fail("找不到模型：" + model_file + "（修改 service.conf）");
+    if (!file_exists(ngram_file))
+        fail("找不到 n-gram 表：" + ngram_file + "（w4b 与 MODEL_FILE 相同，修改 service.conf）");
     if (!mtp_file.empty() && !file_exists(mtp_file)) fail("找不到 MTP 权重：" + mtp_file);
-    if (!ngram_file.empty() && !file_exists(ngram_file)) fail("找不到 ngram 权重：" + ngram_file);
     if (!vision_file.empty() && !file_exists(vision_file))
         fail("找不到视觉塔：" + vision_file + "（纯文本可 set VISION_FILE= 后启动）");
-    if (!overlay_file.empty() && !file_exists(overlay_file))
-        fail("找不到 overlay：" + overlay_file +
-             "（无 overlay 可在 service.conf 设 OVERLAY_FILE=\"\"）");
+    // overlay 可选：文件不在只警告并跳过（例如换成 v2 权重后忘了改配置）。
+    if (!overlay_file.empty() && !file_exists(overlay_file)) {
+        fprintf(stderr, "警告：找不到 overlay：%s，已跳过（v2 权重不用 overlay；"
+                        "不想看到这条可在 service.conf 设 OVERLAY_FILE=\"\"）\n",
+                overlay_file.c_str());
+        overlay_file.clear();
+    }
     if (!file_exists(tokenizer_dir + "\\tokenizer.json"))
         fail("找不到 tokenizer：" + tokenizer_dir);
     if (!dir_exists("build\\rocblas\\library") || !dir_exists("build\\hipblaslt\\library"))
@@ -914,7 +950,8 @@ int main(int argc, char** argv) {
     printf("模型：%s\n", model_file.c_str());
     const std::string gamma_str =
         mtp_gamma ? std::to_string(mtp_gamma) : "auto（greedy 4 / 采样自适应）";
-    printf("配置：%d 上下文，MTP gamma=%s，engine %s:%d，API %s:%d\n", max_context, gamma_str.c_str(),
+    printf("配置：%d 上下文，prefill chunk %d，MTP gamma=%s，engine %s:%d，API %s:%d\n",
+           max_context, prefill_chunk ? prefill_chunk : 8192, gamma_str.c_str(),
            engine_host.c_str(), engine_port, api_host.c_str(), api_port);
     if (kv_paged) {
         printf("KV：分页，页池 %d token（%d 路并发共享），RAM 检查点 %d 个\n",
@@ -936,9 +973,11 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // 生产选项与 Linux start.sh 一致，唯独不设 GDEC_PREFILL_CHUNK：
-    // Windows 默认 8192（256K 下 16384 会顶破 95 GiB arena 上限，
-    // 实测见 PORTING-WINDOWS.md；maxctx ≤ 40K 时可手动设 16384 换 ~6% PP）。
+    // 生产选项与 Linux start.sh 一致。GDEC_PREFILL_CHUNK 只在 service.conf 的
+    // PREFILL_CHUNK>0 时设置（0 = 不碰外部环境，引擎用内置默认：Windows 8192）。
+    // 实测（128K，PORTING-WINDOWS.md）：4096 比 8192 省 ~3.6 GiB arena、稳态 PP
+    // 仅慢 ~2%、首块冷启动更快；256K 下 16384 会顶破 95 GiB arena 上限；
+    // maxctx ≤ 40K 时可设 16384 换 ~6% PP。
     const char* flags[] = {
         "GDEC_QSA_KV_BF16", "GDEC_QSA_WMMA", "GDEC_QSA_WMMA_BTV",
         "GDEC_MOE_LT", "GDEC_MOE_LT_BF16", "GDEC_GR_BF16",
@@ -962,6 +1001,23 @@ int main(int argc, char** argv) {
                                 : nullptr);
     SetEnvironmentVariableA("GDEC_PARALLEL", std::to_string(parallel).c_str());
     SetEnvironmentVariableA("GDEC_API_MAX_IMAGES", std::to_string(max_images).c_str());
+    // R19 arithmetic policy is explicit and opt-in; absent keys preserve the
+    // engine/environment defaults. Do not overwrite a user's precision choice.
+    for (const char* key : {"SPEC_PRECISION", "SPEC_SERIAL_ORDER_MR", "V2_MOE",
+                            "V2_NATIVE_HT", "V2_DENSE_BACKEND", "V2_EXPERT_BACKEND",
+                            "V2_HT_ORDERED"}) {
+        const std::string value=cfg_optional(key, "");
+        if (!value.empty()) SetEnvironmentVariableA((std::string("GDEC_")+key).c_str(),value.c_str());
+    }
+    for (const char* key : {"ROPE_FACTOR", "ROPE_ORIGINAL_CTX", "ROPE_BETA_FAST",
+                            "ROPE_BETA_SLOW", "ROPE_ATTN_SCALE"}) {
+        const std::string value=cfg_optional(key, "");
+        if (!value.empty()) SetEnvironmentVariableA((std::string("GDEC_")+key).c_str(),value.c_str());
+    }
+    // PREFILL_CHUNK>0 才设置；0 = 不碰外部环境变量（用户可直接 set GDEC_PREFILL_CHUNK）。
+    if (prefill_chunk)
+        SetEnvironmentVariableA("GDEC_PREFILL_CHUNK",
+                                std::to_string(prefill_chunk).c_str());
 
     CreateDirectoryA("logs", nullptr);
     g_plan.engine_log = "logs\\engine-win-" + g_stamp + ".log";
@@ -974,8 +1030,8 @@ int main(int argc, char** argv) {
 
     std::vector<std::string>& engine_args = g_plan.engine_args;
     engine_args = {model_file};
-    if (!ngram_file.empty()) engine_args.push_back(ngram_file);
     if (!overlay_file.empty()) engine_args.push_back(overlay_file);
+    if (!same_file(ngram_file, model_file)) engine_args.push_back(ngram_file);
     if (!mtp_file.empty()) engine_args.push_back(mtp_file);
     engine_args.insert(engine_args.end(),
                        {"--serve", "--host", engine_host, "--port", std::to_string(engine_port),

@@ -19,6 +19,8 @@ retaining a format does not promise bitwise-identical output across engine versi
 As of **2026-10-02**, the cumulative engine contains R1–R13, default-off R15–R17
 candidates and R16 timing guards. R14/R17/R18 include real tool-task evaluation;
 R18 adds argument validation, bounded diagnostics and optional client recovery.
+R19 integrates upstream infrastructure and adds a selectable hybrid v2 path with
+same-weight three-way comparisons.
 Bounded numerical checks and local speedups do not establish stable overall gains
 across input lengths.
 These are local research stages, not upstream releases.
@@ -30,12 +32,43 @@ but default off. Tool-output failures after normal stopping now report
 `invalid_tool_call` rather than falsely claiming token-budget exhaustion.
 This interface correction does not fix model tool selection or SQL correctness.
 
+## R19: upstream integration and selectable v2 arithmetic
+
+The 17 upstream commits through `c9c5aa6` are integrated: rejected-frame draining,
+Windows PLE prefetch, shared KV admission, YaRN settings, a standalone benchmark
+and native HGN v2. This fork retains exact arithmetic, aligned MTP, sampler/slot
+fixes and R18 tool-argument validation.
+
+Same-weight tests favor upstream's large-batch experts. The hybrid candidate uses
+them for prefill, retains this fork's short expert verification, and adds a fixed
+split reduction order to upstream HT projections. At 32K input / 128 output,
+the median complete MTP request over two repeats was 26.99 s, versus 30.38 s for
+the retained fork arithmetic and 28.20 s for pristine upstream. **These arithmetic
+paths are not numerically equivalent; throughput is not evidence of better task
+accuracy.** The conservative path remains separately selectable.
+
+Eight office/code tool tasks across the three MTP arms and hybrid serial passed
+independent grading. Hybrid serial/MTP produced the same 19 parsed messages and
+output token counts, with MTP reducing those two task times by about 16% / 26%.
+Hybrid did not beat the retained fork in every task. At 260K input / 128 output,
+MTP still took about 3.40 s longer than hybrid serial. Merged exact matched the
+reference top token at all 2040 positions; hybrid matched 96.275% against that
+same-quantized-weight exact reference, so it is not a lossless exact replacement.
+
+The [Windows profile launcher](tools/start_windows_profile.ps1) selects `v2-exact`,
+`v2-fork`, `v2-hybrid` or older `w4b`. All four pass configuration checks in Windows
+PowerShell 5.1 and PowerShell 7. Model files remain in the user's weight directory.
+
+[Scope, measurements, numerical limits and validation](docs/UPSTREAM_INTEGRATION_R19.md).
+The following historical tables keep their original conditions and are not an
+R19 ranking.
+
 ## What this fork changes
 
 | Area | Additions and improvements | Current boundary |
 |---|---|---|
-| HGN v2 loading | Observed HT / rotated grouped Q4 / Q6 layouts, separate PLE sidecar in Windows loading, layout and missing-tensor checks | Not every HGN variant; older Q4CP and GGUF dispatch remain |
-| V2 experts | FP32-order-preserving exact batch/small-batch kernels; optional group-scale matrix kernels, high/low activation splitting, native HT projections | Grouped arithmetic changes floating-point evaluation; not bitwise equivalent |
+| HGN v2 loading | Shared upstream v2 loading/mapping, retaining this fork's layout/qparam/missing-tensor checks and exact decoding path | Not every HGN variant; older Q4CP and GGUF dispatch remain |
+| V2 experts | Exact and grouped paths retained; optional upstream large-batch experts plus fixed split reduction order for upstream HT projections | Grouped arithmetic changes floating-point evaluation; not bitwise equivalent |
 | MTP numerics and state | Optional aligned residual/GDN/QSA/short-verification policy, a reproduced multi-row accumulation fix, slot/checkpoint guards and sampler corrections | Finite passing cases do not establish arbitrary sampling, cache or multi-slot equivalence |
 | Ordinary prefill | Deferred expert scaling, permuted Q4 reads, PLE lookahead, gate/up plus activation fusion, reduction plus Hadamard fusion | R10/R12 have same-weight, same-binary switch comparisons |
 | MTP preparation | Optional KV-only ingest, fused reads, skipping an unused verifier head, tap/RMSNorm fusion, four original-shape projections and dual-output normalization | Shape/slot/runtime guards and fallbacks remain; complete requests are not always faster |
@@ -49,7 +82,7 @@ See the [cumulative research checkpoint](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)
 
 | Weight path | Current implementation | Validation in this fork |
 |---|---|---|
-| `qwen38-flash-next-w4b.hgn` + older overlay / external MTP | Older HGN/Q4CP decoding and serial/batched expert dispatch retained; still the repository's default service configuration | An early v2-fork Windows EXE loaded and generated with it; **the latest cumulative engine has not rerun the complete older-weight regression** |
+| `qwen38-flash-next-w4b.hgn` + older overlay / external MTP | Older HGN/Q4CP decoding and serial/batched expert dispatch retained; still the repository's default service configuration | R19 loaded at 262144 capacity with vision enabled; passed 3 short serial/MTP cases, real API checks and single-image recognition. Not all older-format/long-input combinations were tested |
 | Other older HQ / overlay combinations | Existing container and overlay paths retained, subject to their tensor layouts and model architecture | Not every HQ file/combination tested; a file extension is insufficient evidence |
 | `qwen38-flash-next-v2.hgn` + `qwen38-flash-next-ngram.hgn` | Observed storage 16 / 23 / 24 layouts added; main file includes MTP | Main Windows research path, with kernel, whole-model, long-input and tool-loop records |
 | Same-architecture GGUF | Inherited loader, expert path and Linux entry point retained | No Windows GGUF end-to-end regression in this v2 research; not a claim of complete Windows GGUF support |

@@ -1,3 +1,30 @@
+// Experimental upstream arithmetic is opt-in. Existing precision policy stays default.
+static bool v2_upstream_dense() {
+  static const bool enabled=[] {
+    const char* p=getenv("GDEC_V2_DENSE_BACKEND");
+    if (!p || !strcmp(p,"fork")) return false;
+    if (!strcmp(p,"upstream")) return true;
+    throw std::runtime_error("GDEC_V2_DENSE_BACKEND must be fork or upstream");
+  }(); return enabled;
+}
+static bool v2_upstream_experts(int rows) {
+  static const int mode=[] {
+    const char* p=getenv("GDEC_V2_EXPERT_BACKEND");
+    if (!p || !strcmp(p,"fork")) return 0;
+    if (!strcmp(p,"upstream")) return 1;
+    if (!strcmp(p,"upstream-prefill")) return 2;
+    throw std::runtime_error("GDEC_V2_EXPERT_BACKEND must be fork, upstream or upstream-prefill");
+  }(); return mode==1 || (mode==2 && rows>16);
+}
+static bool v2_ht_ordered() {
+  static const bool ordered=[] {
+    const char* p=getenv("GDEC_V2_HT_ORDERED");
+    if (!p || !strcmp(p,"0")) return false;
+    if (!strcmp(p,"1")) return true;
+    throw std::runtime_error("GDEC_V2_HT_ORDERED must be 0 or 1");
+  }(); return ordered;
+}
+
 // ============================ host side =====================================
 
 // --- Windows 单 arena 分配器 ------------------------------------------------
@@ -37,7 +64,7 @@ static hipError_t dalloc_arena(void** p, size_t bytes) {
 // 模型及长上下文 KV 共存的最大批（GDEC_PREFILL_CHUNK 可压低）；Windows 受
 // 96 GiB VRAM 硬门槛限制默认 8192（见 PORTING-WINDOWS.md）。
 // 并发 serve 的 prefill 分段覆盖（D1a）：main 的 serve 分支在 eff_parallel()>1 且
-// GDEC_CONC_PREFILL_CHUNK>0 时设置，优先于 GDEC_PREFILL_CHUNK。prefill 只在层间把 GPU
+// GDEC_CONC_PREFILL_CHUNK>0 时设置为 min(它, 单路分段)，之后取代单路值。prefill 只在层间把 GPU
 // 让给别的会话（D1b），分段越小每层越短、别的会话卡得越短。0 = 不覆盖。
 static int g_maxbatch_override = 0;
 
@@ -93,7 +120,7 @@ static size_t devarena_estimate(const Checkpoint& ck, int maxctx) {
     const Tensor& t = kv.second;
     if (t.dtype == 10 || t.dtype == 11 || t.dtype == 4) continue;
     add(t.data_size);
-    if (t.dtype == 16 || t.dtype == 24) add(t.numel()*2);
+    if ((t.dtype == 16 || t.dtype == 24) && !v2_upstream_dense()) add(t.numel()*2);
   }
   const bool qsa_dense = getenv("GDEC_QSA_DENSE") != nullptr;
   if(ck.find("layers.0.mlp.experts.gate_up_proj.weight") &&
@@ -763,6 +790,8 @@ static void load_v2_weights(const Checkpoint& ck) {
     const __half* su=rot.first?(const __half*)dev_ptr(*rot.first):nullptr;
     const __half* sv=rot.second?(const __half*)dev_ptr(*rot.second):nullptr;
     if(t.dtype==23) {g_v2_rot[t.name]={su,sv};continue;}
+    if (t.dtype==16) g_v2_rot[t.name]={su,sv};
+    if (v2_upstream_dense()) continue;
     uint16_t* dst=nullptr; DALLOC(&dst,t.numel()*2);
     const int cols=(int)t.dims[t.ndims-1],rows=(int)(t.numel()/cols);
     if(t.dtype==16){g_v2_rot[t.name]={su,sv};maxcols=std::max(maxcols,uint64_t(cols));maxrows=std::max(maxrows,uint64_t(rows));}
@@ -775,7 +804,7 @@ static void load_v2_weights(const Checkpoint& ck) {
   }
   CK(hipStreamSynchronize(g_str));
   const char* native=getenv("GDEC_V2_NATIVE_HT");
-  g_v2_ht_native=maxrows && v2_moe_mode()!=V2MoeMode::Reference && native && !strcmp(native,"1");
+  g_v2_ht_native=!v2_upstream_dense() && maxrows && v2_moe_mode()!=V2MoeMode::Reference && native && !strcmp(native,"1");
   if(g_v2_ht_native){DALLOC(&g_v2_ht_x,maxcols*8*4);DALLOC(&g_v2_ht_parts,maxrows*8*8*4);}
   if(count)fprintf(stderr,"HGN v2: %d dense tensors decoded to BF16 (%.2f GiB); rotated experts stay compressed\n",count,bytes/1073741824.0);
   if(count){
@@ -793,7 +822,102 @@ struct WView {
   const __half *su=nullptr,*sv=nullptr;
   const uint32_t* ht_data=nullptr;
   uint64_t expert_rows=0;
+  // hgn v2 rotated dtypes (16 ht, 23 i4r): input / output sign-scale planes
+  // (f32 device copies of the f16 .suh / .svh sidecars), else nullptr.
+  const float* suh = nullptr;
+  const float* svh = nullptr;
 };
+
+// --- hgn v2 host side ---------------------------------------------------------
+// v1 / v2 is decided per tensor by its own dtype (16 / 23 / 24 exist only in
+// v2), so one engine binary serves both and mixed files need no flag.
+struct V2Rot {
+  const float* suh = nullptr;
+  const float* svh = nullptr;
+};
+static std::unordered_map<std::string, V2Rot> g_v2rot;  // weight name -> planes
+static float* g_i4r_cb = nullptr;   // linear codebook -8..7 for the q4cp-style kernels
+static float* g_ht_zs = nullptr;    // split-K partial z, zero between launches
+static int* g_ht_cnt = nullptr;     // split-K per-tile-row arrival counters
+static constexpr size_t kHtZs = 8ull * 262144;
+static bool g_hgn_v2 = false;
+
+static float f16_to_f32_host(uint16_t h) {
+  const uint32_t s = (uint32_t)(h >> 15) << 31, e = (h >> 10) & 31, m = h & 1023;
+  uint32_t u;
+  if (e == 0) {
+    if (!m) {
+      u = s;
+    } else {  // subnormal
+      int k = -1;
+      uint32_t mm = m;
+      do { k++; mm <<= 1; } while (!(mm & 1024));
+      u = s | ((uint32_t)(127 - 15 - k) << 23) | ((mm & 1023) << 13);
+    }
+  } else if (e == 31) {
+    u = s | 0x7f800000u | (m << 13);
+  } else {
+    u = s | ((e + 127 - 15) << 23) | (m << 13);
+  }
+  float f;
+  memcpy(&f, &u, 4);
+  return f;
+}
+
+// Upload every rotated weight's planes once (f16 -> f32), build the i4r
+// codebook and split-K scratch. No-op on v1 checkpoints. Call after load_arena.
+static void v2_init(const Checkpoint& ck) {
+  std::unordered_map<std::string, const float*> up;  // sidecar name -> f32 copy
+  auto sidecar = [&](const std::string& n, uint64_t want) -> const float* {
+    auto it = up.find(n);
+    if (it != up.end()) return it->second;
+    const Tensor* t = ck.find(n);
+    if (!t) return nullptr;
+    if (t->dtype != 2 || t->numel() != want)
+      throw std::runtime_error("hgn v2: bad sidecar " + n);
+    std::vector<float> h(want);
+    const uint16_t* src = (const uint16_t*)t->data;
+    for (uint64_t i = 0; i < want; i++) h[i] = f16_to_f32_host(src[i]);
+    float* d = nullptr;
+    CK(hipMalloc(&d, want * 4));
+    CK(hipMemcpy(d, h.data(), want * 4, hipMemcpyHostToDevice));
+    return up[n] = d;
+  };
+  int n16 = 0, n23 = 0, n24 = 0;
+  for (auto& kv : ck.tensors()) {
+    const Tensor& t = kv.second;
+    if (t.dtype == 24) n24++;
+    if (t.dtype != 16 && t.dtype != 23) continue;
+    const uint64_t K = t.dims[t.ndims - 1], O = t.dims[t.ndims - 2];
+    if (K % 128 || O % 128)
+      throw std::runtime_error("hgn v2: " + t.name + " off the 128 grid");
+    std::string base = t.name;
+    const std::string sfx = ".weight";
+    if (base.size() > sfx.size() && base.compare(base.size() - sfx.size(), sfx.size(), sfx) == 0)
+      base.resize(base.size() - sfx.size());
+    V2Rot r;
+    r.suh = sidecar(base + ".suh", K);
+    if (!r.suh) {  // experts.gate_up_proj: input plane shared as experts.su
+      const size_t dot = base.rfind('.');
+      if (dot != std::string::npos) r.suh = sidecar(base.substr(0, dot) + ".su", K);
+    }
+    r.svh = sidecar(base + ".svh", O);
+    if (!r.suh || !r.svh) throw std::runtime_error("hgn v2: missing .suh/.svh for " + t.name);
+    g_v2rot[t.name] = r;
+    (t.dtype == 16 ? n16 : n23)++;
+  }
+  if (!n16 && !n23 && !n24) return;
+  g_hgn_v2 = true;
+  const float cb[16] = {-8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7};
+  CK(hipMalloc(&g_i4r_cb, sizeof cb));
+  CK(hipMemcpy(g_i4r_cb, cb, sizeof cb, hipMemcpyHostToDevice));
+  CK(hipMalloc(&g_ht_zs, kHtZs * 4));
+  CK(hipMemset(g_ht_zs, 0, kHtZs * 4));
+  CK(hipMalloc(&g_ht_cnt, 4096 * 4));
+  CK(hipMemset(g_ht_cnt, 0, 4096 * 4));
+  fprintf(stderr, "hgn v2: %d ht dense, %d i4r experts, %d q6g64 HC, %zu sidecars (f32)\n",
+          n16, n23, n24, up.size());
+}
 
 static WView wview(const Tensor& t) {
   WView w;
@@ -812,10 +936,122 @@ static WView wview(const Tensor& t) {
     uint64_t codes_bytes = w.rows * w.cols / 2;
     w.scale_stride = ((w.cols / 32 * 2) + 15) & ~15ull;
     (void)codes_bytes;
+  } else if (t.dtype == 23) {
+    w.scale_stride = w.cols / 128 * 2;  // unpadded f16 per 128 cols
+  } else if (t.dtype == 24) {
+    w.scale_stride = q6g64_stride(w.cols);  // full interleaved row stride
   } else {
     w.scale_stride = 0;
   }
+  if (t.dtype == 16 || t.dtype == 23) {
+    auto it = g_v2rot.find(t.name);
+    if (it == g_v2rot.end()) throw std::runtime_error("hgn v2: planes not loaded for " + t.name);
+    w.suh = it->second.suh;
+    w.svh = it->second.svh;
+  }
   return w;
+}
+
+// ht GEMV for P rows: x row p at x + p*xs (f32 or bf16), y row p at y + p*ys.
+// row_off must sit on the 128 grid (codes are tiled by 128 rows).
+template <int P>
+static void ht_gemv_p(const WView& w, const void* x, bool xbf16, uint64_t xs, float* y,
+                      uint64_t ys, uint64_t row_off, uint64_t nrows) {
+  if (row_off % 128) throw std::runtime_error("ht gemv: row_off off the 128 grid");
+  const int K = (int)w.cols, ntx = K / 128;
+  const int nty = (int)((nrows + 127) / 128);
+  const uint8_t* codes = w.data + (row_off / 128) * (uint64_t)ntx * 8192;
+  const float* svh = w.svh + row_off;
+  // Split K only up to ~80 blocks (2 per CU): more splits cost more in atomics
+  // than they win (microbench 10240x2048 / 2048x4096). LDS holds tpc tiles
+  // of rotated x per pass (<= 24 tile-rows) or the 8 wave partials.
+  int ks = std::max(1, std::min((80 + nty - 1) / nty, ntx));
+  const int tpb = (ntx + ks - 1) / ks;
+  ks = (ntx + tpb - 1) / tpb;
+  const int tpc = std::min(tpb, std::max(1, 24 / P));
+  const bool ordered = v2_ht_ordered();
+  if (ks > 1 && ((size_t)P * nty * 128 * (ordered ? ks : 1) > kHtZs || nty > 4096))
+    throw std::runtime_error("ht gemv: split-K scratch too small");
+  const size_t lds = (size_t)std::max(P * tpc, 8 * P) * 128 * 4;
+  const dim3 grid((unsigned)nty, (unsigned)ks);
+  if (ordered && xbf16)
+    k_ht_gemv<P, uint16_t, true><<<grid, 256, lds, g_str>>>(codes, w.suh, svh, (const uint16_t*)x, xs,
+                                                       y, ys, nty * 128, K, (int)nrows, tpb,
+                                                       tpc, g_ht_zs, g_ht_cnt);
+  else if (ordered)
+    k_ht_gemv<P, float, true><<<grid, 256, lds, g_str>>>(codes, w.suh, svh, (const float*)x, xs, y,
+                                                    ys, nty * 128, K, (int)nrows, tpb, tpc,
+                                                    g_ht_zs, g_ht_cnt);
+  else if (xbf16)
+    k_ht_gemv<P, uint16_t><<<grid, 256, lds, g_str>>>(codes, w.suh, svh, (const uint16_t*)x, xs,
+                                                       y, ys, nty * 128, K, (int)nrows, tpb,
+                                                       tpc, g_ht_zs, g_ht_cnt);
+  else
+    k_ht_gemv<P, float><<<grid, 256, lds, g_str>>>(codes, w.suh, svh, (const float*)x, xs, y,
+                                                    ys, nty * 128, K, (int)nrows, tpb, tpc,
+                                                    g_ht_zs, g_ht_cnt);
+}
+static bool ht_gemv(const WView& w, const void* x, bool xbf16, uint64_t xs, float* y,
+                    uint64_t ys, int P, uint64_t row_off, uint64_t nrows) {
+  switch (P) {
+#define GDEC_HTG(PP) \
+  case PP: ht_gemv_p<PP>(w, x, xbf16, xs, y, ys, row_off, nrows); return true;
+    GDEC_HTG(1) GDEC_HTG(2) GDEC_HTG(3) GDEC_HTG(4)
+    GDEC_HTG(5) GDEC_HTG(6) GDEC_HTG(7) GDEC_HTG(8)
+#undef GDEC_HTG
+    default:
+      return false;
+  }
+}
+
+// q6g64 GEMV for P rows (same x / y conventions); x 16 B aligned.
+template <int P>
+static void q6g64_gemv_p(const WView& w, const void* x, bool xbf16, uint64_t xs, float* y,
+                         uint64_t ys, uint64_t row_off, uint64_t nrows) {
+  const uint8_t* wq = w.data + row_off * w.scale_stride;
+  const int R = (int)nrows, C = (int)w.cols, st = (int)w.scale_stride;
+  if (C < 1024) {
+    const unsigned blocks = (unsigned)((R + 31) / 32);
+    if (xbf16)
+      k_q6g64_gemv<P, uint16_t, 8><<<blocks, 256, 0, g_str>>>(wq, (const uint16_t*)x, xs, y, ys,
+                                                              R, C, st);
+    else
+      k_q6g64_gemv<P, float, 8><<<blocks, 256, 0, g_str>>>(wq, (const float*)x, xs, y, ys, R,
+                                                           C, st);
+  } else {
+    const unsigned blocks = (unsigned)((R + 7) / 8);
+    if (xbf16)
+      k_q6g64_gemv<P, uint16_t, 32><<<blocks, 256, 0, g_str>>>(wq, (const uint16_t*)x, xs, y,
+                                                               ys, R, C, st);
+    else
+      k_q6g64_gemv<P, float, 32><<<blocks, 256, 0, g_str>>>(wq, (const float*)x, xs, y, ys, R,
+                                                            C, st);
+  }
+}
+static bool q6g64_gemv(const WView& w, const void* x, bool xbf16, uint64_t xs, float* y,
+                       uint64_t ys, int P, uint64_t row_off, uint64_t nrows) {
+  if (w.cols % 64) return false;
+  switch (P) {
+#define GDEC_Q6G(PP) \
+  case PP: q6g64_gemv_p<PP>(w, x, xbf16, xs, y, ys, row_off, nrows); return true;
+    GDEC_Q6G(1) GDEC_Q6G(2) GDEC_Q6G(3) GDEC_Q6G(4)
+    GDEC_Q6G(5) GDEC_Q6G(6) GDEC_Q6G(7) GDEC_Q6G(8)
+#undef GDEC_Q6G
+    default:
+      return false;
+  }
+}
+
+// ht / q6g64 -> bf16 W[rows][cols] (prefill GEMM operand).
+static void v2_deq_bf16(const WView& w, uint16_t* out, hipStream_t st) {
+  if (w.dtype == 16) {
+    const unsigned tiles = (unsigned)((w.rows / 128) * (w.cols / 128));
+    k_ht_deq_bf16<<<tiles, 256, 0, st>>>(w.data, w.suh, w.svh, out, (int)w.cols);
+  } else {
+    const uint64_t ng = w.rows * (w.cols / 64);
+    k_q6g64_deq_bf16<<<(unsigned)((ng + 255) / 256), 256, 0, st>>>(
+        w.data, out, (int)w.rows, (int)w.cols, (int)w.scale_stride);
+  }
 }
 
 static void gemv(const WView& w, const float* x, float* y, uint64_t row_off = 0,
@@ -861,6 +1097,10 @@ static void gemv(const WView& w, const float* x, float* y, uint64_t row_off = 0,
       q8g32_gemv_small<8, 256>(q, s, x, y, rows, w.cols, g_str);
     else
       q8g32_gemv_small<32, 256>(q, s, x, y, rows, w.cols, g_str);
+  } else if (w.dtype == 16) {
+    ht_gemv(w, x, false, 0, y, 0, 1, row_off, rows);
+  } else if (w.dtype == 24) {
+    q6g64_gemv(w, x, false, 0, y, 0, 1, row_off, rows);
   } else {
     throw std::runtime_error("gemv: unsupported dtype");
   }
@@ -912,6 +1152,8 @@ static bool gemv_multi_q4cp(const WView& w, const void* x, float* y, int P,
     if (xstride % 8 || (((uintptr_t)x | (uintptr_t)y) & 15)) return false;
   } else if (xstride % 4 || (((uintptr_t)x | (uintptr_t)y) & 15))
     return false;
+  if (w.dtype == 16) return ht_gemv(w, x, xbf16, xstride, y, w.rows, P, 0, w.rows);
+  if (w.dtype == 24) return q6g64_gemv(w, x, xbf16, xstride, y, w.rows, P, 0, w.rows);
   int threads = 512;
   uint64_t wpb = threads / 32;
   uint64_t blocks = (w.rows + wpb * 2 - 1) / (wpb * 2);

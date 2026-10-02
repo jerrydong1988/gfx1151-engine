@@ -52,6 +52,7 @@ static void lmhead_base_capture(const Checkpoint& ck) {
   }
 }
 
+#if !defined(GDEC_NO_MAIN)
 int main(int argc, char** argv) {
 #ifdef _WIN32
   if (!wsa_init()) {
@@ -75,6 +76,8 @@ int main(int argc, char** argv) {
             "       M-RoPE: [--mrope-grid t,h,w ...] with --tokens; "
             "--mrope-test K dumps rope tables/decode positions without weights "
             "(GDEC_MROPE_DUMP=<file>)\n"
+            "       YaRN: [--rope-factor F] [--rope-original-ctx N] "
+            "[--rope-beta-fast F] [--rope-beta-slow F] [--rope-attn-scale F]\n"
             "       Vision: --vision-tower <sidecar.hgn> (serve: GEN suffix "
             "VIMG k + binary patch frames); --vision-test PREFIX "
             "--vision-tower S --patches x.npy --mrope-grid t,h,w (offline "
@@ -98,6 +101,11 @@ int main(int argc, char** argv) {
   int mrope_test = -1;  // -1 off; else number of decode steps to dump
   // Vision (stage 4): sidecar tower weights; offline ViT parity mode.
   std::string vision_tower, vision_test, vision_patches;
+  std::string rope_error;
+  if (!rope_from_env(g_cfg.rope, rope_error)) {
+    fprintf(stderr, "%s\n", rope_error.c_str());
+    return 2;
+  }
   while (argi < argc && argv[argi][0] != '-') overlays.push_back(argv[argi++]);
   if (is_gguf_path(base)) gguf_base_setup(base);
   for (; argi < argc; argi++) {
@@ -159,6 +167,11 @@ int main(int argc, char** argv) {
     else if (a == "--maxctx") {
       maxctx = atoi(next());
       maxctx_set = true;
+    } else if (const char* key = rope_cli_key(a)) {
+      if (argi + 1 >= argc || !rope_set(g_cfg.rope, key, next())) {
+        fprintf(stderr, "%s requires a valid numeric value\n", a.c_str());
+        return 2;
+      }
     } else if (a == "--mtp-test")
       mtp_test = atoi(next());
     else if (a == "--spec-gen")
@@ -194,6 +207,17 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
+  if (!rope_config_valid(g_cfg.rope)) {
+    fprintf(stderr, "invalid YaRN config: factor>=1, original_ctx>0, beta_fast>=beta_slow>0, "
+                    "attention_scale>=0\n");
+    return 2;
+  }
+  if (g_cfg.rope.factor > 1.0)
+    fprintf(stderr, "RoPE: YaRN factor=%.6g original_ctx=%d beta_fast=%.6g "
+                    "beta_slow=%.6g attention_scale=%.6g\n",
+            g_cfg.rope.factor, g_cfg.rope.original_max_position_embeddings,
+            g_cfg.rope.beta_fast, g_cfg.rope.beta_slow,
+            rope_attention_factor(g_cfg.rope));
   if (ppl && (serve_mode || !vision_test.empty() || mtp_test > 0 || spec_gen > 0 ||
               !mrope_grids.empty() || dump || !splits.empty())) {
     fprintf(stderr, "--ppl is text-only and cannot be combined with serve, vision, "
@@ -276,7 +300,9 @@ int main(int argc, char** argv) {
     // and none of the rope machinery touches weights. Use with
     // GDEC_MROPE_DUMP=<file> and compare via tools/cmp_mrope.py.
     Checkpoint ckpt(base.c_str());
-    for (const auto& o : overlays) ckpt.add_overlay(o.c_str());
+    for (const auto& o : overlays)
+      if (const char* why = ckpt.add_overlay(o.c_str()))
+        fprintf(stderr, "overlay %s: %s, skipped\n", o.c_str(), why);
     if (tokens.empty()) {
       fprintf(stderr, "need --tokens\n");
       return 2;
@@ -323,7 +349,9 @@ int main(int argc, char** argv) {
     auto ckbase = open_base(base);
     Checkpoint& ckpt = *ckbase;
     lmhead_base_capture(ckpt);
-    for (const auto& o : overlays) ckpt.add_overlay(o.c_str());
+    for (const auto& o : overlays)
+      if (const char* why = ckpt.add_overlay(o.c_str()))
+        fprintf(stderr, "overlay %s: %s, skipped\n", o.c_str(), why);
     fprintf(stderr, "loaded %zu tensors (base+%zu overlay)\n", ckpt.tensor_count(),
             overlays.size());
     gguf_dense_apply(ckpt);
@@ -336,15 +364,19 @@ int main(int argc, char** argv) {
       if (const char* e = getenv("GDEC_CONC_PREFILL_CHUNK")) {
         int v = atoi(e);
         if (v > 0) {
-          g_maxbatch_override = v;
-          fprintf(stderr, "gdec: parallel %d -> prefill chunk %d (GDEC_CONC_PREFILL_CHUNK)\n",
-                  eff_parallel(), eff_maxbatch(maxctx));
+          // 只缩不放：大于单路分段时沿用单路值（不放大工作区，也不拉长让出间隔）。
+          const int single = eff_maxbatch(maxctx);
+          g_maxbatch_override = std::min(v, single);
+          fprintf(stderr, "gdec: parallel %d -> prefill chunk %d (GDEC_CONC_PREFILL_CHUNK=%d%s)\n",
+                  eff_parallel(), eff_maxbatch(maxctx), v,
+                  v > single ? ", capped by single-stream chunk" : "");
         }
       }
     }
     devarena_init(ckpt, maxctx);
     load_arena(ckpt);
     load_v2_weights(ckpt);
+    v2_init(ckpt);
     GpuModel m(ckpt, maxctx);
     m.setup_draft_lmhead(g_lmhead_base_ok ? &g_lmhead_base : nullptr);
     gguf_dense_release(ckpt);
@@ -396,7 +428,9 @@ int main(int argc, char** argv) {
   auto ckbase = open_base(base);
   Checkpoint& ckpt = *ckbase;
   lmhead_base_capture(ckpt);
-  for (const auto& o : overlays) ckpt.add_overlay(o.c_str());
+  for (const auto& o : overlays)
+    if (const char* why = ckpt.add_overlay(o.c_str()))
+      fprintf(stderr, "overlay %s: %s, skipped\n", o.c_str(), why);
   fprintf(stderr, "loaded %zu tensors (base+%zu overlay)\n", ckpt.tensor_count(),
           overlays.size());
   gguf_dense_apply(ckpt);
@@ -415,6 +449,7 @@ int main(int argc, char** argv) {
   devarena_init(ckpt, maxctx);
   load_arena(ckpt);
   load_v2_weights(ckpt);
+  v2_init(ckpt);
 
   GpuModel m(ckpt, maxctx);
   m.setup_draft_lmhead(g_lmhead_base_ok ? &g_lmhead_base : nullptr);
@@ -760,3 +795,5 @@ int main(int argc, char** argv) {
   m.perf_report();
   return 0;
 }
+
+#endif  // !defined(GDEC_NO_MAIN)

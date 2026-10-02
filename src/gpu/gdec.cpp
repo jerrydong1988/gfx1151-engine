@@ -144,6 +144,8 @@
 #include "../gguf.h"
 #include "../gguf_map.h"
 #include "../engine_net.h"
+#include "../ple_prefetch.h"
+#include "../kv_admission.h"
 
 #include "parts/00_platform.inc"
 #include "parts/05_config.inc"
@@ -159,6 +161,8 @@
 #include "parts/26_kernels_moe_gguf.inc"
 #include "parts/27_kernels_moe_lut.inc"
 #include "parts/28_kernels_hgn_v2.inc"
+#include "parts/27_kernels_moe_lut_upstream.inc"
+#include "parts/28_kernels_hgn_v2_upstream.inc"
 #include "parts/29_kernels_v2_fused.inc"
 #include "parts/29_kernels_v2_fused_bn64.inc"
 #include "parts/30_host_util.inc"

@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
 #include <list>
 #include <stdexcept>
 #include <string>
@@ -110,8 +111,18 @@ public:
   Checkpoint(const Checkpoint&) = delete;
   Checkpoint& operator=(const Checkpoint&) = delete;
 
-  // overlay tensors override base tensors with the same name
-  void add_overlay(const char* path) { map_file(path, true); }
+  // overlay tensors override base tensors with the same name. Returns nullptr
+  // when applied, else why the whole file was skipped:
+  //   - already mapped (e.g. NGRAM_FILE == MODEL_FILE on a single-file w4b);
+  //   - it would replace hgn v2 tensors (dtype 16 ht / 23 i4r / 24 q6g64): a
+  //     v1 quality overlay does not apply to a v2 base. MTP and n-gram files
+  //     replace / add other tensors only and are applied as usual.
+  const char* add_overlay(const char* path) {
+    for (const auto& m : maps_)
+      if (same_file(m.path, path)) return "already mapped";
+    if (!map_file(path, true)) return "would replace hgn v2 tensors (v1 overlay on a v2 base)";
+    return nullptr;
+  }
 
   // In-memory tensor (GGUF-derived) owning its bytes; overrides by name like
   // an overlay. t.data / t.data_size are set from buf.
@@ -304,8 +315,15 @@ public:
     const uint8_t* base;
     size_t len;
     void* os_handle = nullptr;  // Windows: 保持打开的句柄（OVERLAPPED|NO_BUFFERING，pload 直读用）
-    std::string path;
+    std::string path;           // as given to the constructor / add_overlay
   };
+  // mapping that holds p (tensor data pointer), or nullptr
+  const Mapping* mapping_of(const uint8_t* p) const {
+    for (const auto& m : maps_)
+      if (uintptr_t(p) >= uintptr_t(m.base) &&
+          uintptr_t(p) - uintptr_t(m.base) < m.len) return &m;
+    return nullptr;
+  }
   const std::vector<Mapping>& mappings() const { return maps_; }
   const std::unordered_map<std::string, Tensor>& tensors() const { return index_; }
 
@@ -315,7 +333,16 @@ private:
   std::list<std::vector<uint8_t>> owned_;  // synthetic tensor storage (stable addresses)
   size_t n_synth_ = 0;
 
-  void map_file(const char* path, bool is_overlay = false) {
+  static bool same_file(const std::string& a, const char* b) {
+    std::error_code ec;
+    const bool eq = std::filesystem::equivalent(a, b, ec);
+    return ec ? a == b : eq;
+  }
+
+  static bool is_v2_dtype(uint32_t dtype) { return dtype == 16 || dtype == 23 || dtype == 24; }
+
+  // Returns false (and unmaps) for an overlay that would replace a v2 tensor.
+  bool map_file(const char* path, bool is_overlay = false) {
 #ifdef _WIN32
     // MapViewOfFile 等价 mmap：映射整个文件（64 位 VA，115 GiB 无压力），
     // 页按需从文件调入，不由 pagefile 支撑。os_map_ro 语义与
@@ -360,6 +387,7 @@ private:
     if (h.records_offset > len || uint64_t(h.tensor_count)*sizeof(Record) > len-h.records_offset)
       throw std::runtime_error("HGN record table outside file");
 
+    std::vector<Tensor> ts(h.tensor_count);
     for (uint32_t i = 0; i < h.tensor_count; i++) {
       Record r;
       memcpy(&r, p + h.records_offset + (uint64_t)i * sizeof(Record), sizeof(r));
@@ -373,7 +401,7 @@ private:
       }
       if(elements>std::numeric_limits<uint64_t>::max()/4)
         throw std::runtime_error("HGN tensor byte size overflow");
-      Tensor t;
+      Tensor& t = ts[i];
       t.name.assign(r.name, strnlen(r.name, sizeof(r.name)));
       t.dtype = r.dtype;
       t.ndims = r.ndims;
@@ -381,11 +409,32 @@ private:
       t.data = p + r.data_offset;
       t.data_size = r.data_size;
       t.qparam = uint32_t(r.extra >> 32);
+      if (is_overlay) {
+        auto it = index_.find(t.name);
+        if (it != index_.end() && is_v2_dtype(it->second.dtype)) {
+          unmap_last();
+          return false;
+        }
+      }
+    }
+    for (const Tensor& t : ts) {
       if (is_overlay)
         index_[t.name] = t;  // override
       else
         index_.emplace(t.name, t);
     }
+    return true;
+  }
+
+  void unmap_last() {
+    const Mapping& m = maps_.back();
+#ifdef _WIN32
+    UnmapViewOfFile(m.base);
+    CloseHandle((HANDLE)m.os_handle);
+#else
+    munmap((void*)m.base, m.len);
+#endif
+    maps_.pop_back();
   }
 };
 

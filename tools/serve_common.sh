@@ -29,7 +29,13 @@ serve_init() {
   KV_POOL_TOKENS="${KV_POOL_TOKENS:-0}"
   PARALLEL="${PARALLEL:-1}"
   CONC_PREFILL_CHUNK="${CONC_PREFILL_CHUNK:-8192}"
+  PREFILL_CHUNK="${PREFILL_CHUNK:-0}"
   MAX_IMAGES="${MAX_IMAGES:-8}"
+  ROPE_FACTOR="${ROPE_FACTOR:-1}"
+  ROPE_ORIGINAL_CTX="${ROPE_ORIGINAL_CTX:-262144}"
+  ROPE_BETA_FAST="${ROPE_BETA_FAST:-32}"
+  ROPE_BETA_SLOW="${ROPE_BETA_SLOW:-1}"
+  ROPE_ATTN_SCALE="${ROPE_ATTN_SCALE:-0}"
   if [[ -f "$ROOT/build/bundled-runtime.conf" ]]; then
     # --bundle 产物优先使用随包库；kernel db 使用绝对路径，不依赖 cwd。
     [[ -d "$ROOT/build/lib" ]] || fail '缺少 build/lib，请重新运行 bash build.sh --bundle'
@@ -52,11 +58,11 @@ serve_init() {
   for octet in "${engine_octets[@]}"; do
     [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( 10#$octet <= 255 )) || fail 'ENGINE_HOST 必须是 IPv4 地址'
   done
-  for key in ENGINE_PORT API_PORT MAX_CONTEXT MEMORY_CAP_GB MIN_AVAILABLE_GB START_TIMEOUT STALL_TIMEOUT; do
+  for key in ENGINE_PORT API_PORT MAX_CONTEXT MEMORY_CAP_GB MIN_AVAILABLE_GB START_TIMEOUT STALL_TIMEOUT ROPE_ORIGINAL_CTX; do
     value="${!key}"
     [[ "$value" =~ ^[1-9][0-9]*$ && ${#value} -le 8 ]] || fail "$key 必须为正整数"
   done
-  for key in KVSNAP_MAX_GB RCKPT_MAX KV_POOL_TOKENS MTP_GAMMA CONC_PREFILL_CHUNK; do
+  for key in KVSNAP_MAX_GB RCKPT_MAX KV_POOL_TOKENS MTP_GAMMA CONC_PREFILL_CHUNK PREFILL_CHUNK; do
     value="${!key}"
     [[ "$value" =~ ^(0|[1-9][0-9]*)$ && ${#value} -le 8 ]] || fail "$key 必须为非负整数"
   done
@@ -64,6 +70,12 @@ serve_init() {
   [[ "$KV_PAGED" =~ ^[01]$ ]] || fail 'KV_PAGED 必须为 0 或 1'
   [[ "$PARALLEL" =~ ^[1-8]$ ]] || fail 'PARALLEL 范围为 1–8'
   [[ "$MAX_IMAGES" =~ ^[1-9][0-9]*$ && "$MAX_IMAGES" -le 256 ]] || fail 'MAX_IMAGES 范围为 1–256'
+  [[ "$ROPE_FACTOR" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail 'ROPE_FACTOR 必须为非负小数'
+  [[ "$ROPE_BETA_FAST" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail 'ROPE_BETA_FAST 必须为非负小数'
+  [[ "$ROPE_BETA_SLOW" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail 'ROPE_BETA_SLOW 必须为非负小数'
+  [[ "$ROPE_ATTN_SCALE" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail 'ROPE_ATTN_SCALE 必须为非负小数'
+  awk "BEGIN { exit !($ROPE_FACTOR >= 1 && $ROPE_BETA_FAST > 0 && $ROPE_BETA_SLOW > 0 && $ROPE_ATTN_SCALE >= 0) }" || \
+    fail 'ROPE_FACTOR 必须 >=1，beta 必须 >0，ROPE_ATTN_SCALE 必须 >=0'
   (( PARALLEL == 1 || KV_PAGED )) || fail 'PARALLEL>1 需要 KV_PAGED=1'
   (( ENGINE_PORT <= 65535 && API_PORT <= 65535 && ENGINE_PORT != API_PORT )) || fail '端口必须为不同的 1–65535 整数'
   (( MTP_GAMMA <= 8 )) || fail 'MTP_GAMMA 范围为 0–8（0=引擎按模式自选 greedy 4 / 采样自适应）'
@@ -107,7 +119,12 @@ serve_run() {
   export GDEC_GDN_STREAM=1 GDEC_GDN_WAVE=1 GDEC_NOWARMUP=1
   # 32768: 32K prompt 单 chunk 实测 +7.4%（1155 vs 1076 tok/s）；65536 超内存 PSI 上限。
   # 32768性能最佳但是吃的显存太多，8192吃的最少但是性能最差，16384折中一下，性能损失不大，吃的显存更少
-  export GDEC_PREFILL_CHUNK=16384
+  # service.conf 的 PREFILL_CHUNK>0 时优先（同名环境变量再优先于 conf），否则 16384。
+  if (( PREFILL_CHUNK > 0 )); then
+    export GDEC_PREFILL_CHUNK="$PREFILL_CHUNK"
+  else
+    export GDEC_PREFILL_CHUNK=16384
+  fi
   # 并发（D1a）：引擎 serve 且 GDEC_PARALLEL>1 时用这个分段代替上面的 16384。prefill 只在
   # 层间让出 GPU，32K prompt 时别的会话最长卡顿 16384 约 0.8–1.4 s、8192 约 0.6 s，
   # 单独 PP 不变（09-29 d1a_verify）。由引擎判断并发，离线工具（pp_prod/kld 等复用这些 ENV）不受影响。
@@ -129,6 +146,16 @@ serve_run() {
   fi
   export GDEC_PARALLEL="$PARALLEL"
   export GDEC_API_MAX_IMAGES="$MAX_IMAGES"
+  # Optional R19 policy keys, shared with the Windows launchers.
+  local key
+  for key in SPEC_PRECISION SPEC_SERIAL_ORDER_MR V2_MOE V2_NATIVE_HT V2_DENSE_BACKEND V2_EXPERT_BACKEND V2_HT_ORDERED; do
+    [[ -z "${!key:-}" ]] || export "GDEC_$key=${!key}"
+  done
+  export GDEC_ROPE_FACTOR="$ROPE_FACTOR"
+  export GDEC_ROPE_ORIGINAL_CTX="$ROPE_ORIGINAL_CTX"
+  export GDEC_ROPE_BETA_FAST="$ROPE_BETA_FAST"
+  export GDEC_ROPE_BETA_SLOW="$ROPE_BETA_SLOW"
+  export GDEC_ROPE_ATTN_SCALE="$ROPE_ATTN_SCALE"
   # --serve reads GDEC_SPEC_GAMMA; --gamma is for offline --spec-gen.
   # MTP_GAMMA=0：不导出，引擎按请求模式自选（greedy 4 / 采样自适应）。
   if (( MTP_GAMMA > 0 )); then export GDEC_SPEC_GAMMA="$MTP_GAMMA"; fi
@@ -146,7 +173,9 @@ serve_run() {
     echo "KV：不分页（KV_PAGED=0）"
   fi
   if (( PARALLEL > 1 && CONC_PREFILL_CHUNK > 0 )); then
-    echo "prefill 分段：${CONC_PREFILL_CHUNK}（并发；单路 ${GDEC_PREFILL_CHUNK}）"
+    local conc=$CONC_PREFILL_CHUNK
+    (( conc > GDEC_PREFILL_CHUNK )) && conc=$GDEC_PREFILL_CHUNK
+    echo "prefill 分段：${conc}（并发，取 CONC_PREFILL_CHUNK 与单路 ${GDEC_PREFILL_CHUNK} 的较小值）"
   fi
   if (( CHECK )); then
     # 机器可读：引擎环境变量与命令行（tools/a5_verify.sh、pp_prod.sh 等解析这两段）

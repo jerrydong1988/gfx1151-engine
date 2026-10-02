@@ -1040,7 +1040,24 @@ static uint64_t fingerprint(const GpuModel& m) {
   const Geo G = geo(m);
   uint64_t h = mix64(0x6764656b76736e70ULL + FMT);
   auto add = [&](uint64_t v) { h = mix64(h ^ v); };
+  auto bits = [](double v) {
+    uint64_t u;
+    memcpy(&u, &v, sizeof(u));
+    return u;
+  };
   for (const auto& f : g_model_files) add(file_id(f));
+  // R19: a checkpoint's numerical history belongs to its arithmetic policy.
+  // Never restore a native-HT/FP16 expert state into the fork's exact path (or
+  // vice versa). The v1 namespace is unchanged by these v2-only switches.
+  if (g_hgn_v2) {
+    add(0x7632706f6c696301ULL);
+    add((uint64_t)v2_moe_mode());
+    add((uint64_t)g_v2_ht_native);
+    add((uint64_t)v2_upstream_dense());
+    add((uint64_t)v2_upstream_experts(1));
+    add((uint64_t)v2_upstream_experts(17));
+    add((uint64_t)v2_ht_ordered());
+  }
   // A forced runtime solution can change FP32 reduction order. Keep it out
   // of automatic-policy checkpoints, even when that policy happens to pick it.
   const int pinned_iproj = GpuModel::iproj_solution_override();
@@ -1104,7 +1121,12 @@ static uint64_t fingerprint(const GpuModel& m) {
   }
   for (uint64_t v : {(uint64_t)m.ple_on, (uint64_t)G.kvb, (uint64_t)G.has_ik,
                      (uint64_t)G.nqsa, (uint64_t)g_cfg.layers, (uint64_t)g_cfg.d,
-                     (uint64_t)g_cfg.branches, (uint64_t)KV_PAGE})
+                     (uint64_t)g_cfg.branches, (uint64_t)KV_PAGE,
+                     bits(g_cfg.rope_theta), (uint64_t)g_cfg.rotary_dim,
+                     bits(g_cfg.rope.factor),
+                     (uint64_t)g_cfg.rope.original_max_position_embeddings,
+                     bits(g_cfg.rope.beta_fast), bits(g_cfg.rope.beta_slow),
+                     bits(g_cfg.rope.attention_factor)})
     add(v);
   return h;
 }
@@ -1844,6 +1866,7 @@ struct Slot {
   uint64_t seq = 0;       // admission order of the request it runs
   uint64_t last_use = 0;  // LRU among idle slots
   uint64_t owner = 0;     // connection id of the last request (N=1 affinity)
+  int reserved = 0;
 };
 
 static Turnstile g_turn;
@@ -1854,6 +1877,7 @@ static std::list<uint64_t> g_wait;  // admission tickets, FIFO
 static uint64_t g_ticket = 0, g_seq = 0, g_use = 0;
 static std::atomic<uint64_t> g_conn_id{0};
 static thread_local int tl_slot = -1;  // slot of the GPU-owning worker
+static int g_reserve_decode = 4096;
 
 // Idle slot for a prompt: the longest hist that is a strict prefix (live
 // continuation), else an empty slot, else the least recently used one whose
@@ -1926,16 +1950,67 @@ static void log_prefix_miss(long long req, const std::vector<int>& ids, int chos
           h.size(), ids.size(), why.c_str());
 }
 
-// Wait (FIFO) for an idle slot and claim it; -1 if cancelled while queued.
-static int slot_admit(const std::vector<int>& ids, const std::atomic<bool>& cancel,
-                      long long req) {
+// Wait (FIFO) for an idle slot and claim it; -1 if cancelled while queued,
+// -2 if the shared KV pool cannot fit the request alongside the reservations
+// of the requests already running.
+static int slot_admit(GpuModel& m, const std::vector<int>& ids, int max_tokens,
+                      const std::atomic<bool>& cancel, long long req) {
   std::unique_lock<std::mutex> lk(g_sm);
   const uint64_t t = g_ticket++;
   g_wait.push_back(t);
   for (;;) {
-    if (g_wait.front() == t) {
+    if (cancel) {
+      g_wait.remove(t);
+      g_scv.notify_all();
+      return -1;
+    }
+    if (g_wait.front() == t && pick_slot(ids) >= 0) {
+      lk.unlock();
+      g_turn.acquire();
+      lk.lock();
+      if (cancel) {
+        g_wait.pop_front();
+        g_scv.notify_all();
+        lk.unlock();
+        g_turn.release();
+        return -1;
+      }
       const int s = pick_slot(ids);
       if (s >= 0) {
+        if (m.nslots > 1 && m.kv_paged) {
+          const Slot& sl = g_slots[(size_t)s];
+          size_t lcp = 0;
+          while (lcp < sl.hist.size() && lcp < ids.size() &&
+                 sl.hist[lcp] == ids[lcp])
+            lcp++;
+          const bool cont = !sl.hist.empty() && lcp == sl.hist.size() &&
+                            lcp < ids.size();
+          const int target = kv_admission_target(ids.size(), max_tokens,
+                                                  g_reserve_decode, m.maxctx,
+                                                  KV_PAGE);
+          std::vector<KvAdmissionState> states(g_slots.size());
+          for (size_t index = 0; index < g_slots.size(); index++)
+            states[index] = {g_slots[index].busy && !g_slots[index].abort,
+                             m.slot_pages((int)index), g_slots[index].reserved};
+          const int need = kv_admission_need(target, states[(size_t)s].mapped, cont);
+          const int64_t supply = kv_admission_available(m.kv_pool_pages, states,
+                                                        (size_t)s);
+          if (need > supply) {
+            fprintf(stderr,
+                    "%s req %lld rejected at admission: needs %d pages "
+                    "(%zu prompt tokens + %d reserved decode), only %lld of %d pool "
+                    "pages available to it\n",
+                    log_ts(), req, need, ids.size(),
+                    std::max(0, std::min(max_tokens, g_reserve_decode)),
+                    (long long)supply, m.kv_pool_pages);
+            g_wait.pop_front();
+            g_scv.notify_all();
+            lk.unlock();
+            g_turn.release();
+            return -2;
+          }
+          g_slots[(size_t)s].reserved = target;
+        }
         log_prefix_miss(req, ids, s);
         g_wait.pop_front();
         Slot& sl = g_slots[(size_t)s];
@@ -1945,11 +2020,9 @@ static int slot_admit(const std::vector<int>& ids, const std::atomic<bool>& canc
         g_scv.notify_all();
         return s;
       }
-    }
-    if (cancel) {
-      g_wait.remove(t);
-      g_scv.notify_all();
-      return -1;
+      lk.unlock();
+      g_turn.release();
+      lk.lock();
     }
     g_scv.wait_for(lk, std::chrono::milliseconds(50));
   }
@@ -1959,6 +2032,7 @@ static void slot_leave(int s) {
   {
     std::lock_guard<std::mutex> lk(g_sm);
     g_slots[(size_t)s].busy = false;
+    g_slots[(size_t)s].reserved = 0;
     g_slots[(size_t)s].last_use = ++g_use;
   }
   g_scv.notify_all();
@@ -2118,13 +2192,18 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
       return;
     }
   }
-  const int s = slot_admit(g.ids, cancel, (long long)g.req);
+  const int s = slot_admit(m, g.ids, g.max_tokens, cancel, (long long)g.req);
+  if (s == -2) {
+    fprintf(stderr, "%s serve: req %lld failed: KV pool cannot fit it "
+            "alongside the running request(s)\n", log_ts(), (long long)g.req);
+    finish(err_line());
+    return;
+  }
   if (s < 0) {
     snprintf(db, sizeof db, "D %lld cancel 0 0 0.0 0.0\n", (long long)g.req);
     finish(db);
     return;
   }
-  g_turn.acquire();
   tl_slot = s;
   m.bind(s);
   // Leaving: the slot turns idle while this worker still owns the GPU, so a
@@ -2499,7 +2578,7 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
       if (iv < 1.0) return;
       double el = std::chrono::duration<double>(now - dl_t0).count();
       if (m.live_spec_rounds > 0) {
-        int acc_n = m.live_spec_commits - m.live_spec_rounds;
+        int acc_n = std::max(0, m.live_spec_commits - m.live_spec_rounds);
         fprintf(stderr,
                 "%s req %lld | n_decoded = %d | t = %.0f s | tg = %.1f "
                 "tok/s (avg %.1f) | accept %.1f%% (%d/%d)\n",
@@ -2975,6 +3054,11 @@ static void conn_main(GpuModel& m, sockfd_t cfd, const kvsnap::Cfg& kvs) {
 }
 
 static int run(GpuModel& m, const std::string& host, int port) {
+  if (!kv_admission_decode_cap(getenv("GDEC_KV_RESERVE_DECODE"), g_reserve_decode)) {
+    fprintf(stderr, "serve: GDEC_KV_RESERVE_DECODE must be an integer from 0 to %d\n",
+            INT_MAX);
+    return 2;
+  }
 #ifndef _WIN32
   signal(SIGPIPE, SIG_IGN);
 #endif

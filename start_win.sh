@@ -34,9 +34,11 @@ esac
 
 MODEL_DIR="${MODEL_DIR:-./models}"
 MODEL_FILE="${MODEL_FILE:-$MODEL_DIR/heretic.hgn}"
+# PLE n-gram 表所在文件：默认同 MODEL_FILE（w4b 单文件）；v2 指向独立的 *-ngram.hgn。
+NGRAM_FILE="${NGRAM_FILE:-$MODEL_FILE}"
 MTP_FILE="${MTP_FILE-$MODEL_DIR/heretic-mtp.hgn}"
 VISION_FILE="${VISION_FILE-$MODEL_DIR/heretic-vision.hgn}"
-# 覆盖层（可选的高精度替换张量）：默认空=不叠加；非空但文件不存在则报错。
+# 覆盖层（可选的高精度替换张量）：默认空=不叠加；非空但文件不存在则警告并跳过。
 OVERLAY_FILE="${OVERLAY_FILE-}"
 TOKENIZER_DIR="${TOKENIZER_DIR:-$MODEL_DIR/tokenizer}"
 ENGINE_HOST="${ENGINE_HOST:-127.0.0.1}"
@@ -44,6 +46,11 @@ ENGINE_PORT="${ENGINE_PORT:-8730}"
 API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-8731}"
 MAX_CONTEXT="${MAX_CONTEXT:-262144}"
+ROPE_FACTOR="${ROPE_FACTOR:-1}"
+ROPE_ORIGINAL_CTX="${ROPE_ORIGINAL_CTX:-262144}"
+ROPE_BETA_FAST="${ROPE_BETA_FAST:-32}"
+ROPE_BETA_SLOW="${ROPE_BETA_SLOW:-1}"
+ROPE_ATTN_SCALE="${ROPE_ATTN_SCALE:-0}"
 MTP_GAMMA="${MTP_GAMMA:-0}"
 KVSNAP_MAX_GB="${KVSNAP_MAX_GB:-20}"
 RCKPT_MAX="${RCKPT_MAX:-8}"
@@ -74,13 +81,24 @@ if [[ "$engine_connect_host" == 0.0.0.0 ]]; then engine_connect_host=127.0.0.1; 
 [[ "$KV_POOL_TOKENS" =~ ^(0|[1-9][0-9]*)$ && ${#KV_POOL_TOKENS} -le 8 ]] || fail 'KV_POOL_TOKENS 必须为非负整数'
 [[ "$PARALLEL" =~ ^[1-8]$ ]] || fail 'PARALLEL 范围为 1–8'
 [[ "$MAX_IMAGES" =~ ^[1-9][0-9]*$ && "$MAX_IMAGES" -le 256 ]] || fail 'MAX_IMAGES 范围为 1–256'
+[[ "$ROPE_ORIGINAL_CTX" =~ ^[1-9][0-9]*$ ]] || fail 'ROPE_ORIGINAL_CTX 必须为正整数'
+[[ "$ROPE_FACTOR" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail 'ROPE_FACTOR 必须为非负小数'
+[[ "$ROPE_BETA_FAST" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail 'ROPE_BETA_FAST 必须为非负小数'
+[[ "$ROPE_BETA_SLOW" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail 'ROPE_BETA_SLOW 必须为非负小数'
+[[ "$ROPE_ATTN_SCALE" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail 'ROPE_ATTN_SCALE 必须为非负小数'
+awk "BEGIN { exit !($ROPE_FACTOR >= 1 && $ROPE_BETA_FAST > 0 && $ROPE_BETA_SLOW > 0 && $ROPE_ATTN_SCALE >= 0) }" || \
+  fail 'ROPE_FACTOR 必须 >=1，beta 必须 >0，ROPE_ATTN_SCALE 必须 >=0'
 (( PARALLEL == 1 || KV_PAGED )) || fail 'PARALLEL>1 需要 KV_PAGED=1'
 [[ -f build/gdec-win.exe ]] || fail '缺少 build/gdec-win.exe，请先运行 bash build_win.sh'
 [[ -f build/gdec-api-win.exe ]] || fail '缺少 build/gdec-api-win.exe，请先运行 bash build_win.sh api'
 [[ -r "$MODEL_FILE" ]] || fail "找不到模型：$MODEL_FILE"
+[[ -r "$NGRAM_FILE" ]] || fail "找不到 n-gram 表：$NGRAM_FILE（w4b 与 MODEL_FILE 相同）"
 [[ -z "$MTP_FILE" || -r "$MTP_FILE" ]] || fail "找不到 MTP 权重：$MTP_FILE"
 [[ -z "$VISION_FILE" || -r "$VISION_FILE" ]] || fail "找不到视觉塔：$VISION_FILE（纯文本可设 VISION_FILE=\"\"）"
-[[ -z "$OVERLAY_FILE" || -r "$OVERLAY_FILE" ]] || fail "找不到 overlay：$OVERLAY_FILE（无 overlay 可设 OVERLAY_FILE=\"\"）"
+if [[ -n "$OVERLAY_FILE" && ! -r "$OVERLAY_FILE" ]]; then  # 可选：只警告并跳过
+  echo "警告：找不到 overlay：$OVERLAY_FILE，已跳过（v2 权重不用 overlay；不想看到这条可设 OVERLAY_FILE=\"\"）" >&2
+  OVERLAY_FILE=
+fi
 [[ -r "$TOKENIZER_DIR/tokenizer.json" ]] || fail "找不到 tokenizer：$TOKENIZER_DIR"
 [[ -d build/rocblas/library && -d build/hipblaslt/library ]] || fail '缺少 rocBLAS/hipBLASLt kernel db（build/*/library），请先运行 bash build_win.sh'
 for port in "$ENGINE_PORT" "$API_PORT"; do
@@ -122,12 +140,22 @@ if (( KV_PAGED )); then
 fi
 export GDEC_PARALLEL="$PARALLEL"
 export GDEC_API_MAX_IMAGES="$MAX_IMAGES"
+# Optional R19 policy keys; absent keys leave the engine defaults unchanged.
+for key in SPEC_PRECISION SPEC_SERIAL_ORDER_MR V2_MOE V2_NATIVE_HT V2_DENSE_BACKEND V2_EXPERT_BACKEND V2_HT_ORDERED; do
+  [[ -z "${!key:-}" ]] || export "GDEC_$key=${!key}"
+done
+export GDEC_ROPE_FACTOR="$ROPE_FACTOR"
+export GDEC_ROPE_ORIGINAL_CTX="$ROPE_ORIGINAL_CTX"
+export GDEC_ROPE_BETA_FAST="$ROPE_BETA_FAST"
+export GDEC_ROPE_BETA_SLOW="$ROPE_BETA_SLOW"
+export GDEC_ROPE_ATTN_SCALE="$ROPE_ATTN_SCALE"
 
 mkdir -p logs
 ENGINE_LOG="logs/engine-win-$(date +%Y%m%d-%H%M%S).log"
 
 engine=(build/gdec-win.exe "$MODEL_FILE")
 [[ -z "$OVERLAY_FILE" ]] || engine+=("$OVERLAY_FILE")
+[[ "$NGRAM_FILE" -ef "$MODEL_FILE" ]] || engine+=("$NGRAM_FILE")
 [[ -z "$MTP_FILE" ]] || engine+=("$MTP_FILE")
 engine+=(--serve --host "$ENGINE_HOST" --port "$ENGINE_PORT" --maxctx "$MAX_CONTEXT")
 [[ -z "$VISION_FILE" ]] || engine+=(--vision-tower "$VISION_FILE")
