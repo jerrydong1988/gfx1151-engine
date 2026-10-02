@@ -7,7 +7,7 @@
 This is a research fork of the experimental
 [upstream gfx1151-engine](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine),
 with main development on `codex/halogen-v2-support` and this research on
-`codex/route-quality-r22-20261002`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
+`codex/task-reliability-r23-20261002`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
 Radeon 8060S (gfx1151) / 128 GiB unified memory**: Halogen Flash-Next v2 HGN loading,
 expert and prefill kernels, and numerical alignment between serial and MTP decoding.
 The target remains Qwen3.8-Flash-Next (`qwen4_exp`) and compatible architectures,
@@ -32,6 +32,20 @@ As of the R17 checkpoint (2026-10-02), two paged QSA candidates are available
 but default off. Tool-output failures after normal stopping now report
 `invalid_tool_call` rather than falsely claiming token-budget exhaustion.
 This interface correction does not fix model tool selection or SQL correctness.
+
+## R23: output budgets and independently checked delivery
+
+Optional bounded truncation recovery and source-table verification are added to
+the evaluation client, without changing inference kernels or daily deployment.
+The 16 primary hybrid attempts pass **8/8 with a fixed 8192 cap** and
+**7/8 with adaptive 4096→8192**. A regenerated code answer misses the
+cents scaling for integer amounts despite passing public tests. Recovery is not
+an accuracy guarantee and has not shown a stable speed benefit.
+
+Selected exact B regressions and three A-code repetitions per policy are separate
+from the primary counts. All attempts and costs are retained. The ledger checker
+is contract-specific and is not installed into Octop or adapted to arbitrary XLSX.
+[Protocol, complete outcomes and limits](docs/TASK_RELIABILITY_R23.md).
 
 ## R22: actual tool tasks across hybrid and exact profiles
 

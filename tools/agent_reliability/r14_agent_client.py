@@ -34,6 +34,7 @@ class ToolCallRejected(FatalError):
 
 
 from tool_recovery import ToolRecovery
+from budget_recovery import BudgetRecovery
 
 
 def require(condition, message):
@@ -411,20 +412,38 @@ def execute(args):
                 tools = copy.deepcopy(setup['tools'])
                 allowed = {tool['function']['name'] for tool in tools}
                 recovery = ToolRecovery(getattr(args, 'tool_repair', 0))
+                budget = None
+                if getattr(args, 'budget_monitor', False):
+                    capacity = min(health['context'], health.get('slot_ctx', health['context']))
+                    budget = BudgetRecovery(args.max_tokens,
+                        getattr(args, 'length_retry_max_tokens', 0) or args.max_tokens, capacity)
                 task = {'scenario': scenario, 'repeat': repeat, 'status': 'running', 'success': False,
                         'finish': None, 'started_utc': now(), 'messages': messages, 'turns': [], 'tool_results': []}
                 result['tasks'].append(task)
                 active_task = task
                 task_start = time.perf_counter()
-                agent_finished = None
+                agent_finished = task_start
                 update_owned(output, result)
                 for index in range(1, args.max_turns + 1):
+                    task_output_limit = getattr(args, 'max_task_output_tokens', 0)
+                    generated = sum(t.get('reqstat', t.get('failed_reqstat', {})).get('output_tokens', 0)
+                                    for t in task['turns'])
+                    request_cap = budget.current_tokens if budget else args.max_tokens
+                    wall_limit = getattr(args, 'task_wall_limit_s', 0)
+                    if wall_limit and time.perf_counter() - task_start >= wall_limit:
+                        task['finish'] = 'task_wall_admission_limit'
+                        agent_finished = time.perf_counter()
+                        break
+                    if task_output_limit and generated + request_cap > task_output_limit:
+                        task['finish'] = 'task_output_limit'
+                        agent_finished = time.perf_counter()
+                        break
                     turn_dir = task_dir / f'turn-{index:02d}'
                     turn_dir.mkdir()
                     body = {'model': model, 'messages': copy.deepcopy(messages), 'tools': tools,
                             'tool_choice': 'auto', 'temperature': 0, 'enable_thinking': getattr(args, 'reasoning', 'false') == 'true',
                             'seed': SEED, 'stream': True, 'stream_options': {'include_usage': True},
-                            'max_tokens': args.max_tokens}
+                            'max_tokens': request_cap}
                     turn = {'turn': index, 'artifact_dir': str(turn_dir), 'request_body': body,
                             'messages_sha256': digest(body['messages']), 'request_sha256': digest(body)}
                     task['turns'].append(turn)
@@ -447,8 +466,20 @@ def execute(args):
                                 'artifact_dir': str(turn_dir), 'usage': assembled['usage']}
                         result['records'].append(flat)
                         message = assembled['message']
-                        messages.append(message)
                         finish = assembled['finish_reason']
+                        if finish == 'length' and budget is not None:
+                            remaining = (task_output_limit - generated - raw_record['output_tokens']
+                                         if task_output_limit else budget.maximum_tokens)
+                            turn['budget_decision'] = budget.on_length(raw_record, max(0, remaining))
+                            agent_finished = time.perf_counter()
+                            if turn['budget_decision']['retry']:
+                                # Keep the identical valid history. No partial assistant
+                                # message or tool side effect enters the next request.
+                                turn['budget_decision']['retry_messages_sha256'] = digest(messages)
+                                continue
+                            task['finish'] = turn['budget_decision']['reason']
+                            break
+                        messages.append(message)
                         calls = message.get('tool_calls', [])
                         if finish == 'stop' and not calls:
                             task['finish'] = 'natural_final'
@@ -469,6 +500,10 @@ def execute(args):
                             task['tool_results'].append(entry)
                             messages.append(response)
                         agent_finished = time.perf_counter()
+                        stop_hook = getattr(fixture, 'task_stop_reason', None)
+                        if stop_hook and stop_hook(scenario, run_dir):
+                            task['finish'] = stop_hook(scenario, run_dir)
+                            break
                         # Ordinary successful tool turns receive no extra correction prompt.
                     except ToolCallRejected as error:
                         # Protocol/model failure is a failed task, not failure of the

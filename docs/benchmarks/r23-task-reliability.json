@@ -1,0 +1,5458 @@
+{
+  "schema": "r23-task-reliability-v1",
+  "complete": true,
+  "experiment": {
+    "registered_utc": "2026-10-02T13:12:19.958883+00:00",
+    "started_utc": "2026-10-02T13:12:30.640306+00:00",
+    "completed_utc": "2026-10-02T14:56:24.254447+00:00",
+    "engine_source_commit": "2e68d6845d38bc5e22d8dbdc1877509c310ee427",
+    "engine_sha256": "0db12c2073baf550267519ad0ceec6d275f6a7653c9ebffb76681508ccc23728",
+    "api_sha256": "a4b38906fe189454670929271a37af5f5d0dfb884148af89b77433e5e60f7da0",
+    "client_sources": {
+      "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+      "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+      "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+      "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+      "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+      "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+      "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2",
+      "fixture.py": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+      "task_contracts.py": "82d5e2623409cd333c691bd841efca605b9ba238d317e55e27d67278bdbcac65"
+    },
+    "runner_sha256": "fb0881c414b60705e17bcd54169b4615837bd4b48c09274c6f0a6fed39d16b66",
+    "context_capacity": 131072,
+    "mtp_gamma": 2,
+    "kv": "BF16",
+    "thinking": true,
+    "temperature": 0,
+    "seed": 20261001,
+    "max_turns": 24,
+    "max_task_output_tokens": 65536,
+    "task_wall_admission_limit_s": 1800,
+    "hard_client_timeout_s": 5400,
+    "max_delivery_rejections": 2,
+    "primary_scope": "16 hybrid tasks: 4 instances x 2 families x 2 policies; selected old A/B and unseen D/E",
+    "separate_scope": "2 exact B-office regression tasks; 4 additional hybrid A-code repeat timings; do not pool denominators",
+    "weights_unchanged": true
+  },
+  "weights": [
+    {
+      "filename": "qwen38-flash-next-v2.hgn",
+      "size": 66687678432,
+      "mtime_ns": 1790758296789276600,
+      "first_and_last_MiB_sha256": "82b19c2a3ff63a78925907026d50d2f641aeb26692bd2a37b95c532204e8e474",
+      "hash_scope": "sampled head+tail only, not full-file SHA256"
+    },
+    {
+      "filename": "qwen38-flash-next-ngram.hgn",
+      "size": 51200246144,
+      "mtime_ns": 1790757986588299500,
+      "first_and_last_MiB_sha256": "1a4af18c65b44107bdacf3656d01c4e9b2b039247368619301f179c1b1da4666",
+      "hash_scope": "sampled head+tail only, not full-file SHA256"
+    }
+  ],
+  "profile_env": {
+    "hybrid": {
+      "GDEC_QSA_KV_BF16": "1",
+      "GDEC_QSA_WMMA": "1",
+      "GDEC_QSA_WMMA_BTV": "1",
+      "GDEC_MOE_LT": "1",
+      "GDEC_MOE_LT_BF16": "1",
+      "GDEC_GR_BF16": "1",
+      "GDEC_GDN_STREAM": "1",
+      "GDEC_GDN_WAVE": "1",
+      "GDEC_NOWARMUP": "1",
+      "GDEC_GEMM_WMMA": "1",
+      "GDEC_GDN_FUSED": "1",
+      "GDEC_INDEX_FUSED2": "1",
+      "GDEC_PP_MOE_OUT": "1",
+      "GDEC_INDEX_STREAM_SELECT": "1",
+      "GDEC_KV_PAGED": "1",
+      "GDEC_PREFILL_CHUNK": "8192",
+      "GDEC_RCKPT_MAX": "0",
+      "GDEC_KVSNAP": "0",
+      "GDEC_KVSNAP_MAX_GB": "0",
+      "GDEC_PARALLEL": "1",
+      "GDEC_SPEC_PRECISION": "aligned",
+      "GDEC_SPEC_ADAPT": "0",
+      "GDEC_SPEC_ADAPT_GREEDY": "0",
+      "GDEC_SPEC_QSA_BATCH": "1",
+      "GDEC_MTP_INGEST_KV_ONLY": "1",
+      "GDEC_MTP_INGEST_FUSED": "1",
+      "GDEC_SPEC_SKIP_UNUSED_FINAL": "1",
+      "GDEC_MTP_INGEST_PROFILE": "0",
+      "GDEC_MTP_PREFILL_TAIL": "0",
+      "GDEC_PREFILL_SKIP_INTERMEDIATE_HEAD": "0",
+      "GDEC_V2_MOE_LDS_SYNC": "0",
+      "GDEC_INDEX_SCORE_PAGED": "0",
+      "GDEC_PREFILL_PROFILE": "0",
+      "GDEC_HC_NORM_WAVE": "0",
+      "GDEC_V2_MOE_DEFER_SCALE": "1",
+      "GDEC_GDN_PROFILE": "0",
+      "GDEC_GR_PROFILE": "0",
+      "GDEC_EXPERT_PROFILE": "0",
+      "GDEC_V2_MOE_PERMUTE_Q4": "1",
+      "GDEC_PLE_LOOKAHEAD": "1",
+      "GDEC_SPEC_SERIAL_ORDER_MR": "1",
+      "GDEC_V2_MOE_REDUCE_HAD": "1",
+      "GDEC_V2_MOE_FUSED_GU": "2",
+      "GDEC_MTP_TAP_NORM_FUSED": "1",
+      "GDEC_MTP_BRANCH_STRIDED": "1",
+      "GDEC_SPEC_TRACE": "0",
+      "GDEC_MTP_TAP_NORM_DUAL": "0",
+      "GDEC_IPROJ_SOLUTION": "-711",
+      "GDEC_V2_MOE_GU_DOUBLE_BUFFER": "0",
+      "GDEC_V2_MOE_DOWN_GROUP4": "0",
+      "GDEC_QSA_HEAD_INTERLEAVE": "1",
+      "GDEC_QSA_KV_FUSED": "1",
+      "GDEC_V2_MOE": "grouped",
+      "GDEC_V2_NATIVE_HT": "1",
+      "GDEC_SPEC_GAMMA": "2",
+      "GDEC_V2_DENSE_BACKEND": "upstream",
+      "GDEC_V2_EXPERT_BACKEND": "upstream-prefill",
+      "GDEC_V2_HT_ORDERED": "1",
+      "GDEC_V2_EXACT_REUSE": "0",
+      "GDEC_V2_EXACT_ORDER": "0",
+      "GDEC_V2_EXACT_DATAFLOW": "0",
+      "GDEC_V2_BF16_GEMV": "0",
+      "GDEC_DRAFTER": "mtp",
+      "GDEC_REQSTAT": "1"
+    },
+    "exact": {
+      "GDEC_QSA_KV_BF16": "1",
+      "GDEC_QSA_WMMA": "1",
+      "GDEC_QSA_WMMA_BTV": "1",
+      "GDEC_MOE_LT": "1",
+      "GDEC_MOE_LT_BF16": "1",
+      "GDEC_GR_BF16": "1",
+      "GDEC_GDN_STREAM": "1",
+      "GDEC_GDN_WAVE": "1",
+      "GDEC_NOWARMUP": "1",
+      "GDEC_GEMM_WMMA": "1",
+      "GDEC_GDN_FUSED": "1",
+      "GDEC_INDEX_FUSED2": "1",
+      "GDEC_PP_MOE_OUT": "1",
+      "GDEC_INDEX_STREAM_SELECT": "1",
+      "GDEC_KV_PAGED": "1",
+      "GDEC_PREFILL_CHUNK": "8192",
+      "GDEC_RCKPT_MAX": "0",
+      "GDEC_KVSNAP": "0",
+      "GDEC_KVSNAP_MAX_GB": "0",
+      "GDEC_PARALLEL": "1",
+      "GDEC_SPEC_PRECISION": "aligned",
+      "GDEC_SPEC_ADAPT": "0",
+      "GDEC_SPEC_ADAPT_GREEDY": "0",
+      "GDEC_SPEC_QSA_BATCH": "1",
+      "GDEC_MTP_INGEST_KV_ONLY": "1",
+      "GDEC_MTP_INGEST_FUSED": "1",
+      "GDEC_SPEC_SKIP_UNUSED_FINAL": "1",
+      "GDEC_MTP_INGEST_PROFILE": "0",
+      "GDEC_MTP_PREFILL_TAIL": "0",
+      "GDEC_PREFILL_SKIP_INTERMEDIATE_HEAD": "0",
+      "GDEC_V2_MOE_LDS_SYNC": "0",
+      "GDEC_INDEX_SCORE_PAGED": "0",
+      "GDEC_PREFILL_PROFILE": "0",
+      "GDEC_HC_NORM_WAVE": "0",
+      "GDEC_V2_MOE_DEFER_SCALE": "0",
+      "GDEC_GDN_PROFILE": "0",
+      "GDEC_GR_PROFILE": "0",
+      "GDEC_EXPERT_PROFILE": "0",
+      "GDEC_V2_MOE_PERMUTE_Q4": "0",
+      "GDEC_PLE_LOOKAHEAD": "1",
+      "GDEC_SPEC_SERIAL_ORDER_MR": "1",
+      "GDEC_V2_MOE_REDUCE_HAD": "0",
+      "GDEC_V2_MOE_FUSED_GU": "0",
+      "GDEC_MTP_TAP_NORM_FUSED": "1",
+      "GDEC_MTP_BRANCH_STRIDED": "1",
+      "GDEC_SPEC_TRACE": "0",
+      "GDEC_MTP_TAP_NORM_DUAL": "0",
+      "GDEC_IPROJ_SOLUTION": "-711",
+      "GDEC_V2_MOE_GU_DOUBLE_BUFFER": "0",
+      "GDEC_V2_MOE_DOWN_GROUP4": "0",
+      "GDEC_QSA_HEAD_INTERLEAVE": "1",
+      "GDEC_QSA_KV_FUSED": "1",
+      "GDEC_V2_MOE": "exact",
+      "GDEC_V2_NATIVE_HT": "0",
+      "GDEC_SPEC_GAMMA": "2",
+      "GDEC_V2_EXACT_REUSE": "1",
+      "GDEC_V2_EXACT_ORDER": "1",
+      "GDEC_V2_EXACT_DATAFLOW": "1",
+      "GDEC_V2_BF16_GEMV": "1",
+      "GDEC_DRAFTER": "mtp",
+      "GDEC_REQSTAT": "1"
+    }
+  },
+  "cases": [
+    {
+      "variant": "r22-a",
+      "scenario": "office",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r22-a-office-hybrid-fixed8192-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 274.3986365000019,
+      "requests": 10,
+      "output_tokens": 11257,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T13:17:35.776383+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.026280199992470443,
+      "tools": 16,
+      "processed_prompt_tokens": 58967,
+      "total_prompt_tokens": 549235,
+      "cached_prompt_tokens": 490268,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 69443,
+      "prefill_s": 44.582800000000006,
+      "decode_s": 228.9036,
+      "weighted_fresh_prefill_tps": 1322.6401213023855,
+      "weighted_decode_tps": 49.177907206352366,
+      "request_wall_s": 273.78223409998463,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.12586759999976493,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "c6a77a4cac22fae773e36d0072bad3a448b35086d253b25cf44d111471f8e17b",
+      "fixture_provenance": {
+        "variant": "r22-a",
+        "office_input_sha256": "b239275075471ecc2d61b86a2f45c66cd5548ff0b136ca9b89c0fe8460ff0f23",
+        "office_expected_sha256": "bf09ec85f0ce6837ff0ee207e92b4cce6928cc686008dc781b0061481ffa4ede",
+        "initial_code_sha256": "5a65017f08095c523f8ab985072ba9176c01e7fa31b32b96eeb7b2a1e7687505",
+        "public_code_inputs_sha256": "afb3312be2ce5a5031d63f9cd5aa39c1ce60be86d2714e670b7e5e90a23a65ff",
+        "private_code_inputs_sha256": "6507c69a5712cd541d34d57b06d8090341f7491fd35a179b0c495a59f710594f",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "fdb98c1710ec6c93bf9464849738006b9792063e87eba9388e15a39e966e04f1",
+      "engine_ready_s": 21.084161600010702
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "office",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r22-a-office-hybrid-adaptive4096-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 283.2284101000114,
+      "requests": 10,
+      "output_tokens": 11257,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T13:22:50.448534+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.016406400012783706,
+      "tools": 16,
+      "processed_prompt_tokens": 58967,
+      "total_prompt_tokens": 549235,
+      "cached_prompt_tokens": 490268,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 69443,
+      "prefill_s": 45.1631,
+      "decode_s": 237.0939,
+      "weighted_fresh_prefill_tps": 1305.645538060939,
+      "weighted_decode_tps": 47.47907896407288,
+      "request_wall_s": 282.6179414000071,
+      "initial_cap": 4096,
+      "final_cap": 4096,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.12081879997276701,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "c6a77a4cac22fae773e36d0072bad3a448b35086d253b25cf44d111471f8e17b",
+      "fixture_provenance": {
+        "variant": "r22-a",
+        "office_input_sha256": "b239275075471ecc2d61b86a2f45c66cd5548ff0b136ca9b89c0fe8460ff0f23",
+        "office_expected_sha256": "bf09ec85f0ce6837ff0ee207e92b4cce6928cc686008dc781b0061481ffa4ede",
+        "initial_code_sha256": "5a65017f08095c523f8ab985072ba9176c01e7fa31b32b96eeb7b2a1e7687505",
+        "public_code_inputs_sha256": "afb3312be2ce5a5031d63f9cd5aa39c1ce60be86d2714e670b7e5e90a23a65ff",
+        "private_code_inputs_sha256": "6507c69a5712cd541d34d57b06d8090341f7491fd35a179b0c495a59f710594f",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "2439d3b718aa3801a3eeac31a201018561b8252f180831228055cc35e3bfc11d",
+      "engine_ready_s": 21.081858999998076
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r22-a-code-hybrid-adaptive4096-r1",
+      "success": false,
+      "finish": "natural_final",
+      "task_wall_s": 236.13605870000902,
+      "requests": 8,
+      "output_tokens": 9450,
+      "length_retries": 1,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T13:27:17.758700+00:00",
+      "failure_category": "independent_grading_or_delivery_failure",
+      "hidden_scoring_wall_s": 0.0807656999968458,
+      "tools": 7,
+      "processed_prompt_tokens": 4929,
+      "total_prompt_tokens": 29956,
+      "cached_prompt_tokens": 25027,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 7471,
+      "prefill_s": 6.9073,
+      "decode_s": 228.8328,
+      "weighted_fresh_prefill_tps": 713.5928655190885,
+      "weighted_decode_tps": 41.29652742089421,
+      "request_wall_s": 235.85453020004206,
+      "initial_cap": 4096,
+      "final_cap": 8192,
+      "length_events": [
+        {
+          "turn": 4,
+          "reason": "output_limit_retry",
+          "retried": true,
+          "old_cap": 4096,
+          "discarded_output_tokens": 4096,
+          "discarded_request_wall_s": 114.08005079999566,
+          "discarded_prefill_s": 0.7911,
+          "discarded_decode_s": 113.2681,
+          "tools_dispatched": 0,
+          "new_cap": 8192,
+          "identical_valid_request_except_cap": true,
+          "valid_messages_sha256": "d379ff460e6fd64800a61899a873f38a4cd59e6089a6d43581ab745f935e4dda",
+          "original_cached_tokens": 1872,
+          "regeneration_cached_tokens": 0,
+          "regeneration_output_tokens": 4025,
+          "regeneration_wall_s": 88.23357300000498,
+          "truncated_reasoning_chars": 12211,
+          "reasoning_prefix_preserved": false
+        }
+      ],
+      "discarded_output_tokens": 4096,
+      "discarded_request_wall_s": 114.08005079999566,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": false,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 1,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "cae0df166fb896620be51e60d8e2cd4452feb4cb505a64ac20b7d956deec8d31",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 364,
+        "total": 446,
+        "failures": [
+          {
+            "case_id": "T023",
+            "input": "123457",
+            "expected": {
+              "value": 12345700
+            },
+            "actual": {
+              "type": "int",
+              "value": 123457
+            }
+          },
+          {
+            "case_id": "T026",
+            "input": "246914",
+            "expected": {
+              "value": 24691400
+            },
+            "actual": {
+              "type": "int",
+              "value": 246914
+            }
+          },
+          {
+            "case_id": "T029",
+            "input": "370371",
+            "expected": {
+              "value": 37037100
+            },
+            "actual": {
+              "type": "int",
+              "value": 370371
+            }
+          },
+          {
+            "case_id": "T032",
+            "input": "493828",
+            "expected": {
+              "value": 49382800
+            },
+            "actual": {
+              "type": "int",
+              "value": 493828
+            }
+          },
+          {
+            "case_id": "T035",
+            "input": "617285",
+            "expected": {
+              "value": 61728500
+            },
+            "actual": {
+              "type": "int",
+              "value": 617285
+            }
+          },
+          {
+            "case_id": "T038",
+            "input": "740742",
+            "expected": {
+              "value": 74074200
+            },
+            "actual": {
+              "type": "int",
+              "value": 740742
+            }
+          },
+          {
+            "case_id": "T041",
+            "input": "864199",
+            "expected": {
+              "value": 86419900
+            },
+            "actual": {
+              "type": "int",
+              "value": 864199
+            }
+          },
+          {
+            "case_id": "T044",
+            "input": "987656",
+            "expected": {
+              "value": 98765600
+            },
+            "actual": {
+              "type": "int",
+              "value": 987656
+            }
+          },
+          {
+            "case_id": "T047",
+            "input": "1111113",
+            "expected": {
+              "value": 111111300
+            },
+            "actual": {
+              "type": "int",
+              "value": 1111113
+            }
+          },
+          {
+            "case_id": "T050",
+            "input": "1234570",
+            "expected": {
+              "value": 123457000
+            },
+            "actual": {
+              "type": "int",
+              "value": 1234570
+            }
+          },
+          {
+            "case_id": "T053",
+            "input": "1358027",
+            "expected": {
+              "value": 135802700
+            },
+            "actual": {
+              "type": "int",
+              "value": 1358027
+            }
+          },
+          {
+            "case_id": "T056",
+            "input": "1481484",
+            "expected": {
+              "value": 148148400
+            },
+            "actual": {
+              "type": "int",
+              "value": 1481484
+            }
+          },
+          {
+            "case_id": "T059",
+            "input": "1604941",
+            "expected": {
+              "value": 160494100
+            },
+            "actual": {
+              "type": "int",
+              "value": 1604941
+            }
+          },
+          {
+            "case_id": "T062",
+            "input": "1728398",
+            "expected": {
+              "value": 172839800
+            },
+            "actual": {
+              "type": "int",
+              "value": 1728398
+            }
+          },
+          {
+            "case_id": "T065",
+            "input": "1851855",
+            "expected": {
+              "value": 185185500
+            },
+            "actual": {
+              "type": "int",
+              "value": 1851855
+            }
+          },
+          {
+            "case_id": "T068",
+            "input": "1975312",
+            "expected": {
+              "value": 197531200
+            },
+            "actual": {
+              "type": "int",
+              "value": 1975312
+            }
+          },
+          {
+            "case_id": "T071",
+            "input": "2098769",
+            "expected": {
+              "value": 209876900
+            },
+            "actual": {
+              "type": "int",
+              "value": 2098769
+            }
+          },
+          {
+            "case_id": "T074",
+            "input": "2222226",
+            "expected": {
+              "value": 222222600
+            },
+            "actual": {
+              "type": "int",
+              "value": 2222226
+            }
+          },
+          {
+            "case_id": "T077",
+            "input": "2345683",
+            "expected": {
+              "value": 234568300
+            },
+            "actual": {
+              "type": "int",
+              "value": 2345683
+            }
+          },
+          {
+            "case_id": "T080",
+            "input": "2469140",
+            "expected": {
+              "value": 246914000
+            },
+            "actual": {
+              "type": "int",
+              "value": 2469140
+            }
+          },
+          {
+            "case_id": "T083",
+            "input": "2592597",
+            "expected": {
+              "value": 259259700
+            },
+            "actual": {
+              "type": "int",
+              "value": 2592597
+            }
+          },
+          {
+            "case_id": "T086",
+            "input": "2716054",
+            "expected": {
+              "value": 271605400
+            },
+            "actual": {
+              "type": "int",
+              "value": 2716054
+            }
+          },
+          {
+            "case_id": "T089",
+            "input": "2839511",
+            "expected": {
+              "value": 283951100
+            },
+            "actual": {
+              "type": "int",
+              "value": 2839511
+            }
+          },
+          {
+            "case_id": "T092",
+            "input": "2962968",
+            "expected": {
+              "value": 296296800
+            },
+            "actual": {
+              "type": "int",
+              "value": 2962968
+            }
+          },
+          {
+            "case_id": "T095",
+            "input": "3086425",
+            "expected": {
+              "value": 308642500
+            },
+            "actual": {
+              "type": "int",
+              "value": 3086425
+            }
+          },
+          {
+            "case_id": "T098",
+            "input": "3209882",
+            "expected": {
+              "value": 320988200
+            },
+            "actual": {
+              "type": "int",
+              "value": 3209882
+            }
+          },
+          {
+            "case_id": "T101",
+            "input": "3333339",
+            "expected": {
+              "value": 333333900
+            },
+            "actual": {
+              "type": "int",
+              "value": 3333339
+            }
+          },
+          {
+            "case_id": "T104",
+            "input": "3456796",
+            "expected": {
+              "value": 345679600
+            },
+            "actual": {
+              "type": "int",
+              "value": 3456796
+            }
+          },
+          {
+            "case_id": "T107",
+            "input": "3580253",
+            "expected": {
+              "value": 358025300
+            },
+            "actual": {
+              "type": "int",
+              "value": 3580253
+            }
+          },
+          {
+            "case_id": "T110",
+            "input": "3703710",
+            "expected": {
+              "value": 370371000
+            },
+            "actual": {
+              "type": "int",
+              "value": 3703710
+            }
+          },
+          {
+            "case_id": "T113",
+            "input": "3827167",
+            "expected": {
+              "value": 382716700
+            },
+            "actual": {
+              "type": "int",
+              "value": 3827167
+            }
+          },
+          {
+            "case_id": "T116",
+            "input": "3950624",
+            "expected": {
+              "value": 395062400
+            },
+            "actual": {
+              "type": "int",
+              "value": 3950624
+            }
+          },
+          {
+            "case_id": "T119",
+            "input": "4074081",
+            "expected": {
+              "value": 407408100
+            },
+            "actual": {
+              "type": "int",
+              "value": 4074081
+            }
+          },
+          {
+            "case_id": "T122",
+            "input": "4197538",
+            "expected": {
+              "value": 419753800
+            },
+            "actual": {
+              "type": "int",
+              "value": 4197538
+            }
+          },
+          {
+            "case_id": "T125",
+            "input": "4320995",
+            "expected": {
+              "value": 432099500
+            },
+            "actual": {
+              "type": "int",
+              "value": 4320995
+            }
+          },
+          {
+            "case_id": "T128",
+            "input": "4444452",
+            "expected": {
+              "value": 444445200
+            },
+            "actual": {
+              "type": "int",
+              "value": 4444452
+            }
+          },
+          {
+            "case_id": "T131",
+            "input": "4567909",
+            "expected": {
+              "value": 456790900
+            },
+            "actual": {
+              "type": "int",
+              "value": 4567909
+            }
+          },
+          {
+            "case_id": "T134",
+            "input": "4691366",
+            "expected": {
+              "value": 469136600
+            },
+            "actual": {
+              "type": "int",
+              "value": 4691366
+            }
+          },
+          {
+            "case_id": "T137",
+            "input": "4814823",
+            "expected": {
+              "value": 481482300
+            },
+            "actual": {
+              "type": "int",
+              "value": 4814823
+            }
+          },
+          {
+            "case_id": "T140",
+            "input": "4938280",
+            "expected": {
+              "value": 493828000
+            },
+            "actual": {
+              "type": "int",
+              "value": 4938280
+            }
+          },
+          {
+            "case_id": "T143",
+            "input": "5061737",
+            "expected": {
+              "value": 506173700
+            },
+            "actual": {
+              "type": "int",
+              "value": 5061737
+            }
+          },
+          {
+            "case_id": "T146",
+            "input": "5185194",
+            "expected": {
+              "value": 518519400
+            },
+            "actual": {
+              "type": "int",
+              "value": 5185194
+            }
+          },
+          {
+            "case_id": "T149",
+            "input": "5308651",
+            "expected": {
+              "value": 530865100
+            },
+            "actual": {
+              "type": "int",
+              "value": 5308651
+            }
+          },
+          {
+            "case_id": "T152",
+            "input": "5432108",
+            "expected": {
+              "value": 543210800
+            },
+            "actual": {
+              "type": "int",
+              "value": 5432108
+            }
+          },
+          {
+            "case_id": "T155",
+            "input": "5555565",
+            "expected": {
+              "value": 555556500
+            },
+            "actual": {
+              "type": "int",
+              "value": 5555565
+            }
+          },
+          {
+            "case_id": "T158",
+            "input": "5679022",
+            "expected": {
+              "value": 567902200
+            },
+            "actual": {
+              "type": "int",
+              "value": 5679022
+            }
+          },
+          {
+            "case_id": "T161",
+            "input": "5802479",
+            "expected": {
+              "value": 580247900
+            },
+            "actual": {
+              "type": "int",
+              "value": 5802479
+            }
+          },
+          {
+            "case_id": "T164",
+            "input": "5925936",
+            "expected": {
+              "value": 592593600
+            },
+            "actual": {
+              "type": "int",
+              "value": 5925936
+            }
+          },
+          {
+            "case_id": "T167",
+            "input": "6049393",
+            "expected": {
+              "value": 604939300
+            },
+            "actual": {
+              "type": "int",
+              "value": 6049393
+            }
+          },
+          {
+            "case_id": "T170",
+            "input": "6172850",
+            "expected": {
+              "value": 617285000
+            },
+            "actual": {
+              "type": "int",
+              "value": 6172850
+            }
+          },
+          {
+            "case_id": "T173",
+            "input": "6296307",
+            "expected": {
+              "value": 629630700
+            },
+            "actual": {
+              "type": "int",
+              "value": 6296307
+            }
+          },
+          {
+            "case_id": "T176",
+            "input": "6419764",
+            "expected": {
+              "value": 641976400
+            },
+            "actual": {
+              "type": "int",
+              "value": 6419764
+            }
+          },
+          {
+            "case_id": "T179",
+            "input": "6543221",
+            "expected": {
+              "value": 654322100
+            },
+            "actual": {
+              "type": "int",
+              "value": 6543221
+            }
+          },
+          {
+            "case_id": "T182",
+            "input": "6666678",
+            "expected": {
+              "value": 666667800
+            },
+            "actual": {
+              "type": "int",
+              "value": 6666678
+            }
+          },
+          {
+            "case_id": "T185",
+            "input": "6790135",
+            "expected": {
+              "value": 679013500
+            },
+            "actual": {
+              "type": "int",
+              "value": 6790135
+            }
+          },
+          {
+            "case_id": "T188",
+            "input": "6913592",
+            "expected": {
+              "value": 691359200
+            },
+            "actual": {
+              "type": "int",
+              "value": 6913592
+            }
+          },
+          {
+            "case_id": "T191",
+            "input": "7037049",
+            "expected": {
+              "value": 703704900
+            },
+            "actual": {
+              "type": "int",
+              "value": 7037049
+            }
+          },
+          {
+            "case_id": "T194",
+            "input": "7160506",
+            "expected": {
+              "value": 716050600
+            },
+            "actual": {
+              "type": "int",
+              "value": 7160506
+            }
+          },
+          {
+            "case_id": "T197",
+            "input": "7283963",
+            "expected": {
+              "value": 728396300
+            },
+            "actual": {
+              "type": "int",
+              "value": 7283963
+            }
+          },
+          {
+            "case_id": "T200",
+            "input": "7407420",
+            "expected": {
+              "value": 740742000
+            },
+            "actual": {
+              "type": "int",
+              "value": 7407420
+            }
+          },
+          {
+            "case_id": "T203",
+            "input": "7530877",
+            "expected": {
+              "value": 753087700
+            },
+            "actual": {
+              "type": "int",
+              "value": 7530877
+            }
+          },
+          {
+            "case_id": "T206",
+            "input": "7654334",
+            "expected": {
+              "value": 765433400
+            },
+            "actual": {
+              "type": "int",
+              "value": 7654334
+            }
+          },
+          {
+            "case_id": "T209",
+            "input": "7777791",
+            "expected": {
+              "value": 777779100
+            },
+            "actual": {
+              "type": "int",
+              "value": 7777791
+            }
+          },
+          {
+            "case_id": "T212",
+            "input": "7901248",
+            "expected": {
+              "value": 790124800
+            },
+            "actual": {
+              "type": "int",
+              "value": 7901248
+            }
+          },
+          {
+            "case_id": "T215",
+            "input": "8024705",
+            "expected": {
+              "value": 802470500
+            },
+            "actual": {
+              "type": "int",
+              "value": 8024705
+            }
+          },
+          {
+            "case_id": "T218",
+            "input": "8148162",
+            "expected": {
+              "value": 814816200
+            },
+            "actual": {
+              "type": "int",
+              "value": 8148162
+            }
+          },
+          {
+            "case_id": "T221",
+            "input": "8271619",
+            "expected": {
+              "value": 827161900
+            },
+            "actual": {
+              "type": "int",
+              "value": 8271619
+            }
+          },
+          {
+            "case_id": "T224",
+            "input": "8395076",
+            "expected": {
+              "value": 839507600
+            },
+            "actual": {
+              "type": "int",
+              "value": 8395076
+            }
+          },
+          {
+            "case_id": "T227",
+            "input": "8518533",
+            "expected": {
+              "value": 851853300
+            },
+            "actual": {
+              "type": "int",
+              "value": 8518533
+            }
+          },
+          {
+            "case_id": "T230",
+            "input": "8641990",
+            "expected": {
+              "value": 864199000
+            },
+            "actual": {
+              "type": "int",
+              "value": 8641990
+            }
+          },
+          {
+            "case_id": "T233",
+            "input": "8765447",
+            "expected": {
+              "value": 876544700
+            },
+            "actual": {
+              "type": "int",
+              "value": 8765447
+            }
+          },
+          {
+            "case_id": "T236",
+            "input": "8888904",
+            "expected": {
+              "value": 888890400
+            },
+            "actual": {
+              "type": "int",
+              "value": 8888904
+            }
+          },
+          {
+            "case_id": "T239",
+            "input": "9012361",
+            "expected": {
+              "value": 901236100
+            },
+            "actual": {
+              "type": "int",
+              "value": 9012361
+            }
+          },
+          {
+            "case_id": "T242",
+            "input": "9135818",
+            "expected": {
+              "value": 913581800
+            },
+            "actual": {
+              "type": "int",
+              "value": 9135818
+            }
+          },
+          {
+            "case_id": "T245",
+            "input": "9259275",
+            "expected": {
+              "value": 925927500
+            },
+            "actual": {
+              "type": "int",
+              "value": 9259275
+            }
+          },
+          {
+            "case_id": "T248",
+            "input": "9382732",
+            "expected": {
+              "value": 938273200
+            },
+            "actual": {
+              "type": "int",
+              "value": 9382732
+            }
+          },
+          {
+            "case_id": "T251",
+            "input": "9506189",
+            "expected": {
+              "value": 950618900
+            },
+            "actual": {
+              "type": "int",
+              "value": 9506189
+            }
+          },
+          {
+            "case_id": "T254",
+            "input": "9629646",
+            "expected": {
+              "value": 962964600
+            },
+            "actual": {
+              "type": "int",
+              "value": 9629646
+            }
+          },
+          {
+            "case_id": "T257",
+            "input": "9753103",
+            "expected": {
+              "value": 975310300
+            },
+            "actual": {
+              "type": "int",
+              "value": 9753103
+            }
+          },
+          {
+            "case_id": "T260",
+            "input": "9876560",
+            "expected": {
+              "value": 987656000
+            },
+            "actual": {
+              "type": "int",
+              "value": 9876560
+            }
+          },
+          {
+            "case_id": "T283",
+            "input": "1000000000",
+            "expected": {
+              "error": "ValueError"
+            },
+            "actual": {
+              "type": "int",
+              "value": 1000000000
+            }
+          },
+          {
+            "case_id": "T284",
+            "input": "-1000000000",
+            "expected": {
+              "error": "ValueError"
+            },
+            "actual": {
+              "type": "int",
+              "value": -1000000000
+            }
+          }
+        ],
+        "float_or_round_present": false,
+        "success": false
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": false,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [
+        "private_contract_cases_pass"
+      ],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "da7392d652908b1b49173c0c09162547221f0eb70d62ebc5dfcd9eb29ce75576",
+      "fixture_provenance": {
+        "variant": "r22-a",
+        "office_input_sha256": "b239275075471ecc2d61b86a2f45c66cd5548ff0b136ca9b89c0fe8460ff0f23",
+        "office_expected_sha256": "bf09ec85f0ce6837ff0ee207e92b4cce6928cc686008dc781b0061481ffa4ede",
+        "initial_code_sha256": "5a65017f08095c523f8ab985072ba9176c01e7fa31b32b96eeb7b2a1e7687505",
+        "public_code_inputs_sha256": "afb3312be2ce5a5031d63f9cd5aa39c1ce60be86d2714e670b7e5e90a23a65ff",
+        "private_code_inputs_sha256": "6507c69a5712cd541d34d57b06d8090341f7491fd35a179b0c495a59f710594f",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "9ed74dc26716228613d871994105df5c91140e6a5e3378f1797cf12cfacbeab8",
+      "engine_ready_s": 21.083548800001154
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r22-a-code-hybrid-fixed8192-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 140.30922120000469,
+      "requests": 8,
+      "output_tokens": 6484,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T13:30:09.230857+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.07360390000394545,
+      "tools": 8,
+      "processed_prompt_tokens": 2629,
+      "total_prompt_tokens": 38034,
+      "cached_prompt_tokens": 35405,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 8795,
+      "prefill_s": 4.9578,
+      "decode_s": 134.9582,
+      "weighted_fresh_prefill_tps": 530.2755254346687,
+      "weighted_decode_tps": 48.04450563211424,
+      "request_wall_s": 140.01914560000296,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 2,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "08f6b2b2b22cd32c487b3a10144565bdada50d135c85e85f71b2bd88b6ef01dd",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 446,
+        "total": 446,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": true,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "4b450236804e776c271800c594f5cd6124405ce4b33da4670aa3bff5e9a38c15",
+      "fixture_provenance": {
+        "variant": "r22-a",
+        "office_input_sha256": "b239275075471ecc2d61b86a2f45c66cd5548ff0b136ca9b89c0fe8460ff0f23",
+        "office_expected_sha256": "bf09ec85f0ce6837ff0ee207e92b4cce6928cc686008dc781b0061481ffa4ede",
+        "initial_code_sha256": "5a65017f08095c523f8ab985072ba9176c01e7fa31b32b96eeb7b2a1e7687505",
+        "public_code_inputs_sha256": "afb3312be2ce5a5031d63f9cd5aa39c1ce60be86d2714e670b7e5e90a23a65ff",
+        "private_code_inputs_sha256": "6507c69a5712cd541d34d57b06d8090341f7491fd35a179b0c495a59f710594f",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "769931beb3f9c11ed35416f280b9f2200a5ec4e8f3e2d2700d6dde6c2579f2d2",
+      "engine_ready_s": 21.079977699992014
+    },
+    {
+      "variant": "r22-b",
+      "scenario": "office",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r22-b-office-hybrid-adaptive4096-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 302.1884882999875,
+      "requests": 11,
+      "output_tokens": 12262,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T13:35:42.616041+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.026408899982925504,
+      "tools": 17,
+      "processed_prompt_tokens": 59749,
+      "total_prompt_tokens": 621929,
+      "cached_prompt_tokens": 562180,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 71354,
+      "prefill_s": 45.6059,
+      "decode_s": 255.6272,
+      "weighted_fresh_prefill_tps": 1310.115577151202,
+      "weighted_decode_tps": 47.96829132424093,
+      "request_wall_s": 301.58399930005544,
+      "initial_cap": 4096,
+      "final_cap": 4096,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.11003890002029948,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [
+        {
+          "turn": 8,
+          "tool": "query_ledger",
+          "code": null,
+          "error_type": "OperationalError",
+          "category": "ordinary_tool_error"
+        }
+      ],
+      "ordinary_tool_errors": 1,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "d6eba5a75ccd5a4ac6777dcbae9d434095183884528474c2cec010deae5275ce",
+      "fixture_provenance": {
+        "variant": "r22-b",
+        "office_input_sha256": "d886c47ce3ebb1ac3805cdab0e471d2c7de66fb5cd259580b4cafab6193e0a6f",
+        "office_expected_sha256": "cbe8c5c67576b04ce6394e30b64aa5649cb55f78eae8e856ef4f71d561062bd2",
+        "initial_code_sha256": "63a4941bc84fd94861c4498ab2323a0af04fe97320916868c92d7ca72bb6750c",
+        "public_code_inputs_sha256": "8558dd247564359e3b0a5500dad1f239fa6ede3f2b78720e7c2ffd04d13a900d",
+        "private_code_inputs_sha256": "53a102b14a0de5c6d099712e8d5f9ba475aae11e7c85f6dab05ba9bd89d13d2c",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "366acec9bfd2a8977283aaea38336f66de203bc2f110f53aaff3a4a4d059db44",
+      "engine_ready_s": 21.09382980002556
+    },
+    {
+      "variant": "r22-b",
+      "scenario": "office",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r22-b-office-hybrid-fixed8192-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 298.9930277999956,
+      "requests": 11,
+      "output_tokens": 12262,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T13:41:12.702243+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.01622530000167899,
+      "tools": 17,
+      "processed_prompt_tokens": 59749,
+      "total_prompt_tokens": 621929,
+      "cached_prompt_tokens": 562180,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 71354,
+      "prefill_s": 45.7259,
+      "decode_s": 252.2303,
+      "weighted_fresh_prefill_tps": 1306.677397273755,
+      "weighted_decode_tps": 48.61430208821066,
+      "request_wall_s": 298.29179990000557,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.10976179997669533,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [
+        {
+          "turn": 8,
+          "tool": "query_ledger",
+          "code": null,
+          "error_type": "OperationalError",
+          "category": "ordinary_tool_error"
+        }
+      ],
+      "ordinary_tool_errors": 1,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "d6eba5a75ccd5a4ac6777dcbae9d434095183884528474c2cec010deae5275ce",
+      "fixture_provenance": {
+        "variant": "r22-b",
+        "office_input_sha256": "d886c47ce3ebb1ac3805cdab0e471d2c7de66fb5cd259580b4cafab6193e0a6f",
+        "office_expected_sha256": "cbe8c5c67576b04ce6394e30b64aa5649cb55f78eae8e856ef4f71d561062bd2",
+        "initial_code_sha256": "63a4941bc84fd94861c4498ab2323a0af04fe97320916868c92d7ca72bb6750c",
+        "public_code_inputs_sha256": "8558dd247564359e3b0a5500dad1f239fa6ede3f2b78720e7c2ffd04d13a900d",
+        "private_code_inputs_sha256": "53a102b14a0de5c6d099712e8d5f9ba475aae11e7c85f6dab05ba9bd89d13d2c",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "053bfc744407dd0c5d429ae6c6968da0583bedf5b3b384b89e706805a872d2e4",
+      "engine_ready_s": 21.063258099980885
+    },
+    {
+      "variant": "r22-b",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r22-b-code-hybrid-fixed8192-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 184.88420929998392,
+      "requests": 7,
+      "output_tokens": 8152,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T13:44:48.670621+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.09104109997861087,
+      "tools": 7,
+      "processed_prompt_tokens": 2518,
+      "total_prompt_tokens": 40067,
+      "cached_prompt_tokens": 37549,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 10206,
+      "prefill_s": 4.6653,
+      "decode_s": 179.8928,
+      "weighted_fresh_prefill_tps": 539.7294922084325,
+      "weighted_decode_tps": 45.315877011197784,
+      "request_wall_s": 184.6504086999921,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 1,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "b5210c58e7231684b7012905b295bbeba207fffe6a199bb98baae13cf8ecb20b",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 446,
+        "total": 446,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": true,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "48f575c7fde1efed534452f4350a31cf5c19eacdebe4e89d44fd9a6dfc9e6620",
+      "fixture_provenance": {
+        "variant": "r22-b",
+        "office_input_sha256": "d886c47ce3ebb1ac3805cdab0e471d2c7de66fb5cd259580b4cafab6193e0a6f",
+        "office_expected_sha256": "cbe8c5c67576b04ce6394e30b64aa5649cb55f78eae8e856ef4f71d561062bd2",
+        "initial_code_sha256": "63a4941bc84fd94861c4498ab2323a0af04fe97320916868c92d7ca72bb6750c",
+        "public_code_inputs_sha256": "8558dd247564359e3b0a5500dad1f239fa6ede3f2b78720e7c2ffd04d13a900d",
+        "private_code_inputs_sha256": "53a102b14a0de5c6d099712e8d5f9ba475aae11e7c85f6dab05ba9bd89d13d2c",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "82a377a423ba43f9101a575d33fd38e63eeebed8ebfbf085c10d0c028dbbb256",
+      "engine_ready_s": 21.08633920000284
+    },
+    {
+      "variant": "r22-b",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r22-b-code-hybrid-adaptive4096-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 185.00561160000507,
+      "requests": 7,
+      "output_tokens": 8152,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T13:48:24.816384+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.09332760001416318,
+      "tools": 7,
+      "processed_prompt_tokens": 2518,
+      "total_prompt_tokens": 40067,
+      "cached_prompt_tokens": 37549,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 10206,
+      "prefill_s": 4.747,
+      "decode_s": 179.9263,
+      "weighted_fresh_prefill_tps": 530.4402780703603,
+      "weighted_decode_tps": 45.30743976839406,
+      "request_wall_s": 184.74883199995384,
+      "initial_cap": 4096,
+      "final_cap": 4096,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 1,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "b5210c58e7231684b7012905b295bbeba207fffe6a199bb98baae13cf8ecb20b",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 446,
+        "total": 446,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": true,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "48f575c7fde1efed534452f4350a31cf5c19eacdebe4e89d44fd9a6dfc9e6620",
+      "fixture_provenance": {
+        "variant": "r22-b",
+        "office_input_sha256": "d886c47ce3ebb1ac3805cdab0e471d2c7de66fb5cd259580b4cafab6193e0a6f",
+        "office_expected_sha256": "cbe8c5c67576b04ce6394e30b64aa5649cb55f78eae8e856ef4f71d561062bd2",
+        "initial_code_sha256": "63a4941bc84fd94861c4498ab2323a0af04fe97320916868c92d7ca72bb6750c",
+        "public_code_inputs_sha256": "8558dd247564359e3b0a5500dad1f239fa6ede3f2b78720e7c2ffd04d13a900d",
+        "private_code_inputs_sha256": "53a102b14a0de5c6d099712e8d5f9ba475aae11e7c85f6dab05ba9bd89d13d2c",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "b2a47d3b7091e2a0c3dee521a5b9b69447dff0895e92c6acf58f1acd2ce07790",
+      "engine_ready_s": 21.0722558000125
+    },
+    {
+      "variant": "r23-d",
+      "scenario": "office",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r23-d-office-hybrid-fixed8192-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 248.26599840002018,
+      "requests": 12,
+      "output_tokens": 9756,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T13:53:04.384371+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.028870900016045198,
+      "tools": 20,
+      "processed_prompt_tokens": 60263,
+      "total_prompt_tokens": 669728,
+      "cached_prompt_tokens": 609465,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 69351,
+      "prefill_s": 46.7765,
+      "decode_s": 200.35,
+      "weighted_fresh_prefill_tps": 1288.3178519128196,
+      "weighted_decode_tps": 48.694784127776394,
+      "request_wall_s": 247.46561210005893,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.14174700001603924,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [
+        {
+          "turn": 3,
+          "tool": "query_ledger",
+          "code": null,
+          "error_type": "OperationalError",
+          "category": "ordinary_tool_error"
+        },
+        {
+          "turn": 4,
+          "tool": "query_ledger",
+          "code": null,
+          "error_type": "DatabaseError",
+          "category": "ordinary_tool_error"
+        }
+      ],
+      "ordinary_tool_errors": 2,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "ad2791e13731ad059b583e8c715a98e02d68deb6ea24546aa20f122ff56a5474",
+      "fixture_provenance": {
+        "variant": "r23-d",
+        "office_input_sha256": "536f1cce9523d7b66eda910f4668f4822d1d4aaba41490b4232c717838184a92",
+        "office_expected_sha256": "0598d558fff304d16c5142610ca5e6be2af975b1b5135fc71ef0cd188307f0e2",
+        "initial_code_sha256": "0ce095e5b147867c9f43b8c86d0325ce6faae49bf39f9b6814dfd2d4f20de6dc",
+        "public_code_inputs_sha256": "277e992c1647e4288e9012cc1cae537e322aa404e2885e7e9c45740182c3adbe",
+        "private_code_inputs_sha256": "c49bcc855f3f9713be9a111fd759b771a33deab8eb393a332ff454df2b5d7f15",
+        "private_case_count": 545,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "1234fda934295c8f1f795c55d45dd59932eb69025d06a31b7836f5999bdf39cc",
+      "engine_ready_s": 21.08331950000138
+    },
+    {
+      "variant": "r23-d",
+      "scenario": "office",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r23-d-office-hybrid-adaptive4096-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 250.3380729999917,
+      "requests": 12,
+      "output_tokens": 9756,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:02:47.420604+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.017923400009749457,
+      "tools": 20,
+      "processed_prompt_tokens": 60263,
+      "total_prompt_tokens": 669728,
+      "cached_prompt_tokens": 609465,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 69351,
+      "prefill_s": 46.9887,
+      "decode_s": 201.87679999999997,
+      "weighted_fresh_prefill_tps": 1282.4998350667288,
+      "weighted_decode_tps": 48.32650408566017,
+      "request_wall_s": 249.20192509994376,
+      "initial_cap": 4096,
+      "final_cap": 4096,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.10620149999158457,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [
+        {
+          "turn": 3,
+          "tool": "query_ledger",
+          "code": null,
+          "error_type": "OperationalError",
+          "category": "ordinary_tool_error"
+        },
+        {
+          "turn": 4,
+          "tool": "query_ledger",
+          "code": null,
+          "error_type": "DatabaseError",
+          "category": "ordinary_tool_error"
+        }
+      ],
+      "ordinary_tool_errors": 2,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "ad2791e13731ad059b583e8c715a98e02d68deb6ea24546aa20f122ff56a5474",
+      "fixture_provenance": {
+        "variant": "r23-d",
+        "office_input_sha256": "536f1cce9523d7b66eda910f4668f4822d1d4aaba41490b4232c717838184a92",
+        "office_expected_sha256": "0598d558fff304d16c5142610ca5e6be2af975b1b5135fc71ef0cd188307f0e2",
+        "initial_code_sha256": "0ce095e5b147867c9f43b8c86d0325ce6faae49bf39f9b6814dfd2d4f20de6dc",
+        "public_code_inputs_sha256": "277e992c1647e4288e9012cc1cae537e322aa404e2885e7e9c45740182c3adbe",
+        "private_code_inputs_sha256": "c49bcc855f3f9713be9a111fd759b771a33deab8eb393a332ff454df2b5d7f15",
+        "private_case_count": 545,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "fd27a9e0b5bad8fd7d6ef126440512677c503d749fc19d3dea60a0a7d514fd03",
+      "engine_ready_s": 322.4974127000023
+    },
+    {
+      "variant": "r23-d",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r23-d-code-hybrid-adaptive4096-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 125.57497089999379,
+      "requests": 7,
+      "output_tokens": 5667,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:07:50.074646+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.060808499983977526,
+      "tools": 7,
+      "processed_prompt_tokens": 2552,
+      "total_prompt_tokens": 30696,
+      "cached_prompt_tokens": 28144,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 7728,
+      "prefill_s": 4.5995,
+      "decode_s": 120.609,
+      "weighted_fresh_prefill_tps": 554.8429177084466,
+      "weighted_decode_tps": 46.9865432927891,
+      "request_wall_s": 125.29087759996764,
+      "initial_cap": 4096,
+      "final_cap": 4096,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 1,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "af1fa8fc0e6ed9c9d79bf3a25bb3c8c809432530630bb3baed71124f9715d24e",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 545,
+        "total": 545,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": true,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "5023da79d4da597022d910f83e74ffaa2fdf021e0090277c1c8a0b45558c435d",
+      "fixture_provenance": {
+        "variant": "r23-d",
+        "office_input_sha256": "536f1cce9523d7b66eda910f4668f4822d1d4aaba41490b4232c717838184a92",
+        "office_expected_sha256": "0598d558fff304d16c5142610ca5e6be2af975b1b5135fc71ef0cd188307f0e2",
+        "initial_code_sha256": "0ce095e5b147867c9f43b8c86d0325ce6faae49bf39f9b6814dfd2d4f20de6dc",
+        "public_code_inputs_sha256": "277e992c1647e4288e9012cc1cae537e322aa404e2885e7e9c45740182c3adbe",
+        "private_code_inputs_sha256": "c49bcc855f3f9713be9a111fd759b771a33deab8eb393a332ff454df2b5d7f15",
+        "private_case_count": 545,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "811492c177a60b8f9a7c6c6ee628daf80781e91e5ae06f3f22a0cc639b5821ee",
+      "engine_ready_s": 167.04169069998898
+    },
+    {
+      "variant": "r23-d",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r23-d-code-hybrid-fixed8192-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 126.72869359998731,
+      "requests": 7,
+      "output_tokens": 5667,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:10:27.836827+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.05903850001050159,
+      "tools": 7,
+      "processed_prompt_tokens": 2552,
+      "total_prompt_tokens": 30696,
+      "cached_prompt_tokens": 28144,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 7728,
+      "prefill_s": 4.5935,
+      "decode_s": 121.58919999999999,
+      "weighted_fresh_prefill_tps": 555.5676499401328,
+      "weighted_decode_tps": 46.60775792586842,
+      "request_wall_s": 126.26329950001673,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 1,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "af1fa8fc0e6ed9c9d79bf3a25bb3c8c809432530630bb3baed71124f9715d24e",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 545,
+        "total": 545,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": true,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "5023da79d4da597022d910f83e74ffaa2fdf021e0090277c1c8a0b45558c435d",
+      "fixture_provenance": {
+        "variant": "r23-d",
+        "office_input_sha256": "536f1cce9523d7b66eda910f4668f4822d1d4aaba41490b4232c717838184a92",
+        "office_expected_sha256": "0598d558fff304d16c5142610ca5e6be2af975b1b5135fc71ef0cd188307f0e2",
+        "initial_code_sha256": "0ce095e5b147867c9f43b8c86d0325ce6faae49bf39f9b6814dfd2d4f20de6dc",
+        "public_code_inputs_sha256": "277e992c1647e4288e9012cc1cae537e322aa404e2885e7e9c45740182c3adbe",
+        "private_code_inputs_sha256": "c49bcc855f3f9713be9a111fd759b771a33deab8eb393a332ff454df2b5d7f15",
+        "private_case_count": 545,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "3a0665e97bcc2644f88e9f9025e271a17e6fc6b4fe2c4ed75f83eb1417c7bfe6",
+      "engine_ready_s": 21.084021699993173
+    },
+    {
+      "variant": "r23-e",
+      "scenario": "office",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r23-e-office-hybrid-adaptive4096-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 224.06815069998265,
+      "requests": 12,
+      "output_tokens": 8743,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:16:40.790845+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.026128500001505017,
+      "tools": 18,
+      "processed_prompt_tokens": 59585,
+      "total_prompt_tokens": 666963,
+      "cached_prompt_tokens": 607378,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 67761,
+      "prefill_s": 46.000099999999996,
+      "decode_s": 176.929799,
+      "weighted_fresh_prefill_tps": 1295.3232710363675,
+      "weighted_decode_tps": 49.41507902803868,
+      "request_wall_s": 223.3122476999415,
+      "initial_cap": 4096,
+      "final_cap": 4096,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.12274829999660142,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [
+        {
+          "turn": 9,
+          "tool": "query_ledger",
+          "code": null,
+          "error_type": "OperationalError",
+          "category": "ordinary_tool_error"
+        }
+      ],
+      "ordinary_tool_errors": 1,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "6ab59b6654110fb617e9e842b8be04b7fa0bd5234788d488d19ce83e08701d17",
+      "fixture_provenance": {
+        "variant": "r23-e",
+        "office_input_sha256": "62c9e430eeb948dbcf1da8cbb4e531cae97b25c5be4faa63a306df1966f0b4e9",
+        "office_expected_sha256": "53569abdbbdebc5bcc97e9e686bf6d12c02ded3e69a36b49d7ee4da2d940c2b9",
+        "initial_code_sha256": "9894dce66d5d06f3dbf652e7172dd417384cf73bd7ba653b9d457815e655ec03",
+        "public_code_inputs_sha256": "92b51b90ed8d0865feb05df4fc7dc75362eace680975ca6c6bbebacef8a1146b",
+        "private_code_inputs_sha256": "bedd10d269240629baa739f31bc62e52c7ace160fae400101ddd457d017c9a1c",
+        "private_case_count": 545,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "eb40a82272e2b4ba7c5311a234ddb6821aca95173f18091ecbf15a34f2436f75",
+      "engine_ready_s": 135.48123679999844
+    },
+    {
+      "variant": "r23-e",
+      "scenario": "office",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r23-e-office-hybrid-fixed8192-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 225.24097399998573,
+      "requests": 12,
+      "output_tokens": 8743,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:20:57.244366+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.016437899990705773,
+      "tools": 18,
+      "processed_prompt_tokens": 59585,
+      "total_prompt_tokens": 666963,
+      "cached_prompt_tokens": 607378,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 67761,
+      "prefill_s": 45.75,
+      "decode_s": 178.345999,
+      "weighted_fresh_prefill_tps": 1302.4043715846994,
+      "weighted_decode_tps": 49.02268651398229,
+      "request_wall_s": 224.50879679992795,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.1323938999848906,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [
+        {
+          "turn": 9,
+          "tool": "query_ledger",
+          "code": null,
+          "error_type": "OperationalError",
+          "category": "ordinary_tool_error"
+        }
+      ],
+      "ordinary_tool_errors": 1,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "6ab59b6654110fb617e9e842b8be04b7fa0bd5234788d488d19ce83e08701d17",
+      "fixture_provenance": {
+        "variant": "r23-e",
+        "office_input_sha256": "62c9e430eeb948dbcf1da8cbb4e531cae97b25c5be4faa63a306df1966f0b4e9",
+        "office_expected_sha256": "53569abdbbdebc5bcc97e9e686bf6d12c02ded3e69a36b49d7ee4da2d940c2b9",
+        "initial_code_sha256": "9894dce66d5d06f3dbf652e7172dd417384cf73bd7ba653b9d457815e655ec03",
+        "public_code_inputs_sha256": "92b51b90ed8d0865feb05df4fc7dc75362eace680975ca6c6bbebacef8a1146b",
+        "private_code_inputs_sha256": "bedd10d269240629baa739f31bc62e52c7ace160fae400101ddd457d017c9a1c",
+        "private_case_count": 545,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "d762dc7c840ed93b270aee3065356243e296b0fec05fa55a8bd5da6703621e1c",
+      "engine_ready_s": 21.081203899986576
+    },
+    {
+      "variant": "r23-e",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r23-e-code-hybrid-fixed8192-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 83.323786700028,
+      "requests": 7,
+      "output_tokens": 3634,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:22:51.704818+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.05790970000089146,
+      "tools": 7,
+      "processed_prompt_tokens": 2619,
+      "total_prompt_tokens": 25856,
+      "cached_prompt_tokens": 23237,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 5832,
+      "prefill_s": 4.693,
+      "decode_s": 78.2462,
+      "weighted_fresh_prefill_tps": 558.0652034945664,
+      "weighted_decode_tps": 46.44314995488599,
+      "request_wall_s": 83.05268620006973,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 1,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "479471f950e60ffbd0767de5fa8309f3dce656797802104af41817d03dabb6fd",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 545,
+        "total": 545,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": true,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "0bd3f07687cd64814bec78b8d6a2a55c4cfdde64f43ab83621d2af7dab3b6e94",
+      "fixture_provenance": {
+        "variant": "r23-e",
+        "office_input_sha256": "62c9e430eeb948dbcf1da8cbb4e531cae97b25c5be4faa63a306df1966f0b4e9",
+        "office_expected_sha256": "53569abdbbdebc5bcc97e9e686bf6d12c02ded3e69a36b49d7ee4da2d940c2b9",
+        "initial_code_sha256": "9894dce66d5d06f3dbf652e7172dd417384cf73bd7ba653b9d457815e655ec03",
+        "public_code_inputs_sha256": "92b51b90ed8d0865feb05df4fc7dc75362eace680975ca6c6bbebacef8a1146b",
+        "private_code_inputs_sha256": "bedd10d269240629baa739f31bc62e52c7ace160fae400101ddd457d017c9a1c",
+        "private_case_count": 545,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "ecb12cccd2670e01485f83f7bdde14d006106bf63ef5024f6b563801b4e70956",
+      "engine_ready_s": 21.0831135000044
+    },
+    {
+      "variant": "r23-e",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 1,
+      "phase": "primary",
+      "tag": "r23-e-code-hybrid-adaptive4096-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 82.80070369999157,
+      "requests": 7,
+      "output_tokens": 3634,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:24:45.606451+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.08546770000248216,
+      "tools": 7,
+      "processed_prompt_tokens": 2619,
+      "total_prompt_tokens": 25856,
+      "cached_prompt_tokens": 23237,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 5832,
+      "prefill_s": 4.665900000000001,
+      "decode_s": 77.8204,
+      "weighted_fresh_prefill_tps": 561.3065003536294,
+      "weighted_decode_tps": 46.69726704051894,
+      "request_wall_s": 82.54250880001928,
+      "initial_cap": 4096,
+      "final_cap": 4096,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 1,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "479471f950e60ffbd0767de5fa8309f3dce656797802104af41817d03dabb6fd",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 545,
+        "total": 545,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": true,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "0bd3f07687cd64814bec78b8d6a2a55c4cfdde64f43ab83621d2af7dab3b6e94",
+      "fixture_provenance": {
+        "variant": "r23-e",
+        "office_input_sha256": "62c9e430eeb948dbcf1da8cbb4e531cae97b25c5be4faa63a306df1966f0b4e9",
+        "office_expected_sha256": "53569abdbbdebc5bcc97e9e686bf6d12c02ded3e69a36b49d7ee4da2d940c2b9",
+        "initial_code_sha256": "9894dce66d5d06f3dbf652e7172dd417384cf73bd7ba653b9d457815e655ec03",
+        "public_code_inputs_sha256": "92b51b90ed8d0865feb05df4fc7dc75362eace680975ca6c6bbebacef8a1146b",
+        "private_code_inputs_sha256": "bedd10d269240629baa739f31bc62e52c7ace160fae400101ddd457d017c9a1c",
+        "private_case_count": 545,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "9939149767159973da99caa9f3bdbeb1c7a8e64a3456e4ab2a37934d87930336",
+      "engine_ready_s": 21.09729769997648
+    },
+    {
+      "variant": "r22-b",
+      "scenario": "office",
+      "arm": "exact",
+      "policy": "adaptive4096",
+      "repeat": 1,
+      "phase": "exact_regression",
+      "tag": "r22-b-office-exact-adaptive4096-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 500.04294919999666,
+      "requests": 12,
+      "output_tokens": 10683,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:33:39.921668+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.02341069999965839,
+      "tools": 18,
+      "processed_prompt_tokens": 59756,
+      "total_prompt_tokens": 668370,
+      "cached_prompt_tokens": 608614,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 69804,
+      "prefill_s": 91.886999,
+      "decode_s": 407.0481,
+      "weighted_fresh_prefill_tps": 650.3205094335489,
+      "weighted_decode_tps": 26.24505555977291,
+      "request_wall_s": 499.27480240000295,
+      "initial_cap": 4096,
+      "final_cap": 4096,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.15245249998406507,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "324b21ccd97743cc2bdef0f97720f7144a6317e59750565a8d8151a7c118fb88",
+      "fixture_provenance": {
+        "variant": "r22-b",
+        "office_input_sha256": "d886c47ce3ebb1ac3805cdab0e471d2c7de66fb5cd259580b4cafab6193e0a6f",
+        "office_expected_sha256": "cbe8c5c67576b04ce6394e30b64aa5649cb55f78eae8e856ef4f71d561062bd2",
+        "initial_code_sha256": "63a4941bc84fd94861c4498ab2323a0af04fe97320916868c92d7ca72bb6750c",
+        "public_code_inputs_sha256": "8558dd247564359e3b0a5500dad1f239fa6ede3f2b78720e7c2ffd04d13a900d",
+        "private_code_inputs_sha256": "53a102b14a0de5c6d099712e8d5f9ba475aae11e7c85f6dab05ba9bd89d13d2c",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "f176ed44c6ce28dc56b8a1fe1776754a6add04469f5e0135422e49488b875cca",
+      "engine_ready_s": 24.06720160000259
+    },
+    {
+      "variant": "r22-b",
+      "scenario": "office",
+      "arm": "exact",
+      "policy": "fixed8192",
+      "repeat": 1,
+      "phase": "exact_regression",
+      "tag": "r22-b-office-exact-fixed8192-r1",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 506.5814446999866,
+      "requests": 12,
+      "output_tokens": 10683,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:42:40.712843+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.021351700008381158,
+      "tools": 18,
+      "processed_prompt_tokens": 59756,
+      "total_prompt_tokens": 668370,
+      "cached_prompt_tokens": 608614,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 69804,
+      "prefill_s": 92.31530000000001,
+      "decode_s": 412.75620000000004,
+      "weighted_fresh_prefill_tps": 647.3033180848678,
+      "weighted_decode_tps": 25.8821066770166,
+      "request_wall_s": 505.7538399999612,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0.12142179999500513,
+      "first_delivery_accepted": true,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 0,
+      "baseline_expected_test_failures": 0,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": null,
+      "private_code_tests": null,
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "complete_invoices_and_payments_read": true,
+        "actual_read_only_SQL_executed": true,
+        "exact_structured_ground_truth": true,
+        "independent_delivery_accepted": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "273ec46daed04f43d89358121e11b310430490dabb32c111e9d8a724ed9c92c0",
+      "executed_action_sequence_sha256": "324b21ccd97743cc2bdef0f97720f7144a6317e59750565a8d8151a7c118fb88",
+      "fixture_provenance": {
+        "variant": "r22-b",
+        "office_input_sha256": "d886c47ce3ebb1ac3805cdab0e471d2c7de66fb5cd259580b4cafab6193e0a6f",
+        "office_expected_sha256": "cbe8c5c67576b04ce6394e30b64aa5649cb55f78eae8e856ef4f71d561062bd2",
+        "initial_code_sha256": "63a4941bc84fd94861c4498ab2323a0af04fe97320916868c92d7ca72bb6750c",
+        "public_code_inputs_sha256": "8558dd247564359e3b0a5500dad1f239fa6ede3f2b78720e7c2ffd04d13a900d",
+        "private_code_inputs_sha256": "53a102b14a0de5c6d099712e8d5f9ba475aae11e7c85f6dab05ba9bd89d13d2c",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "53098b8069e1e74fa371b04ef3fd9a00718bc9d145c65045bce4a22baed51c36",
+      "engine_ready_s": 24.081359300005715
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 2,
+      "phase": "repeat_timing",
+      "tag": "r22-a-code-hybrid-fixed8192-r2",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 140.38212949997978,
+      "requests": 8,
+      "output_tokens": 6484,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:45:32.232243+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.08849549997830763,
+      "tools": 8,
+      "processed_prompt_tokens": 2629,
+      "total_prompt_tokens": 38034,
+      "cached_prompt_tokens": 35405,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 8795,
+      "prefill_s": 4.9496,
+      "decode_s": 134.9833,
+      "weighted_fresh_prefill_tps": 531.154032649103,
+      "weighted_decode_tps": 48.035571807771774,
+      "request_wall_s": 140.05960499998764,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 2,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "08f6b2b2b22cd32c487b3a10144565bdada50d135c85e85f71b2bd88b6ef01dd",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 446,
+        "total": 446,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": true,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "4b450236804e776c271800c594f5cd6124405ce4b33da4670aa3bff5e9a38c15",
+      "fixture_provenance": {
+        "variant": "r22-a",
+        "office_input_sha256": "b239275075471ecc2d61b86a2f45c66cd5548ff0b136ca9b89c0fe8460ff0f23",
+        "office_expected_sha256": "bf09ec85f0ce6837ff0ee207e92b4cce6928cc686008dc781b0061481ffa4ede",
+        "initial_code_sha256": "5a65017f08095c523f8ab985072ba9176c01e7fa31b32b96eeb7b2a1e7687505",
+        "public_code_inputs_sha256": "afb3312be2ce5a5031d63f9cd5aa39c1ce60be86d2714e670b7e5e90a23a65ff",
+        "private_code_inputs_sha256": "6507c69a5712cd541d34d57b06d8090341f7491fd35a179b0c495a59f710594f",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "693a857aa049f1641e114666962ab46c42b8543c14fb4b8a9d7a63513889a432",
+      "engine_ready_s": 21.079205299989553
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 2,
+      "phase": "repeat_timing",
+      "tag": "r22-a-code-hybrid-adaptive4096-r2",
+      "success": false,
+      "finish": "natural_final",
+      "task_wall_s": 207.68891689999145,
+      "requests": 8,
+      "output_tokens": 9450,
+      "length_retries": 1,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:49:31.068871+00:00",
+      "failure_category": "independent_grading_or_delivery_failure",
+      "hidden_scoring_wall_s": 0.05596489997697063,
+      "tools": 7,
+      "processed_prompt_tokens": 4929,
+      "total_prompt_tokens": 29956,
+      "cached_prompt_tokens": 25027,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 7471,
+      "prefill_s": 6.8102,
+      "decode_s": 200.49710000000002,
+      "weighted_fresh_prefill_tps": 723.7672902411089,
+      "weighted_decode_tps": 47.13285129809857,
+      "request_wall_s": 207.38912600002368,
+      "initial_cap": 4096,
+      "final_cap": 8192,
+      "length_events": [
+        {
+          "turn": 4,
+          "reason": "output_limit_retry",
+          "retried": true,
+          "old_cap": 4096,
+          "discarded_output_tokens": 4096,
+          "discarded_request_wall_s": 87.10242050001398,
+          "discarded_prefill_s": 0.7861,
+          "discarded_decode_s": 86.30460000000001,
+          "tools_dispatched": 0,
+          "new_cap": 8192,
+          "identical_valid_request_except_cap": true,
+          "valid_messages_sha256": "899e7619615ca0481619ae43319183692417e18afcf0250ce5fe6dfc3ee05796",
+          "original_cached_tokens": 1872,
+          "regeneration_cached_tokens": 0,
+          "regeneration_output_tokens": 4025,
+          "regeneration_wall_s": 87.1979364999861,
+          "truncated_reasoning_chars": 12211,
+          "reasoning_prefix_preserved": false
+        }
+      ],
+      "discarded_output_tokens": 4096,
+      "discarded_request_wall_s": 87.10242050001398,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": false,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 1,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "cae0df166fb896620be51e60d8e2cd4452feb4cb505a64ac20b7d956deec8d31",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 364,
+        "total": 446,
+        "failures": [
+          {
+            "case_id": "T023",
+            "input": "123457",
+            "expected": {
+              "value": 12345700
+            },
+            "actual": {
+              "type": "int",
+              "value": 123457
+            }
+          },
+          {
+            "case_id": "T026",
+            "input": "246914",
+            "expected": {
+              "value": 24691400
+            },
+            "actual": {
+              "type": "int",
+              "value": 246914
+            }
+          },
+          {
+            "case_id": "T029",
+            "input": "370371",
+            "expected": {
+              "value": 37037100
+            },
+            "actual": {
+              "type": "int",
+              "value": 370371
+            }
+          },
+          {
+            "case_id": "T032",
+            "input": "493828",
+            "expected": {
+              "value": 49382800
+            },
+            "actual": {
+              "type": "int",
+              "value": 493828
+            }
+          },
+          {
+            "case_id": "T035",
+            "input": "617285",
+            "expected": {
+              "value": 61728500
+            },
+            "actual": {
+              "type": "int",
+              "value": 617285
+            }
+          },
+          {
+            "case_id": "T038",
+            "input": "740742",
+            "expected": {
+              "value": 74074200
+            },
+            "actual": {
+              "type": "int",
+              "value": 740742
+            }
+          },
+          {
+            "case_id": "T041",
+            "input": "864199",
+            "expected": {
+              "value": 86419900
+            },
+            "actual": {
+              "type": "int",
+              "value": 864199
+            }
+          },
+          {
+            "case_id": "T044",
+            "input": "987656",
+            "expected": {
+              "value": 98765600
+            },
+            "actual": {
+              "type": "int",
+              "value": 987656
+            }
+          },
+          {
+            "case_id": "T047",
+            "input": "1111113",
+            "expected": {
+              "value": 111111300
+            },
+            "actual": {
+              "type": "int",
+              "value": 1111113
+            }
+          },
+          {
+            "case_id": "T050",
+            "input": "1234570",
+            "expected": {
+              "value": 123457000
+            },
+            "actual": {
+              "type": "int",
+              "value": 1234570
+            }
+          },
+          {
+            "case_id": "T053",
+            "input": "1358027",
+            "expected": {
+              "value": 135802700
+            },
+            "actual": {
+              "type": "int",
+              "value": 1358027
+            }
+          },
+          {
+            "case_id": "T056",
+            "input": "1481484",
+            "expected": {
+              "value": 148148400
+            },
+            "actual": {
+              "type": "int",
+              "value": 1481484
+            }
+          },
+          {
+            "case_id": "T059",
+            "input": "1604941",
+            "expected": {
+              "value": 160494100
+            },
+            "actual": {
+              "type": "int",
+              "value": 1604941
+            }
+          },
+          {
+            "case_id": "T062",
+            "input": "1728398",
+            "expected": {
+              "value": 172839800
+            },
+            "actual": {
+              "type": "int",
+              "value": 1728398
+            }
+          },
+          {
+            "case_id": "T065",
+            "input": "1851855",
+            "expected": {
+              "value": 185185500
+            },
+            "actual": {
+              "type": "int",
+              "value": 1851855
+            }
+          },
+          {
+            "case_id": "T068",
+            "input": "1975312",
+            "expected": {
+              "value": 197531200
+            },
+            "actual": {
+              "type": "int",
+              "value": 1975312
+            }
+          },
+          {
+            "case_id": "T071",
+            "input": "2098769",
+            "expected": {
+              "value": 209876900
+            },
+            "actual": {
+              "type": "int",
+              "value": 2098769
+            }
+          },
+          {
+            "case_id": "T074",
+            "input": "2222226",
+            "expected": {
+              "value": 222222600
+            },
+            "actual": {
+              "type": "int",
+              "value": 2222226
+            }
+          },
+          {
+            "case_id": "T077",
+            "input": "2345683",
+            "expected": {
+              "value": 234568300
+            },
+            "actual": {
+              "type": "int",
+              "value": 2345683
+            }
+          },
+          {
+            "case_id": "T080",
+            "input": "2469140",
+            "expected": {
+              "value": 246914000
+            },
+            "actual": {
+              "type": "int",
+              "value": 2469140
+            }
+          },
+          {
+            "case_id": "T083",
+            "input": "2592597",
+            "expected": {
+              "value": 259259700
+            },
+            "actual": {
+              "type": "int",
+              "value": 2592597
+            }
+          },
+          {
+            "case_id": "T086",
+            "input": "2716054",
+            "expected": {
+              "value": 271605400
+            },
+            "actual": {
+              "type": "int",
+              "value": 2716054
+            }
+          },
+          {
+            "case_id": "T089",
+            "input": "2839511",
+            "expected": {
+              "value": 283951100
+            },
+            "actual": {
+              "type": "int",
+              "value": 2839511
+            }
+          },
+          {
+            "case_id": "T092",
+            "input": "2962968",
+            "expected": {
+              "value": 296296800
+            },
+            "actual": {
+              "type": "int",
+              "value": 2962968
+            }
+          },
+          {
+            "case_id": "T095",
+            "input": "3086425",
+            "expected": {
+              "value": 308642500
+            },
+            "actual": {
+              "type": "int",
+              "value": 3086425
+            }
+          },
+          {
+            "case_id": "T098",
+            "input": "3209882",
+            "expected": {
+              "value": 320988200
+            },
+            "actual": {
+              "type": "int",
+              "value": 3209882
+            }
+          },
+          {
+            "case_id": "T101",
+            "input": "3333339",
+            "expected": {
+              "value": 333333900
+            },
+            "actual": {
+              "type": "int",
+              "value": 3333339
+            }
+          },
+          {
+            "case_id": "T104",
+            "input": "3456796",
+            "expected": {
+              "value": 345679600
+            },
+            "actual": {
+              "type": "int",
+              "value": 3456796
+            }
+          },
+          {
+            "case_id": "T107",
+            "input": "3580253",
+            "expected": {
+              "value": 358025300
+            },
+            "actual": {
+              "type": "int",
+              "value": 3580253
+            }
+          },
+          {
+            "case_id": "T110",
+            "input": "3703710",
+            "expected": {
+              "value": 370371000
+            },
+            "actual": {
+              "type": "int",
+              "value": 3703710
+            }
+          },
+          {
+            "case_id": "T113",
+            "input": "3827167",
+            "expected": {
+              "value": 382716700
+            },
+            "actual": {
+              "type": "int",
+              "value": 3827167
+            }
+          },
+          {
+            "case_id": "T116",
+            "input": "3950624",
+            "expected": {
+              "value": 395062400
+            },
+            "actual": {
+              "type": "int",
+              "value": 3950624
+            }
+          },
+          {
+            "case_id": "T119",
+            "input": "4074081",
+            "expected": {
+              "value": 407408100
+            },
+            "actual": {
+              "type": "int",
+              "value": 4074081
+            }
+          },
+          {
+            "case_id": "T122",
+            "input": "4197538",
+            "expected": {
+              "value": 419753800
+            },
+            "actual": {
+              "type": "int",
+              "value": 4197538
+            }
+          },
+          {
+            "case_id": "T125",
+            "input": "4320995",
+            "expected": {
+              "value": 432099500
+            },
+            "actual": {
+              "type": "int",
+              "value": 4320995
+            }
+          },
+          {
+            "case_id": "T128",
+            "input": "4444452",
+            "expected": {
+              "value": 444445200
+            },
+            "actual": {
+              "type": "int",
+              "value": 4444452
+            }
+          },
+          {
+            "case_id": "T131",
+            "input": "4567909",
+            "expected": {
+              "value": 456790900
+            },
+            "actual": {
+              "type": "int",
+              "value": 4567909
+            }
+          },
+          {
+            "case_id": "T134",
+            "input": "4691366",
+            "expected": {
+              "value": 469136600
+            },
+            "actual": {
+              "type": "int",
+              "value": 4691366
+            }
+          },
+          {
+            "case_id": "T137",
+            "input": "4814823",
+            "expected": {
+              "value": 481482300
+            },
+            "actual": {
+              "type": "int",
+              "value": 4814823
+            }
+          },
+          {
+            "case_id": "T140",
+            "input": "4938280",
+            "expected": {
+              "value": 493828000
+            },
+            "actual": {
+              "type": "int",
+              "value": 4938280
+            }
+          },
+          {
+            "case_id": "T143",
+            "input": "5061737",
+            "expected": {
+              "value": 506173700
+            },
+            "actual": {
+              "type": "int",
+              "value": 5061737
+            }
+          },
+          {
+            "case_id": "T146",
+            "input": "5185194",
+            "expected": {
+              "value": 518519400
+            },
+            "actual": {
+              "type": "int",
+              "value": 5185194
+            }
+          },
+          {
+            "case_id": "T149",
+            "input": "5308651",
+            "expected": {
+              "value": 530865100
+            },
+            "actual": {
+              "type": "int",
+              "value": 5308651
+            }
+          },
+          {
+            "case_id": "T152",
+            "input": "5432108",
+            "expected": {
+              "value": 543210800
+            },
+            "actual": {
+              "type": "int",
+              "value": 5432108
+            }
+          },
+          {
+            "case_id": "T155",
+            "input": "5555565",
+            "expected": {
+              "value": 555556500
+            },
+            "actual": {
+              "type": "int",
+              "value": 5555565
+            }
+          },
+          {
+            "case_id": "T158",
+            "input": "5679022",
+            "expected": {
+              "value": 567902200
+            },
+            "actual": {
+              "type": "int",
+              "value": 5679022
+            }
+          },
+          {
+            "case_id": "T161",
+            "input": "5802479",
+            "expected": {
+              "value": 580247900
+            },
+            "actual": {
+              "type": "int",
+              "value": 5802479
+            }
+          },
+          {
+            "case_id": "T164",
+            "input": "5925936",
+            "expected": {
+              "value": 592593600
+            },
+            "actual": {
+              "type": "int",
+              "value": 5925936
+            }
+          },
+          {
+            "case_id": "T167",
+            "input": "6049393",
+            "expected": {
+              "value": 604939300
+            },
+            "actual": {
+              "type": "int",
+              "value": 6049393
+            }
+          },
+          {
+            "case_id": "T170",
+            "input": "6172850",
+            "expected": {
+              "value": 617285000
+            },
+            "actual": {
+              "type": "int",
+              "value": 6172850
+            }
+          },
+          {
+            "case_id": "T173",
+            "input": "6296307",
+            "expected": {
+              "value": 629630700
+            },
+            "actual": {
+              "type": "int",
+              "value": 6296307
+            }
+          },
+          {
+            "case_id": "T176",
+            "input": "6419764",
+            "expected": {
+              "value": 641976400
+            },
+            "actual": {
+              "type": "int",
+              "value": 6419764
+            }
+          },
+          {
+            "case_id": "T179",
+            "input": "6543221",
+            "expected": {
+              "value": 654322100
+            },
+            "actual": {
+              "type": "int",
+              "value": 6543221
+            }
+          },
+          {
+            "case_id": "T182",
+            "input": "6666678",
+            "expected": {
+              "value": 666667800
+            },
+            "actual": {
+              "type": "int",
+              "value": 6666678
+            }
+          },
+          {
+            "case_id": "T185",
+            "input": "6790135",
+            "expected": {
+              "value": 679013500
+            },
+            "actual": {
+              "type": "int",
+              "value": 6790135
+            }
+          },
+          {
+            "case_id": "T188",
+            "input": "6913592",
+            "expected": {
+              "value": 691359200
+            },
+            "actual": {
+              "type": "int",
+              "value": 6913592
+            }
+          },
+          {
+            "case_id": "T191",
+            "input": "7037049",
+            "expected": {
+              "value": 703704900
+            },
+            "actual": {
+              "type": "int",
+              "value": 7037049
+            }
+          },
+          {
+            "case_id": "T194",
+            "input": "7160506",
+            "expected": {
+              "value": 716050600
+            },
+            "actual": {
+              "type": "int",
+              "value": 7160506
+            }
+          },
+          {
+            "case_id": "T197",
+            "input": "7283963",
+            "expected": {
+              "value": 728396300
+            },
+            "actual": {
+              "type": "int",
+              "value": 7283963
+            }
+          },
+          {
+            "case_id": "T200",
+            "input": "7407420",
+            "expected": {
+              "value": 740742000
+            },
+            "actual": {
+              "type": "int",
+              "value": 7407420
+            }
+          },
+          {
+            "case_id": "T203",
+            "input": "7530877",
+            "expected": {
+              "value": 753087700
+            },
+            "actual": {
+              "type": "int",
+              "value": 7530877
+            }
+          },
+          {
+            "case_id": "T206",
+            "input": "7654334",
+            "expected": {
+              "value": 765433400
+            },
+            "actual": {
+              "type": "int",
+              "value": 7654334
+            }
+          },
+          {
+            "case_id": "T209",
+            "input": "7777791",
+            "expected": {
+              "value": 777779100
+            },
+            "actual": {
+              "type": "int",
+              "value": 7777791
+            }
+          },
+          {
+            "case_id": "T212",
+            "input": "7901248",
+            "expected": {
+              "value": 790124800
+            },
+            "actual": {
+              "type": "int",
+              "value": 7901248
+            }
+          },
+          {
+            "case_id": "T215",
+            "input": "8024705",
+            "expected": {
+              "value": 802470500
+            },
+            "actual": {
+              "type": "int",
+              "value": 8024705
+            }
+          },
+          {
+            "case_id": "T218",
+            "input": "8148162",
+            "expected": {
+              "value": 814816200
+            },
+            "actual": {
+              "type": "int",
+              "value": 8148162
+            }
+          },
+          {
+            "case_id": "T221",
+            "input": "8271619",
+            "expected": {
+              "value": 827161900
+            },
+            "actual": {
+              "type": "int",
+              "value": 8271619
+            }
+          },
+          {
+            "case_id": "T224",
+            "input": "8395076",
+            "expected": {
+              "value": 839507600
+            },
+            "actual": {
+              "type": "int",
+              "value": 8395076
+            }
+          },
+          {
+            "case_id": "T227",
+            "input": "8518533",
+            "expected": {
+              "value": 851853300
+            },
+            "actual": {
+              "type": "int",
+              "value": 8518533
+            }
+          },
+          {
+            "case_id": "T230",
+            "input": "8641990",
+            "expected": {
+              "value": 864199000
+            },
+            "actual": {
+              "type": "int",
+              "value": 8641990
+            }
+          },
+          {
+            "case_id": "T233",
+            "input": "8765447",
+            "expected": {
+              "value": 876544700
+            },
+            "actual": {
+              "type": "int",
+              "value": 8765447
+            }
+          },
+          {
+            "case_id": "T236",
+            "input": "8888904",
+            "expected": {
+              "value": 888890400
+            },
+            "actual": {
+              "type": "int",
+              "value": 8888904
+            }
+          },
+          {
+            "case_id": "T239",
+            "input": "9012361",
+            "expected": {
+              "value": 901236100
+            },
+            "actual": {
+              "type": "int",
+              "value": 9012361
+            }
+          },
+          {
+            "case_id": "T242",
+            "input": "9135818",
+            "expected": {
+              "value": 913581800
+            },
+            "actual": {
+              "type": "int",
+              "value": 9135818
+            }
+          },
+          {
+            "case_id": "T245",
+            "input": "9259275",
+            "expected": {
+              "value": 925927500
+            },
+            "actual": {
+              "type": "int",
+              "value": 9259275
+            }
+          },
+          {
+            "case_id": "T248",
+            "input": "9382732",
+            "expected": {
+              "value": 938273200
+            },
+            "actual": {
+              "type": "int",
+              "value": 9382732
+            }
+          },
+          {
+            "case_id": "T251",
+            "input": "9506189",
+            "expected": {
+              "value": 950618900
+            },
+            "actual": {
+              "type": "int",
+              "value": 9506189
+            }
+          },
+          {
+            "case_id": "T254",
+            "input": "9629646",
+            "expected": {
+              "value": 962964600
+            },
+            "actual": {
+              "type": "int",
+              "value": 9629646
+            }
+          },
+          {
+            "case_id": "T257",
+            "input": "9753103",
+            "expected": {
+              "value": 975310300
+            },
+            "actual": {
+              "type": "int",
+              "value": 9753103
+            }
+          },
+          {
+            "case_id": "T260",
+            "input": "9876560",
+            "expected": {
+              "value": 987656000
+            },
+            "actual": {
+              "type": "int",
+              "value": 9876560
+            }
+          },
+          {
+            "case_id": "T283",
+            "input": "1000000000",
+            "expected": {
+              "error": "ValueError"
+            },
+            "actual": {
+              "type": "int",
+              "value": 1000000000
+            }
+          },
+          {
+            "case_id": "T284",
+            "input": "-1000000000",
+            "expected": {
+              "error": "ValueError"
+            },
+            "actual": {
+              "type": "int",
+              "value": -1000000000
+            }
+          }
+        ],
+        "float_or_round_present": false,
+        "success": false
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": false,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [
+        "private_contract_cases_pass"
+      ],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "da7392d652908b1b49173c0c09162547221f0eb70d62ebc5dfcd9eb29ce75576",
+      "fixture_provenance": {
+        "variant": "r22-a",
+        "office_input_sha256": "b239275075471ecc2d61b86a2f45c66cd5548ff0b136ca9b89c0fe8460ff0f23",
+        "office_expected_sha256": "bf09ec85f0ce6837ff0ee207e92b4cce6928cc686008dc781b0061481ffa4ede",
+        "initial_code_sha256": "5a65017f08095c523f8ab985072ba9176c01e7fa31b32b96eeb7b2a1e7687505",
+        "public_code_inputs_sha256": "afb3312be2ce5a5031d63f9cd5aa39c1ce60be86d2714e670b7e5e90a23a65ff",
+        "private_code_inputs_sha256": "6507c69a5712cd541d34d57b06d8090341f7491fd35a179b0c495a59f710594f",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "b27ab046106d0b2ecd330d94a450013dd43dfafe23734ad3c1481e65dcb4e883",
+      "engine_ready_s": 21.07797610000125
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "adaptive4096",
+      "repeat": 3,
+      "phase": "repeat_timing",
+      "tag": "r22-a-code-hybrid-adaptive4096-r3",
+      "success": false,
+      "finish": "natural_final",
+      "task_wall_s": 210.01528699998744,
+      "requests": 8,
+      "output_tokens": 9450,
+      "length_retries": 1,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:53:32.158018+00:00",
+      "failure_category": "independent_grading_or_delivery_failure",
+      "hidden_scoring_wall_s": 0.06422699999529868,
+      "tools": 7,
+      "processed_prompt_tokens": 4929,
+      "total_prompt_tokens": 29956,
+      "cached_prompt_tokens": 25027,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 7471,
+      "prefill_s": 6.9865,
+      "decode_s": 202.5652,
+      "weighted_fresh_prefill_tps": 705.5034709797466,
+      "weighted_decode_tps": 46.65164598855085,
+      "request_wall_s": 209.65052469997318,
+      "initial_cap": 4096,
+      "final_cap": 8192,
+      "length_events": [
+        {
+          "turn": 4,
+          "reason": "output_limit_retry",
+          "retried": true,
+          "old_cap": 4096,
+          "discarded_output_tokens": 4096,
+          "discarded_request_wall_s": 87.51181530000758,
+          "discarded_prefill_s": 0.8847,
+          "discarded_decode_s": 86.6224,
+          "tools_dispatched": 0,
+          "new_cap": 8192,
+          "identical_valid_request_except_cap": true,
+          "valid_messages_sha256": "1452d71d0c29427f77371b2a533f0e3d4ca04fec579e718c3f7cf749cc3a5684",
+          "original_cached_tokens": 1872,
+          "regeneration_cached_tokens": 0,
+          "regeneration_output_tokens": 4025,
+          "regeneration_wall_s": 87.86399489999167,
+          "truncated_reasoning_chars": 12211,
+          "reasoning_prefix_preserved": false
+        }
+      ],
+      "discarded_output_tokens": 4096,
+      "discarded_request_wall_s": 87.51181530000758,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": false,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 1,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "cae0df166fb896620be51e60d8e2cd4452feb4cb505a64ac20b7d956deec8d31",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 364,
+        "total": 446,
+        "failures": [
+          {
+            "case_id": "T023",
+            "input": "123457",
+            "expected": {
+              "value": 12345700
+            },
+            "actual": {
+              "type": "int",
+              "value": 123457
+            }
+          },
+          {
+            "case_id": "T026",
+            "input": "246914",
+            "expected": {
+              "value": 24691400
+            },
+            "actual": {
+              "type": "int",
+              "value": 246914
+            }
+          },
+          {
+            "case_id": "T029",
+            "input": "370371",
+            "expected": {
+              "value": 37037100
+            },
+            "actual": {
+              "type": "int",
+              "value": 370371
+            }
+          },
+          {
+            "case_id": "T032",
+            "input": "493828",
+            "expected": {
+              "value": 49382800
+            },
+            "actual": {
+              "type": "int",
+              "value": 493828
+            }
+          },
+          {
+            "case_id": "T035",
+            "input": "617285",
+            "expected": {
+              "value": 61728500
+            },
+            "actual": {
+              "type": "int",
+              "value": 617285
+            }
+          },
+          {
+            "case_id": "T038",
+            "input": "740742",
+            "expected": {
+              "value": 74074200
+            },
+            "actual": {
+              "type": "int",
+              "value": 740742
+            }
+          },
+          {
+            "case_id": "T041",
+            "input": "864199",
+            "expected": {
+              "value": 86419900
+            },
+            "actual": {
+              "type": "int",
+              "value": 864199
+            }
+          },
+          {
+            "case_id": "T044",
+            "input": "987656",
+            "expected": {
+              "value": 98765600
+            },
+            "actual": {
+              "type": "int",
+              "value": 987656
+            }
+          },
+          {
+            "case_id": "T047",
+            "input": "1111113",
+            "expected": {
+              "value": 111111300
+            },
+            "actual": {
+              "type": "int",
+              "value": 1111113
+            }
+          },
+          {
+            "case_id": "T050",
+            "input": "1234570",
+            "expected": {
+              "value": 123457000
+            },
+            "actual": {
+              "type": "int",
+              "value": 1234570
+            }
+          },
+          {
+            "case_id": "T053",
+            "input": "1358027",
+            "expected": {
+              "value": 135802700
+            },
+            "actual": {
+              "type": "int",
+              "value": 1358027
+            }
+          },
+          {
+            "case_id": "T056",
+            "input": "1481484",
+            "expected": {
+              "value": 148148400
+            },
+            "actual": {
+              "type": "int",
+              "value": 1481484
+            }
+          },
+          {
+            "case_id": "T059",
+            "input": "1604941",
+            "expected": {
+              "value": 160494100
+            },
+            "actual": {
+              "type": "int",
+              "value": 1604941
+            }
+          },
+          {
+            "case_id": "T062",
+            "input": "1728398",
+            "expected": {
+              "value": 172839800
+            },
+            "actual": {
+              "type": "int",
+              "value": 1728398
+            }
+          },
+          {
+            "case_id": "T065",
+            "input": "1851855",
+            "expected": {
+              "value": 185185500
+            },
+            "actual": {
+              "type": "int",
+              "value": 1851855
+            }
+          },
+          {
+            "case_id": "T068",
+            "input": "1975312",
+            "expected": {
+              "value": 197531200
+            },
+            "actual": {
+              "type": "int",
+              "value": 1975312
+            }
+          },
+          {
+            "case_id": "T071",
+            "input": "2098769",
+            "expected": {
+              "value": 209876900
+            },
+            "actual": {
+              "type": "int",
+              "value": 2098769
+            }
+          },
+          {
+            "case_id": "T074",
+            "input": "2222226",
+            "expected": {
+              "value": 222222600
+            },
+            "actual": {
+              "type": "int",
+              "value": 2222226
+            }
+          },
+          {
+            "case_id": "T077",
+            "input": "2345683",
+            "expected": {
+              "value": 234568300
+            },
+            "actual": {
+              "type": "int",
+              "value": 2345683
+            }
+          },
+          {
+            "case_id": "T080",
+            "input": "2469140",
+            "expected": {
+              "value": 246914000
+            },
+            "actual": {
+              "type": "int",
+              "value": 2469140
+            }
+          },
+          {
+            "case_id": "T083",
+            "input": "2592597",
+            "expected": {
+              "value": 259259700
+            },
+            "actual": {
+              "type": "int",
+              "value": 2592597
+            }
+          },
+          {
+            "case_id": "T086",
+            "input": "2716054",
+            "expected": {
+              "value": 271605400
+            },
+            "actual": {
+              "type": "int",
+              "value": 2716054
+            }
+          },
+          {
+            "case_id": "T089",
+            "input": "2839511",
+            "expected": {
+              "value": 283951100
+            },
+            "actual": {
+              "type": "int",
+              "value": 2839511
+            }
+          },
+          {
+            "case_id": "T092",
+            "input": "2962968",
+            "expected": {
+              "value": 296296800
+            },
+            "actual": {
+              "type": "int",
+              "value": 2962968
+            }
+          },
+          {
+            "case_id": "T095",
+            "input": "3086425",
+            "expected": {
+              "value": 308642500
+            },
+            "actual": {
+              "type": "int",
+              "value": 3086425
+            }
+          },
+          {
+            "case_id": "T098",
+            "input": "3209882",
+            "expected": {
+              "value": 320988200
+            },
+            "actual": {
+              "type": "int",
+              "value": 3209882
+            }
+          },
+          {
+            "case_id": "T101",
+            "input": "3333339",
+            "expected": {
+              "value": 333333900
+            },
+            "actual": {
+              "type": "int",
+              "value": 3333339
+            }
+          },
+          {
+            "case_id": "T104",
+            "input": "3456796",
+            "expected": {
+              "value": 345679600
+            },
+            "actual": {
+              "type": "int",
+              "value": 3456796
+            }
+          },
+          {
+            "case_id": "T107",
+            "input": "3580253",
+            "expected": {
+              "value": 358025300
+            },
+            "actual": {
+              "type": "int",
+              "value": 3580253
+            }
+          },
+          {
+            "case_id": "T110",
+            "input": "3703710",
+            "expected": {
+              "value": 370371000
+            },
+            "actual": {
+              "type": "int",
+              "value": 3703710
+            }
+          },
+          {
+            "case_id": "T113",
+            "input": "3827167",
+            "expected": {
+              "value": 382716700
+            },
+            "actual": {
+              "type": "int",
+              "value": 3827167
+            }
+          },
+          {
+            "case_id": "T116",
+            "input": "3950624",
+            "expected": {
+              "value": 395062400
+            },
+            "actual": {
+              "type": "int",
+              "value": 3950624
+            }
+          },
+          {
+            "case_id": "T119",
+            "input": "4074081",
+            "expected": {
+              "value": 407408100
+            },
+            "actual": {
+              "type": "int",
+              "value": 4074081
+            }
+          },
+          {
+            "case_id": "T122",
+            "input": "4197538",
+            "expected": {
+              "value": 419753800
+            },
+            "actual": {
+              "type": "int",
+              "value": 4197538
+            }
+          },
+          {
+            "case_id": "T125",
+            "input": "4320995",
+            "expected": {
+              "value": 432099500
+            },
+            "actual": {
+              "type": "int",
+              "value": 4320995
+            }
+          },
+          {
+            "case_id": "T128",
+            "input": "4444452",
+            "expected": {
+              "value": 444445200
+            },
+            "actual": {
+              "type": "int",
+              "value": 4444452
+            }
+          },
+          {
+            "case_id": "T131",
+            "input": "4567909",
+            "expected": {
+              "value": 456790900
+            },
+            "actual": {
+              "type": "int",
+              "value": 4567909
+            }
+          },
+          {
+            "case_id": "T134",
+            "input": "4691366",
+            "expected": {
+              "value": 469136600
+            },
+            "actual": {
+              "type": "int",
+              "value": 4691366
+            }
+          },
+          {
+            "case_id": "T137",
+            "input": "4814823",
+            "expected": {
+              "value": 481482300
+            },
+            "actual": {
+              "type": "int",
+              "value": 4814823
+            }
+          },
+          {
+            "case_id": "T140",
+            "input": "4938280",
+            "expected": {
+              "value": 493828000
+            },
+            "actual": {
+              "type": "int",
+              "value": 4938280
+            }
+          },
+          {
+            "case_id": "T143",
+            "input": "5061737",
+            "expected": {
+              "value": 506173700
+            },
+            "actual": {
+              "type": "int",
+              "value": 5061737
+            }
+          },
+          {
+            "case_id": "T146",
+            "input": "5185194",
+            "expected": {
+              "value": 518519400
+            },
+            "actual": {
+              "type": "int",
+              "value": 5185194
+            }
+          },
+          {
+            "case_id": "T149",
+            "input": "5308651",
+            "expected": {
+              "value": 530865100
+            },
+            "actual": {
+              "type": "int",
+              "value": 5308651
+            }
+          },
+          {
+            "case_id": "T152",
+            "input": "5432108",
+            "expected": {
+              "value": 543210800
+            },
+            "actual": {
+              "type": "int",
+              "value": 5432108
+            }
+          },
+          {
+            "case_id": "T155",
+            "input": "5555565",
+            "expected": {
+              "value": 555556500
+            },
+            "actual": {
+              "type": "int",
+              "value": 5555565
+            }
+          },
+          {
+            "case_id": "T158",
+            "input": "5679022",
+            "expected": {
+              "value": 567902200
+            },
+            "actual": {
+              "type": "int",
+              "value": 5679022
+            }
+          },
+          {
+            "case_id": "T161",
+            "input": "5802479",
+            "expected": {
+              "value": 580247900
+            },
+            "actual": {
+              "type": "int",
+              "value": 5802479
+            }
+          },
+          {
+            "case_id": "T164",
+            "input": "5925936",
+            "expected": {
+              "value": 592593600
+            },
+            "actual": {
+              "type": "int",
+              "value": 5925936
+            }
+          },
+          {
+            "case_id": "T167",
+            "input": "6049393",
+            "expected": {
+              "value": 604939300
+            },
+            "actual": {
+              "type": "int",
+              "value": 6049393
+            }
+          },
+          {
+            "case_id": "T170",
+            "input": "6172850",
+            "expected": {
+              "value": 617285000
+            },
+            "actual": {
+              "type": "int",
+              "value": 6172850
+            }
+          },
+          {
+            "case_id": "T173",
+            "input": "6296307",
+            "expected": {
+              "value": 629630700
+            },
+            "actual": {
+              "type": "int",
+              "value": 6296307
+            }
+          },
+          {
+            "case_id": "T176",
+            "input": "6419764",
+            "expected": {
+              "value": 641976400
+            },
+            "actual": {
+              "type": "int",
+              "value": 6419764
+            }
+          },
+          {
+            "case_id": "T179",
+            "input": "6543221",
+            "expected": {
+              "value": 654322100
+            },
+            "actual": {
+              "type": "int",
+              "value": 6543221
+            }
+          },
+          {
+            "case_id": "T182",
+            "input": "6666678",
+            "expected": {
+              "value": 666667800
+            },
+            "actual": {
+              "type": "int",
+              "value": 6666678
+            }
+          },
+          {
+            "case_id": "T185",
+            "input": "6790135",
+            "expected": {
+              "value": 679013500
+            },
+            "actual": {
+              "type": "int",
+              "value": 6790135
+            }
+          },
+          {
+            "case_id": "T188",
+            "input": "6913592",
+            "expected": {
+              "value": 691359200
+            },
+            "actual": {
+              "type": "int",
+              "value": 6913592
+            }
+          },
+          {
+            "case_id": "T191",
+            "input": "7037049",
+            "expected": {
+              "value": 703704900
+            },
+            "actual": {
+              "type": "int",
+              "value": 7037049
+            }
+          },
+          {
+            "case_id": "T194",
+            "input": "7160506",
+            "expected": {
+              "value": 716050600
+            },
+            "actual": {
+              "type": "int",
+              "value": 7160506
+            }
+          },
+          {
+            "case_id": "T197",
+            "input": "7283963",
+            "expected": {
+              "value": 728396300
+            },
+            "actual": {
+              "type": "int",
+              "value": 7283963
+            }
+          },
+          {
+            "case_id": "T200",
+            "input": "7407420",
+            "expected": {
+              "value": 740742000
+            },
+            "actual": {
+              "type": "int",
+              "value": 7407420
+            }
+          },
+          {
+            "case_id": "T203",
+            "input": "7530877",
+            "expected": {
+              "value": 753087700
+            },
+            "actual": {
+              "type": "int",
+              "value": 7530877
+            }
+          },
+          {
+            "case_id": "T206",
+            "input": "7654334",
+            "expected": {
+              "value": 765433400
+            },
+            "actual": {
+              "type": "int",
+              "value": 7654334
+            }
+          },
+          {
+            "case_id": "T209",
+            "input": "7777791",
+            "expected": {
+              "value": 777779100
+            },
+            "actual": {
+              "type": "int",
+              "value": 7777791
+            }
+          },
+          {
+            "case_id": "T212",
+            "input": "7901248",
+            "expected": {
+              "value": 790124800
+            },
+            "actual": {
+              "type": "int",
+              "value": 7901248
+            }
+          },
+          {
+            "case_id": "T215",
+            "input": "8024705",
+            "expected": {
+              "value": 802470500
+            },
+            "actual": {
+              "type": "int",
+              "value": 8024705
+            }
+          },
+          {
+            "case_id": "T218",
+            "input": "8148162",
+            "expected": {
+              "value": 814816200
+            },
+            "actual": {
+              "type": "int",
+              "value": 8148162
+            }
+          },
+          {
+            "case_id": "T221",
+            "input": "8271619",
+            "expected": {
+              "value": 827161900
+            },
+            "actual": {
+              "type": "int",
+              "value": 8271619
+            }
+          },
+          {
+            "case_id": "T224",
+            "input": "8395076",
+            "expected": {
+              "value": 839507600
+            },
+            "actual": {
+              "type": "int",
+              "value": 8395076
+            }
+          },
+          {
+            "case_id": "T227",
+            "input": "8518533",
+            "expected": {
+              "value": 851853300
+            },
+            "actual": {
+              "type": "int",
+              "value": 8518533
+            }
+          },
+          {
+            "case_id": "T230",
+            "input": "8641990",
+            "expected": {
+              "value": 864199000
+            },
+            "actual": {
+              "type": "int",
+              "value": 8641990
+            }
+          },
+          {
+            "case_id": "T233",
+            "input": "8765447",
+            "expected": {
+              "value": 876544700
+            },
+            "actual": {
+              "type": "int",
+              "value": 8765447
+            }
+          },
+          {
+            "case_id": "T236",
+            "input": "8888904",
+            "expected": {
+              "value": 888890400
+            },
+            "actual": {
+              "type": "int",
+              "value": 8888904
+            }
+          },
+          {
+            "case_id": "T239",
+            "input": "9012361",
+            "expected": {
+              "value": 901236100
+            },
+            "actual": {
+              "type": "int",
+              "value": 9012361
+            }
+          },
+          {
+            "case_id": "T242",
+            "input": "9135818",
+            "expected": {
+              "value": 913581800
+            },
+            "actual": {
+              "type": "int",
+              "value": 9135818
+            }
+          },
+          {
+            "case_id": "T245",
+            "input": "9259275",
+            "expected": {
+              "value": 925927500
+            },
+            "actual": {
+              "type": "int",
+              "value": 9259275
+            }
+          },
+          {
+            "case_id": "T248",
+            "input": "9382732",
+            "expected": {
+              "value": 938273200
+            },
+            "actual": {
+              "type": "int",
+              "value": 9382732
+            }
+          },
+          {
+            "case_id": "T251",
+            "input": "9506189",
+            "expected": {
+              "value": 950618900
+            },
+            "actual": {
+              "type": "int",
+              "value": 9506189
+            }
+          },
+          {
+            "case_id": "T254",
+            "input": "9629646",
+            "expected": {
+              "value": 962964600
+            },
+            "actual": {
+              "type": "int",
+              "value": 9629646
+            }
+          },
+          {
+            "case_id": "T257",
+            "input": "9753103",
+            "expected": {
+              "value": 975310300
+            },
+            "actual": {
+              "type": "int",
+              "value": 9753103
+            }
+          },
+          {
+            "case_id": "T260",
+            "input": "9876560",
+            "expected": {
+              "value": 987656000
+            },
+            "actual": {
+              "type": "int",
+              "value": 9876560
+            }
+          },
+          {
+            "case_id": "T283",
+            "input": "1000000000",
+            "expected": {
+              "error": "ValueError"
+            },
+            "actual": {
+              "type": "int",
+              "value": 1000000000
+            }
+          },
+          {
+            "case_id": "T284",
+            "input": "-1000000000",
+            "expected": {
+              "error": "ValueError"
+            },
+            "actual": {
+              "type": "int",
+              "value": -1000000000
+            }
+          }
+        ],
+        "float_or_round_present": false,
+        "success": false
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": false,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [
+        "private_contract_cases_pass"
+      ],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "da7392d652908b1b49173c0c09162547221f0eb70d62ebc5dfcd9eb29ce75576",
+      "fixture_provenance": {
+        "variant": "r22-a",
+        "office_input_sha256": "b239275075471ecc2d61b86a2f45c66cd5548ff0b136ca9b89c0fe8460ff0f23",
+        "office_expected_sha256": "bf09ec85f0ce6837ff0ee207e92b4cce6928cc686008dc781b0061481ffa4ede",
+        "initial_code_sha256": "5a65017f08095c523f8ab985072ba9176c01e7fa31b32b96eeb7b2a1e7687505",
+        "public_code_inputs_sha256": "afb3312be2ce5a5031d63f9cd5aa39c1ce60be86d2714e670b7e5e90a23a65ff",
+        "private_code_inputs_sha256": "6507c69a5712cd541d34d57b06d8090341f7491fd35a179b0c495a59f710594f",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "03b0e5fb3c2021dc4fdcd23f9f534cab361b34f452da451ec98b82fdca9118a0",
+      "engine_ready_s": 21.06623519997811
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "code",
+      "arm": "hybrid",
+      "policy": "fixed8192",
+      "repeat": 3,
+      "phase": "repeat_timing",
+      "tag": "r22-a-code-hybrid-fixed8192-r3",
+      "success": true,
+      "finish": "natural_final",
+      "task_wall_s": 140.43700410000747,
+      "requests": 8,
+      "output_tokens": 6484,
+      "length_retries": 0,
+      "delivery_rejections": 0,
+      "finished_utc": "2026-10-02T14:56:23.793772+00:00",
+      "failure_category": null,
+      "hidden_scoring_wall_s": 0.06802210002206266,
+      "tools": 8,
+      "processed_prompt_tokens": 2629,
+      "total_prompt_tokens": 38034,
+      "cached_prompt_tokens": 35405,
+      "initial_cached_tokens": 0,
+      "max_prompt_tokens": 8795,
+      "prefill_s": 4.9236,
+      "decode_s": 135.1263,
+      "weighted_fresh_prefill_tps": 533.958891867739,
+      "weighted_decode_tps": 47.98473724212089,
+      "request_wall_s": 140.18998600004124,
+      "initial_cap": 8192,
+      "final_cap": 8192,
+      "length_events": [],
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_failed_fields": [],
+      "delivery_guard_s": 0,
+      "first_delivery_accepted": null,
+      "delivery_guard_false_acceptance": false,
+      "success_without_policy_recovery": true,
+      "protocol_error_count": 0,
+      "protocol_recoveries": 0,
+      "tool_failures": [],
+      "ordinary_tool_errors": 0,
+      "code_edits": 2,
+      "baseline_expected_test_failures": 1,
+      "post_edit_test_failures": 0,
+      "submitted_code_sha256": "08f6b2b2b22cd32c487b3a10144565bdada50d135c85e85f71b2bd88b6ef01dd",
+      "private_code_tests": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 446,
+        "total": 446,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "checks": {
+        "overview_read": true,
+        "structured_submission_stored": true,
+        "fixture_unchanged": true,
+        "parser_and_tests_read": true,
+        "baseline_test_before_first_edit": true,
+        "function_actually_changed": true,
+        "current_source_public_test_passed": true,
+        "private_contract_cases_pass": true,
+        "truthful_structured_submission": true
+      },
+      "failed_checks": [],
+      "initial_request_except_cap_sha256": "1a6324f3e0a6ca931b222f24d4483323c3c7f1f8b9828d8a666db9a8eeb5e0e3",
+      "executed_action_sequence_sha256": "4b450236804e776c271800c594f5cd6124405ce4b33da4670aa3bff5e9a38c15",
+      "fixture_provenance": {
+        "variant": "r22-a",
+        "office_input_sha256": "b239275075471ecc2d61b86a2f45c66cd5548ff0b136ca9b89c0fe8460ff0f23",
+        "office_expected_sha256": "bf09ec85f0ce6837ff0ee207e92b4cce6928cc686008dc781b0061481ffa4ede",
+        "initial_code_sha256": "5a65017f08095c523f8ab985072ba9176c01e7fa31b32b96eeb7b2a1e7687505",
+        "public_code_inputs_sha256": "afb3312be2ce5a5031d63f9cd5aa39c1ce60be86d2714e670b7e5e90a23a65ff",
+        "private_code_inputs_sha256": "6507c69a5712cd541d34d57b06d8090341f7491fd35a179b0c495a59f710594f",
+        "private_case_count": 446,
+        "records": 1002,
+        "base_fixture_sha256": "579cdeee5cb955521be99dc467feb6ab0e351b216fefe0939ccc57ef7400648c",
+        "implementation_sha256": {
+          "r23_client.py": "41b6a4703203361eb00edc23afb0f3ab2ab3f0696ee080fe45fb1157afaeac3a",
+          "r23_variants.py": "bbbc96a1c820fd4f732b267611501c953799ac43d06e5834c7419c6f5c903ae7",
+          "r22_variants.py": "7c05c3e01ebcbb6a54c558cda21f5cee7b0ef5f6b8f18d9c8371da2409b99071",
+          "r14_agent_client.py": "e882a96f0cef1791fbeb58deb221be27be8d3df2b38384f907b38a34709bf5cd",
+          "budget_recovery.py": "805778dbab8614c36e831fb0e43963c7387d4cf39a294c010cf74c7d596850bd",
+          "ledger_verifier.py": "adcffa02ac72b00a4032709e9625bef5acb6171d700c304f979a1e8b65402da5",
+          "delivery_guard.py": "191421b380d59014d1adf137c8dd9ebf4868f7b41f61469fc351b1e8ed7df7f2"
+        }
+      },
+      "artifact_sha256": "a8463b34e33519575dd6d0c95abae4f56ebdce3c4593e826792408eaa29ad280",
+      "engine_ready_s": 21.052273299981607
+    }
+  ],
+  "pairs": [
+    {
+      "variant": "r22-a",
+      "scenario": "office",
+      "arm": "hybrid",
+      "repeat": 1,
+      "phase": "primary",
+      "identical_initial_input_except_cap": true,
+      "both_successful": true,
+      "fixed_success": true,
+      "adaptive_success": true,
+      "fixed_wall_s": 274.3986365000019,
+      "adaptive_wall_s": 283.2284101000114,
+      "adaptive_minus_fixed_wall_s": 8.829773600009503,
+      "adaptive_wall_change_percent": 3.2178635115081677,
+      "same_executed_action_sequence": true,
+      "fixed_output_tokens": 11257,
+      "adaptive_output_tokens": 11257,
+      "adaptive_length_retries": 0
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "code",
+      "arm": "hybrid",
+      "repeat": 1,
+      "phase": "primary",
+      "identical_initial_input_except_cap": true,
+      "both_successful": false,
+      "fixed_success": true,
+      "adaptive_success": false,
+      "fixed_wall_s": 140.30922120000469,
+      "adaptive_wall_s": 236.13605870000902,
+      "adaptive_minus_fixed_wall_s": 95.82683750000433,
+      "adaptive_wall_change_percent": null,
+      "same_executed_action_sequence": false,
+      "fixed_output_tokens": 6484,
+      "adaptive_output_tokens": 9450,
+      "adaptive_length_retries": 1
+    },
+    {
+      "variant": "r22-b",
+      "scenario": "office",
+      "arm": "hybrid",
+      "repeat": 1,
+      "phase": "primary",
+      "identical_initial_input_except_cap": true,
+      "both_successful": true,
+      "fixed_success": true,
+      "adaptive_success": true,
+      "fixed_wall_s": 298.9930277999956,
+      "adaptive_wall_s": 302.1884882999875,
+      "adaptive_minus_fixed_wall_s": 3.1954604999918956,
+      "adaptive_wall_change_percent": 1.0687408076048621,
+      "same_executed_action_sequence": true,
+      "fixed_output_tokens": 12262,
+      "adaptive_output_tokens": 12262,
+      "adaptive_length_retries": 0
+    },
+    {
+      "variant": "r22-b",
+      "scenario": "code",
+      "arm": "hybrid",
+      "repeat": 1,
+      "phase": "primary",
+      "identical_initial_input_except_cap": true,
+      "both_successful": true,
+      "fixed_success": true,
+      "adaptive_success": true,
+      "fixed_wall_s": 184.88420929998392,
+      "adaptive_wall_s": 185.00561160000507,
+      "adaptive_minus_fixed_wall_s": 0.12140230002114549,
+      "adaptive_wall_change_percent": 0.06566396366720628,
+      "same_executed_action_sequence": true,
+      "fixed_output_tokens": 8152,
+      "adaptive_output_tokens": 8152,
+      "adaptive_length_retries": 0
+    },
+    {
+      "variant": "r23-d",
+      "scenario": "office",
+      "arm": "hybrid",
+      "repeat": 1,
+      "phase": "primary",
+      "identical_initial_input_except_cap": true,
+      "both_successful": true,
+      "fixed_success": true,
+      "adaptive_success": true,
+      "fixed_wall_s": 248.26599840002018,
+      "adaptive_wall_s": 250.3380729999917,
+      "adaptive_minus_fixed_wall_s": 2.072074599971529,
+      "adaptive_wall_change_percent": 0.8346187610567934,
+      "same_executed_action_sequence": true,
+      "fixed_output_tokens": 9756,
+      "adaptive_output_tokens": 9756,
+      "adaptive_length_retries": 0
+    },
+    {
+      "variant": "r23-d",
+      "scenario": "code",
+      "arm": "hybrid",
+      "repeat": 1,
+      "phase": "primary",
+      "identical_initial_input_except_cap": true,
+      "both_successful": true,
+      "fixed_success": true,
+      "adaptive_success": true,
+      "fixed_wall_s": 126.72869359998731,
+      "adaptive_wall_s": 125.57497089999379,
+      "adaptive_minus_fixed_wall_s": -1.1537226999935228,
+      "adaptive_wall_change_percent": -0.9103879060216591,
+      "same_executed_action_sequence": true,
+      "fixed_output_tokens": 5667,
+      "adaptive_output_tokens": 5667,
+      "adaptive_length_retries": 0
+    },
+    {
+      "variant": "r23-e",
+      "scenario": "office",
+      "arm": "hybrid",
+      "repeat": 1,
+      "phase": "primary",
+      "identical_initial_input_except_cap": true,
+      "both_successful": true,
+      "fixed_success": true,
+      "adaptive_success": true,
+      "fixed_wall_s": 225.24097399998573,
+      "adaptive_wall_s": 224.06815069998265,
+      "adaptive_minus_fixed_wall_s": -1.172823300003074,
+      "adaptive_wall_change_percent": -0.5206971356832901,
+      "same_executed_action_sequence": true,
+      "fixed_output_tokens": 8743,
+      "adaptive_output_tokens": 8743,
+      "adaptive_length_retries": 0
+    },
+    {
+      "variant": "r23-e",
+      "scenario": "code",
+      "arm": "hybrid",
+      "repeat": 1,
+      "phase": "primary",
+      "identical_initial_input_except_cap": true,
+      "both_successful": true,
+      "fixed_success": true,
+      "adaptive_success": true,
+      "fixed_wall_s": 83.323786700028,
+      "adaptive_wall_s": 82.80070369999157,
+      "adaptive_minus_fixed_wall_s": -0.5230830000364222,
+      "adaptive_wall_change_percent": -0.6277715172974041,
+      "same_executed_action_sequence": true,
+      "fixed_output_tokens": 3634,
+      "adaptive_output_tokens": 3634,
+      "adaptive_length_retries": 0
+    },
+    {
+      "variant": "r22-b",
+      "scenario": "office",
+      "arm": "exact",
+      "repeat": 1,
+      "phase": "exact_regression",
+      "identical_initial_input_except_cap": true,
+      "both_successful": true,
+      "fixed_success": true,
+      "adaptive_success": true,
+      "fixed_wall_s": 506.5814446999866,
+      "adaptive_wall_s": 500.04294919999666,
+      "adaptive_minus_fixed_wall_s": -6.538495499989949,
+      "adaptive_wall_change_percent": -1.2907096318662492,
+      "same_executed_action_sequence": true,
+      "fixed_output_tokens": 10683,
+      "adaptive_output_tokens": 10683,
+      "adaptive_length_retries": 0
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "code",
+      "arm": "hybrid",
+      "repeat": 2,
+      "phase": "repeat_timing",
+      "identical_initial_input_except_cap": true,
+      "both_successful": false,
+      "fixed_success": true,
+      "adaptive_success": false,
+      "fixed_wall_s": 140.38212949997978,
+      "adaptive_wall_s": 207.68891689999145,
+      "adaptive_minus_fixed_wall_s": 67.30678740001167,
+      "adaptive_wall_change_percent": null,
+      "same_executed_action_sequence": false,
+      "fixed_output_tokens": 6484,
+      "adaptive_output_tokens": 9450,
+      "adaptive_length_retries": 1
+    },
+    {
+      "variant": "r22-a",
+      "scenario": "code",
+      "arm": "hybrid",
+      "repeat": 3,
+      "phase": "repeat_timing",
+      "identical_initial_input_except_cap": true,
+      "both_successful": false,
+      "fixed_success": true,
+      "adaptive_success": false,
+      "fixed_wall_s": 140.43700410000747,
+      "adaptive_wall_s": 210.01528699998744,
+      "adaptive_minus_fixed_wall_s": 69.57828289997997,
+      "adaptive_wall_change_percent": null,
+      "same_executed_action_sequence": false,
+      "fixed_output_tokens": 6484,
+      "adaptive_output_tokens": 9450,
+      "adaptive_length_retries": 1
+    }
+  ],
+  "aggregates": [
+    {
+      "phase": "primary",
+      "scenario": "office",
+      "policy": "fixed8192",
+      "tasks": 4,
+      "success": 4,
+      "success_without_policy_recovery": 4,
+      "median_attempt_wall_s": 261.33231745001103,
+      "median_successful_wall_s": 261.33231745001103,
+      "total_wall_s": 1046.8986367000034,
+      "weighted_fresh_prefill_tps": 1304.8034514141696,
+      "weighted_decode_tps": 48.867805188988896,
+      "requests": 45,
+      "output_tokens": 42018,
+      "length_retries": 0,
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 4,
+      "delivery_rejections": 0,
+      "delivery_guard_s": 0.5097702999773901,
+      "delivery_guard_false_acceptance": 0,
+      "protocol_errors": 0,
+      "ordinary_tool_errors": 4
+    },
+    {
+      "phase": "primary",
+      "scenario": "office",
+      "policy": "adaptive4096",
+      "tasks": 4,
+      "success": 4,
+      "success_without_policy_recovery": 4,
+      "median_attempt_wall_s": 266.78324155000155,
+      "median_successful_wall_s": 266.78324155000155,
+      "total_wall_s": 1059.8231220999733,
+      "weighted_fresh_prefill_tps": 1298.2523735046893,
+      "weighted_decode_tps": 48.21189280410926,
+      "requests": 45,
+      "output_tokens": 42018,
+      "length_retries": 0,
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 4,
+      "delivery_rejections": 0,
+      "delivery_guard_s": 0.4598074999812525,
+      "delivery_guard_false_acceptance": 0,
+      "protocol_errors": 0,
+      "ordinary_tool_errors": 4
+    },
+    {
+      "phase": "primary",
+      "scenario": "code",
+      "policy": "fixed8192",
+      "tasks": 4,
+      "success": 4,
+      "success_without_policy_recovery": 4,
+      "median_attempt_wall_s": 133.518957399996,
+      "median_successful_wall_s": 133.518957399996,
+      "total_wall_s": 535.2459108000039,
+      "weighted_fresh_prefill_tps": 545.6487709946272,
+      "weighted_decode_tps": 46.50793182023072,
+      "requests": 29,
+      "output_tokens": 23937,
+      "length_retries": 0,
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_rejections": 0,
+      "delivery_guard_s": 0,
+      "delivery_guard_false_acceptance": 0,
+      "protocol_errors": 0,
+      "ordinary_tool_errors": 0
+    },
+    {
+      "phase": "primary",
+      "scenario": "code",
+      "policy": "adaptive4096",
+      "tasks": 4,
+      "success": 3,
+      "success_without_policy_recovery": 3,
+      "median_attempt_wall_s": 155.29029124999943,
+      "median_successful_wall_s": 125.57497089999379,
+      "total_wall_s": 629.5173448999994,
+      "weighted_fresh_prefill_tps": 603.1635252895596,
+      "weighted_decode_tps": 44.30749264849384,
+      "requests": 29,
+      "output_tokens": 26903,
+      "length_retries": 1,
+      "discarded_output_tokens": 4096,
+      "discarded_request_wall_s": 114.08005079999566,
+      "delivery_attempts": 0,
+      "delivery_rejections": 0,
+      "delivery_guard_s": 0,
+      "delivery_guard_false_acceptance": 0,
+      "protocol_errors": 0,
+      "ordinary_tool_errors": 0
+    },
+    {
+      "phase": "exact_regression",
+      "scenario": "office",
+      "policy": "fixed8192",
+      "tasks": 1,
+      "success": 1,
+      "success_without_policy_recovery": 1,
+      "median_attempt_wall_s": 506.5814446999866,
+      "median_successful_wall_s": 506.5814446999866,
+      "total_wall_s": 506.5814446999866,
+      "weighted_fresh_prefill_tps": 647.3033180848678,
+      "weighted_decode_tps": 25.8821066770166,
+      "requests": 12,
+      "output_tokens": 10683,
+      "length_retries": 0,
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_rejections": 0,
+      "delivery_guard_s": 0.12142179999500513,
+      "delivery_guard_false_acceptance": 0,
+      "protocol_errors": 0,
+      "ordinary_tool_errors": 0
+    },
+    {
+      "phase": "exact_regression",
+      "scenario": "office",
+      "policy": "adaptive4096",
+      "tasks": 1,
+      "success": 1,
+      "success_without_policy_recovery": 1,
+      "median_attempt_wall_s": 500.04294919999666,
+      "median_successful_wall_s": 500.04294919999666,
+      "total_wall_s": 500.04294919999666,
+      "weighted_fresh_prefill_tps": 650.3205094335489,
+      "weighted_decode_tps": 26.24505555977291,
+      "requests": 12,
+      "output_tokens": 10683,
+      "length_retries": 0,
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 1,
+      "delivery_rejections": 0,
+      "delivery_guard_s": 0.15245249998406507,
+      "delivery_guard_false_acceptance": 0,
+      "protocol_errors": 0,
+      "ordinary_tool_errors": 0
+    },
+    {
+      "phase": "repeat_timing",
+      "scenario": "code",
+      "policy": "fixed8192",
+      "tasks": 2,
+      "success": 2,
+      "success_without_policy_recovery": 2,
+      "median_attempt_wall_s": 140.40956679999363,
+      "median_successful_wall_s": 140.40956679999363,
+      "total_wall_s": 280.81913359998725,
+      "weighted_fresh_prefill_tps": 532.5527691123445,
+      "weighted_decode_tps": 48.0101410686625,
+      "requests": 16,
+      "output_tokens": 12968,
+      "length_retries": 0,
+      "discarded_output_tokens": 0,
+      "discarded_request_wall_s": 0,
+      "delivery_attempts": 0,
+      "delivery_rejections": 0,
+      "delivery_guard_s": 0,
+      "delivery_guard_false_acceptance": 0,
+      "protocol_errors": 0,
+      "ordinary_tool_errors": 0
+    },
+    {
+      "phase": "repeat_timing",
+      "scenario": "code",
+      "policy": "adaptive4096",
+      "tasks": 2,
+      "success": 0,
+      "success_without_policy_recovery": 0,
+      "median_attempt_wall_s": 208.85210194998945,
+      "median_successful_wall_s": null,
+      "total_wall_s": 417.7042038999789,
+      "weighted_fresh_prefill_tps": 714.5186892517776,
+      "weighted_decode_tps": 46.891014118661055,
+      "requests": 16,
+      "output_tokens": 18900,
+      "length_retries": 2,
+      "discarded_output_tokens": 8192,
+      "discarded_request_wall_s": 174.61423580002156,
+      "delivery_attempts": 0,
+      "delivery_rejections": 0,
+      "delivery_guard_s": 0,
+      "delivery_guard_false_acceptance": 0,
+      "protocol_errors": 0,
+      "ordinary_tool_errors": 0
+    }
+  ],
+  "code_a_repeats": [
+    {
+      "policy": "fixed8192",
+      "repeat_count": 3,
+      "all_success": true,
+      "wall_s": [
+        140.30922120000469,
+        140.38212949997978,
+        140.43700410000747
+      ],
+      "median_s": 140.38212949997978,
+      "minimum_s": 140.30922120000469,
+      "maximum_s": 140.43700410000747,
+      "timing_interpretation": "All attempt durations; a failed attempt is not time to a correct result",
+      "sample_stdev_s": 0.06410318695480909,
+      "identical_actions_across_repeats": true,
+      "output_tokens": [
+        6484,
+        6484,
+        6484
+      ]
+    },
+    {
+      "policy": "adaptive4096",
+      "repeat_count": 3,
+      "all_success": false,
+      "wall_s": [
+        236.13605870000902,
+        207.68891689999145,
+        210.01528699998744
+      ],
+      "median_s": 210.01528699998744,
+      "minimum_s": 207.68891689999145,
+      "maximum_s": 236.13605870000902,
+      "timing_interpretation": "All attempt durations; a failed attempt is not time to a correct result",
+      "sample_stdev_s": 15.795287211892823,
+      "identical_actions_across_repeats": true,
+      "output_tokens": [
+        9450,
+        9450,
+        9450
+      ]
+    }
+  ],
+  "limitations": [
+    "Only two synthetic task families, four primary instances; assisted workflow, not population model accuracy",
+    "Fixed 8192 is a maximum, not a minimum; adaptive regeneration adds discarded generation cost",
+    "Each request counts whether successful, truncated or rejected; failed attempt time is not time to a correct answer",
+    "success_without_policy_recovery excludes budget, format and delivery repair; ordinary SQL/code iteration is counted separately",
+    "Output-cap pairs use identical initial prompts except max_tokens; later plans and text may differ",
+    "Office tool description now declares verification; R22-to-R23 changes cannot isolate recovery causality",
+    "SQL verifier is independent of Python final grader but limited to this declared synthetic schema/contract",
+    "Delivery guard checks structured fields, not all final narrative claims or visual chart mappings",
+    "No Octop memory, unrestricted code execution, real workbook, HTML/PPTX, concurrent or stochastic evaluation",
+    "Model load and final hidden scoring excluded from task time; runtime checking and retries included",
+    "Wall limit checks request admission only; weight identity uses metadata and sampled first/last MiB, not full-file hashes",
+    "No engine or deployment changes; task timing differences are not kernel gains"
+  ]
+}

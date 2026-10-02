@@ -6,7 +6,7 @@
 
 这是 [gfx1151-engine 上游实验项目](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine)
 的研究 Fork，主开发分支为 `codex/halogen-v2-support`；本轮研究分支为
-`codex/route-quality-r22-20261002`。面向 **Windows 11 /
+`codex/task-reliability-r23-20261002`。面向 **Windows 11 /
 Ryzen AI Max+ 395 / Radeon 8060S（gfx1151）/ 128 GiB 统一内存**，重点是
 Halogen Flash-Next v2 HGN 格式支持、专家计算与 Prefill 优化，以及串行/MTP 的数值对齐。
 目标模型仍是 Qwen3.8-Flash-Next（`qwen4_exp`）及兼容结构，不是通用模型推理框架。
@@ -20,6 +20,17 @@ R19 完成上游基础设施整合与同权重的三方 v2 对照，新增可切
 局部收益和有限数值检查不代表跨输入长度的稳定整体加速。
 这些编号是本分支研究阶段，不是上游发布版本。
 当前结果不构成生产可用、全场景无损或全面超过上游的承诺。
+
+## R23：输出预算与独立交付校验
+
+新增可选的有界截断恢复和源表独立核算，推理内核及日常部署不变。16 次 hybrid
+主测试中，固定 8192 输出上限通过 **8/8**，4096→8192 自适应通过 **7/8**。
+A 代码在重生成后漏算无小数金额的分位，公开测试通过仍未通过独立评分；
+有界恢复不等于答案可靠，也没有体现稳定加速。
+
+另列 exact B 回归与 A 代码三次重复，全部成功、失败和重试成本均保留。
+交付核算仅适配声明的合成台账，未接入 Octop，亦不代替真实 Excel 口径审阅。
+[完整条件、结果与限制](docs/TASK_RELIABILITY_R23.md)。
 
 ## R22：融合与 exact 路径的实际工具任务对照
 

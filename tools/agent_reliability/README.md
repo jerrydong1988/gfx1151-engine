@@ -1,4 +1,4 @@
-# Agent reliability fixtures (R18)
+# Agent reliability fixtures (R18–R23)
 
 These tests execute real, bounded local tools against a synthetic 1,002-row ledger
 or a small Python-function exercise. They are not an Octop integration, a benchmark
@@ -83,3 +83,53 @@ and engine phase times, not accumulated context/cache-hit totals. Failed attempt
 are retained under `failed_reqstat` and must be included when aggregating cost.
 See [the R18 report](../../docs/R18_TASK_RELIABILITY.md) for the tested scope and
 limits; a few fixed tasks are not a broad success-rate estimate.
+
+## R23 bounded output recovery and source verification
+
+R23 adds an opt-in evaluation wrapper. The legacy client keeps its original
+behavior unless the wrapper supplies the new budget options. The inference
+engine/API binaries, model weights and daily deployment are unchanged.
+
+For an already running isolated MTP instance on the ports above, each command
+below performs actual model calls (there is no offline-preview mode in this
+wrapper). Give every run new output and work paths:
+
+```text
+python -B tools/agent_reliability/r23_client.py --variant r23-d --scenario office --policy fixed8192 --delivery-guard --identity local-r23-d-office-fixed --output tools/agent_reliability/runs/local-r23-d-office-fixed.json --work-dir tools/agent_reliability/runs/local-r23-d-office-fixed
+```
+
+Use `--policy adaptive4096` and fresh paths to start with a 4096-token cap, then
+allow one verified `length` regeneration at up to 8192 tokens. It reuses the valid
+message history, discards the incomplete assistant response without executing
+any of its tools, and retains the larger cap afterward. A larger cap permits
+more output; it does not force that amount to be generated. Regeneration costs
+extra and may produce different text, even with greedy sampling. Context or
+total-budget exhaustion, unclear `length`, and transport failures do not retry.
+
+`--delivery-guard` applies only to `office`: an independent SQL computation checks
+the submission against the declared source contract before accepted storage.
+Rejected attempts remain in the audit files, with only failed field names
+returned to the agent. Two rejections stop the task; source mutation or checker
+failure blocks delivery immediately. The original Python scorer still runs
+independently afterward. This checker does not apply to arbitrary XLSX files,
+does not validate HTML/PPTX layouts and is not installed into Octop by these
+changes. Code tasks retain public tests and separate final private grading.
+
+Offline checks for these additions:
+
+```text
+python -B tools/agent_reliability/test_budget_recovery.py
+python -B tools/agent_reliability/test_ledger_verifier.py
+python -B tools/agent_reliability/test_r23_report.py
+```
+
+The R23 wrapper fixes greedy sampling, thinking enabled, 24 API attempts, 65536
+generated tokens per task, and a 1800-second request-admission limit. Already
+running requests are not interrupted by that admission limit. For reproducible
+paired tests, use the same arithmetic profile, fresh engine/API processes, no
+overrides and no other clients. The Windows process-ownership driver remains
+machine-specific and is not included. `r23_report.py` reads that driver's frozen
+evidence manifest; it makes no model calls and never reruns failed cases.
+
+See [R23 protocol and results](../../docs/TASK_RELIABILITY_R23.md). Primary policy
+pairs, selected exact regressions and timing repeats have separate denominators.
