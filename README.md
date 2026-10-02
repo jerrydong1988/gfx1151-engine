@@ -6,7 +6,7 @@
 
 这是 [gfx1151-engine 上游实验项目](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine)
 的研究 Fork，主开发分支为 `codex/halogen-v2-support`；本轮研究分支为
-`codex/v2-reference-speed-20261002`。面向 **Windows 11 /
+`codex/v2-dataflow-r21-20261002`。面向 **Windows 11 /
 Ryzen AI Max+ 395 / Radeon 8060S（gfx1151）/ 128 GiB 统一内存**，重点是
 Halogen Flash-Next v2 HGN 格式支持、专家计算与 Prefill 优化，以及串行/MTP 的数值对齐。
 目标模型仍是 Qwen3.8-Flash-Next（`qwen4_exp`）及兼容结构，不是通用模型推理框架。
@@ -20,6 +20,17 @@ R19 完成上游基础设施整合与同权重的三方 v2 对照，新增可切
 局部收益和有限数值检查不代表跨输入长度的稳定整体加速。
 这些编号是本分支研究阶段，不是上游发布版本。
 当前结果不构成生产可用、全场景无损或全面超过上游的承诺。
+
+## R21：保持参考计算顺序的数据流优化
+
+在 R20 exact-reuse 之上，增加默认关闭的专家任务重排、逐专家逆变换与归约融合，
+以及缓存 BF16 投影的小批量 GEMV 布局。保留乘加与变换次序，不额外量化权重。
+15,859 个 Prefill 评分位置与 R20 参考首选 token 及全词表原始 logits 指纹一致；
+另有逐 token 串行路径的配对检查。有限验证不等于所有输入和并发场景等价。
+
+[开关范围、数值检查、整请求计时与未采用的方案](docs/EXACT_DATAFLOW_R21.md)。
+三轮正式对照中，32K 完整请求中位耗时：串行 59.65 → 57.12 秒，MTP 58.01 → 55.02 秒；
+18/18 组配对请求均更快且生成 token 一致。日常部署保持原样；R19 快速 hybrid 的数值差异未因本轮消失。
 
 ## R20：保持参考数值顺序的专家加速
 

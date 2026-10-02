@@ -1083,6 +1083,10 @@ static void v2_deq_bf16(const WView& w, uint16_t* out, hipStream_t st) {
   }
 }
 
+static bool v2_bf16_gemv_enabled() {
+  static const bool on=[] {const char* p=getenv("GDEC_V2_BF16_GEMV");return p&&!strcmp(p,"1");}();
+  return on && g_hgn_v2;
+}
 static void gemv(const WView& w, const float* x, float* y, uint64_t row_off = 0,
                  uint64_t nrows = 0) {
   uint64_t rows = nrows ? nrows : w.rows;
@@ -1114,6 +1118,12 @@ static void gemv(const WView& w, const float* x, float* y, uint64_t row_off = 0,
     k_bf16_gemv_row<<<(unsigned)rows, 256, 0, g_str>>>(
         (const uint16_t*)w.data + row_off * w.cols, x, y, w.cols);
   } else if (w.dtype == 0) {
+    if (v2_bf16_gemv_enabled() && w.cols%8==0 &&
+        (w.cols<1024 || rows>=65536 || rows<64)) {
+      exact_gemv<1,1,2><<<(unsigned)((rows+1)/2),64,0,g_str>>>(
+          (const uint16_t*)w.data+row_off*w.cols,x,y,(int)rows,(int)w.cols,(int)w.cols);
+      return;
+    }
     k_bf16_gemv<<<(unsigned)blocks, threads, 0, g_str>>>(
         (const uint16_t*)w.data + row_off * w.cols, x, y, rows, w.cols);
   } else if (w.dtype == 8) {
@@ -1217,7 +1227,10 @@ static bool gemv_multi_q4cp(const WView& w, const void* x, float* y, int P,
     switch (P) {
 #define GDEC_GEMV_MR_CASE(PP)                                              \
   case PP:                                                                 \
-    if (serial_order)                                                      \
+    if (serial_order && v2_bf16_gemv_enabled() && w.rows<65536)               \
+      exact_gemv<PP,1,4><<<(unsigned)((w.rows+3)/4),128,0,g_str>>>(           \
+          (const uint16_t*)w.data,(const float*)x,y,(int)w.rows,(int)w.cols,(int)xstride); \
+    else if (serial_order)                                                 \
       k_bf16_gemv_mr<PP, true><<<(unsigned)blocks, threads, 0, g_str>>>(       \
           (const uint16_t*)w.data, (const float*)x, y, w.rows, w.cols,         \
           xstride);                                                          \

@@ -2157,24 +2157,53 @@ struct GpuModel {
       const int nt=(P*k+63)/64+g_cfg.experts;
       if(mode==V2MoeMode::Exact){
         static const bool reuse = [] { const char* p=getenv("GDEC_V2_EXACT_REUSE");return p && !strcmp(p,"1"); }();
+        static const bool dataflow = [] { const char* p=getenv("GDEC_V2_EXACT_DATAFLOW");return p && !strcmp(p,"1"); }();
+        static const bool order = [] { const char* p=getenv("GDEC_V2_EXACT_ORDER");return p && !strcmp(p,"1"); }();
+        PrefillProfileSpan profile_compute(prefill_profile_, PrefillGpuProfile::V2Compute);
+        auto* ep=prefill_expert_profile_enabled()?prefill_profile_:nullptr;
         float* xr=(float*)d_xbf16b;float* hr=d_hidb;
+        PrefillProfileSpan profile_rotate_in(ep,PrefillGpuProfile::ExpertRotateIn);
         hgnv2gpu::rotate_fast<<<dim3(d/128,P),128,0,g_str>>>(x,xr,gu.su,d,false);
-        if (reuse)
+        profile_rotate_in.stop();
+        PrefillProfileSpan profile_gu(ep,PrefillGpuProfile::ExpertGu);
+        if (reuse && order)
+          hgnv2gpu::expert_batch_exact_reuse<16,8,false,2,1,false,true,1,1><<<dim3(((2*mid+15)/16)*4,nt,1),64,0,g_str>>>(gu.data,
+              (const __half*)(gu.data+gu.rows*gu.cols/2),xr,d_guvb,d_tokidx,(const int*)d_moetiles,d_moentiles,d,2*mid);
+        else if (reuse)
           hgnv2gpu::expert_batch_exact_reuse<16,8,false,2,1,false,true,1><<<dim3((2*mid+15)/16,nt,4),64,0,g_str>>>(gu.data,
               (const __half*)(gu.data+gu.rows*gu.cols/2),xr,d_guvb,d_tokidx,(const int*)d_moetiles,d_moentiles,d,2*mid);
         else
         hgnv2gpu::expert_batch_exact<8,true><<<dim3((2*mid+7)/8,nt,8),256,0,g_str>>>(gu.data,
             (const __half*)(gu.data+gu.rows*gu.cols/2),xr,d_guvb,d_tokidx,(const int*)d_moetiles,d_moentiles,d,2*mid);
-        hgnv2gpu::activate_rotate<<<dim3(mid/128,P*k),128,0,g_str>>>(d_guvb,hr,gu.sv,dn.su,mid);
-        if (reuse)
+        profile_gu.stop();
+        PrefillProfileSpan profile_activation(ep,PrefillGpuProfile::ExpertActivation);
+        if (dataflow)
+          hgnv2gpu::exact_activate_wave<4><<<((mid/128)*P*k+3)/4,128,0,g_str>>>(d_guvb,hr,gu.sv,dn.su,mid,P*k);
+        else
+          hgnv2gpu::activate_rotate<<<dim3(mid/128,P*k),128,0,g_str>>>(d_guvb,hr,gu.sv,dn.su,mid);
+        profile_activation.stop();
+        PrefillProfileSpan profile_down(ep,PrefillGpuProfile::ExpertDown);
+        if (reuse && order)
+          hgnv2gpu::expert_batch_exact_reuse<8,4,false,4,1,true,true,4,1><<<dim3(((d+15)/16)*8,nt,1),128,0,g_str>>>(dn.data,
+              (const __half*)(dn.data+dn.rows*dn.cols/2),hr,d_guvb,nullptr,(const int*)d_moetiles,d_moentiles,mid,d);
+        else if (reuse)
           hgnv2gpu::expert_batch_exact_reuse<8,4,false,4,1,true,true><<<dim3((d+15)/16,nt,8),128,0,g_str>>>(dn.data,
               (const __half*)(dn.data+dn.rows*dn.cols/2),hr,d_guvb,nullptr,(const int*)d_moetiles,d_moentiles,mid,d);
         else
         hgnv2gpu::expert_batch_exact<8,true><<<dim3((d+7)/8,nt,8),256,0,g_str>>>(dn.data,
             (const __half*)(dn.data+dn.rows*dn.cols/2),hr,d_guvb,nullptr,(const int*)d_moetiles,d_moentiles,mid,d);
-        hgnv2gpu::rotate_fast<<<dim3(d/128,P*k),128,0,g_str>>>(d_guvb,d_guvb,dn.sv,d,true);
+        profile_down.stop();
         hgnv2gpu::original_pairids<<<(P*k+255)/256,256,0,g_str>>>(moe_routing.values_out,d_pairids,P*k);
+        if (dataflow) {
+          PrefillProfileSpan profile_fused(ep,PrefillGpuProfile::ExpertReduceRotate);
+          hgnv2gpu::exact_inverse_reduce_wave<10,4><<<((d/128)*P+3)/4,128,0,g_str>>>(d_guvb,d_pairids,d_pweight,dn.sv,out,P,d);
+        } else {
+        PrefillProfileSpan profile_rotate_out(ep,PrefillGpuProfile::ExpertRotateOut);
+        hgnv2gpu::rotate_fast<<<dim3(d/128,P*k),128,0,g_str>>>(d_guvb,d_guvb,dn.sv,d,true);
+        profile_rotate_out.stop();
+        PrefillProfileSpan profile_reduce(ep,PrefillGpuProfile::ExpertReduce);
         k_moe_reduce_pw<10><<<dim3((d+255)/256,P),256,0,g_str>>>(d_guvb,d_pairids,d_pweight,out,P,d);
+        }
       } else if(mode==V2MoeMode::Grouped) {
         // Narrow tiles reduce padding/register pressure for sparse routes;
         // wider tiles reuse weights better once experts receive many tokens.

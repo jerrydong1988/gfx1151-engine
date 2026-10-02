@@ -7,7 +7,7 @@
 This is a research fork of the experimental
 [upstream gfx1151-engine](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine),
 with main development on `codex/halogen-v2-support` and this research on
-`codex/v2-reference-speed-20261002`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
+`codex/v2-dataflow-r21-20261002`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
 Radeon 8060S (gfx1151) / 128 GiB unified memory**: Halogen Flash-Next v2 HGN loading,
 expert and prefill kernels, and numerical alignment between serial and MTP decoding.
 The target remains Qwen3.8-Flash-Next (`qwen4_exp`) and compatible architectures,
@@ -32,6 +32,20 @@ As of the R17 checkpoint (2026-10-02), two paged QSA candidates are available
 but default off. Tool-output failures after normal stopping now report
 `invalid_tool_call` rather than falsely claiming token-budget exhaustion.
 This interface correction does not fix model tool selection or SQL correctness.
+
+## R21: exact dataflow and small-batch layout
+
+Default-off candidates add expert work ordering, per-expert inverse-transform/reduction
+fusion, and a cached-BF16 small-batch GEMV layout on top of R20 exact reuse. FMA and
+transform order are retained without additional weight quantization. All 15,859 scored
+Prefill positions and full-vocabulary raw-logit fingerprints match the R20 reference;
+paired serial teacher forcing is also checked. This is bounded evidence, not universal
+input/concurrency equivalence. The daily deployment remains unchanged.
+
+[Flags, numerical checks, complete-request timing and rejected experiments](docs/EXACT_DATAFLOW_R21.md).
+Across three clean paired repeats, median 32K request time fell from 59.65 to 57.12 s
+(serial) and 58.01 to 55.02 s (MTP). All 18 paired requests were faster with identical
+generated tokens. The R19 fast hybrid path retains its documented numerical differences.
 
 ## R20: expert prefill with the reference FP32 order
 

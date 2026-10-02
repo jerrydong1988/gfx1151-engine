@@ -51,7 +51,7 @@ __global__ __launch_bounds__(256) void ht_dense_exact_streamed(
     for(int j=0;j<4;++j){int R=ty*128+j*32+lane;out[(size_t)R*cols+C]=bf(((v[j]*(1.f/128.f))*su[C])*sv[R]);}
   }
 }
-template<int BT, int RW, bool StageX=false, int NW=8, int StageGroups=1, bool DirectQ=false, bool UniformRows=false, int JUnroll=4>
+template<int BT, int RW, bool StageX=false, int NW=8, int StageGroups=1, bool DirectQ=false, bool UniformRows=false, int JUnroll=4, int GridOrder=0>
 __global__ __launch_bounds__(NW*32) void expert_batch_exact_reuse(
     const uint8_t* __restrict__ q, const __half* __restrict__ scales,
     const float* __restrict__ x, float* __restrict__ y,
@@ -59,10 +59,14 @@ __global__ __launch_bounds__(NW*32) void expert_batch_exact_reuse(
     const int* __restrict__ ntiles, int cols, int erows) {
   if ((int)blockIdx.y >= *ntiles) return;
   const int* tile=tiles+3*blockIdx.y;
-  const int start=BT*blockIdx.z;
+  constexpr int chunks=(64+BT-1)/BT;
+  const int rowblocks=(erows+NW*RW-1)/(NW*RW);
+  const int chunk=GridOrder==1?blockIdx.x%chunks:GridOrder==2?blockIdx.x/rowblocks:blockIdx.z;
+  const int rowblock=GridOrder==1?blockIdx.x/chunks:GridOrder==2?blockIdx.x%rowblocks:blockIdx.x;
+  const int start=BT*chunk;
   if(start>=tile[2])return;
   const int lane=threadIdx.x&31, wave=threadIdx.x>>5;
-  int row0=(blockIdx.x*NW+wave)*RW;
+  int row0=(rowblock*NW+wave)*RW;
   if constexpr(UniformRows) row0=__builtin_amdgcn_readfirstlane(row0);
   const int first=tile[1]+start,live=min(BT,tile[2]-start);
   const float* in[BT];float acc[RW][BT]{};
