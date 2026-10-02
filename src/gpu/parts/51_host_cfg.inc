@@ -2504,6 +2504,18 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
     // of the turn together with the final state, where only the pages no
     // cached file holds yet are written (content-addressed, shared).
     std::vector<size_t> cuts;
+    // Keep one chunk-aligned restart point for a retry of the same prompt.
+    // A prompt-end checkpoint cannot itself be matched (no saved logits).
+    // Alignment preserves the ordinary bulk prefill chunk boundaries; the
+    // cached tail is recomputed through the usual path, including GDN/MTP.
+    const char* retry_ckpt = getenv("GDEC_RETRY_CHECKPOINT");
+    if (rckpt::enabled() && retry_ckpt && atoi(retry_ckpt) != 0 &&
+        g.ids.size() > 8192) {
+      const char* chunk_env = getenv("GDEC_PREFILL_CHUNK");
+      const size_t chunk = chunk_env ? (size_t)std::max(1, atoi(chunk_env)) : 8192;
+      const size_t cut = ((g.ids.size() - 1) / chunk) * chunk;
+      if (cut > mcp && cut >= 4096) cuts.push_back(cut);
+    }
     if (!kvs.dir.empty() || rckpt::enabled()) {
       for (size_t cc : g.snaps)
         if (cc > mcp && cc < g.ids.size() && cc >= kvs.min_tokens)

@@ -99,6 +99,11 @@ def main():
                     try: return get(base, "/health")[0] == 200
                     except OSError: return False
                 wait_for(health, "API"); checks(base)
+                log.flush(); log.seek(0); recorded = log.read()
+                for suffix in ("stream=0", "stream=1", "responses=1 stream=0", "responses=1 stream=1"):
+                    check("terminal=invalid_tool_call " + suffix in recorded,
+                          "terminal parser failure is observable: " + suffix)
+                check("secret-value" not in recorded, "terminal logs omit argument values")
             except BaseException:
                 log.flush(); log.seek(0); print(log.read(), file=sys.stderr); raise
             finally:

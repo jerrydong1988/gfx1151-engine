@@ -68,3 +68,37 @@ build/test-ple-page-plan.exe
 The existing reader assumes a single pump owns each completion port at a time.
 The page mode does not add concurrent-reader support or establish multislotted,
 multimodal or other-weight-format performance.
+
+## Windows slow-read localization (R25)
+
+With request timing enabled, `[ple-row-wait]` separates cumulative time inside
+`ReadFile` from time inside `GetQueuedCompletionStatus`, and reports each call's
+maximum. The clock is deliberately coarse (`GetTickCount64`); use it for second-
+scale stalls, not kernel microbenchmarks. These include descheduling and are not
+physical-disk-only timings. Correlate with disk latency/queue, page reads and
+available memory. Windows page reads can load file-backed pages, not just the
+pagefile; they do not by themselves prove commit exhaustion.
+
+An aligned unbuffered page-read prototype passed byte checks but regressed the
+16,384-token probe from 12.84 s to 39.19 s. It was rejected and is not included in
+this runtime. This does not rule out other storage/data-flow approaches.
+
+## Bounded same-prompt retry checkpoint (R25)
+
+`GDEC_RETRY_CHECKPOINT=1` with `GDEC_RCKPT_MAX>0` inserts a snapshot at the last
+ordinary Prefill chunk boundary strictly before prompt end. A repeated request
+can then recompute at most one chunk, instead of the whole prompt. Existing GDN,
+MTP and pinned-KV state restoration is used; changing KV length alone is unsafe.
+Use the same fixed `GDEC_PREFILL_CHUNK` as the measured configuration. A full
+prompt-end checkpoint has no saved logits and is not itself a resumable match.
+
+Two RAM entries with `GDEC_CKPT_TOKENS=0` retain this boundary and prompt end for
+a typical immediate retry. Other conversations, pool pressure and additional
+API snapshot cuts can evict them; reuse is never guaranteed. RAM checkpoints do
+not survive a process restart. Token equality must be checked against cold runs
+with the same numerical profile; this feature does not establish general MTP
+equivalence or semantic correctness.
+
+API terminal parser failures now log the response ID and `invalid_tool_call`
+after generation. An engine `finish=stop` line alone is not evidence of successful
+API delivery. Terminal logs omit tool arguments and document contents.

@@ -2237,9 +2237,12 @@ void handle_chat(const http::Request& q, http::Response* r, http::Stream* st) {
         parser.finish();
         // A malformed call after a normal model stop is not token exhaustion.
         // Do not send clients into a larger-budget retry for an unknown tool.
-        if (parser.has_partial_call() && o.reason != "length")
+        if (parser.has_partial_call() && o.reason != "length") {
+            fprintf(stderr, "API %s terminal=invalid_tool_call stream=0 calls=%zu\n",
+                    id.c_str(), parser.calls().size());
             http::fail(502, parser.error(),
                        "model_output_error", "invalid_tool_call");
+        }
         json msg;
         msg["role"] = "assistant";
         msg["content"] = parser.content();
@@ -2322,9 +2325,12 @@ void handle_chat(const http::Request& q, http::Response* r, http::Stream* st) {
         if (!dispatch_tool_events(parser.feed(ct))) return;
     }
     if (!dispatch_tool_events(parser.finish())) return;
-    if (parser.has_partial_call() && o.reason != "length")
+    if (parser.has_partial_call() && o.reason != "length") {
+        fprintf(stderr, "API %s terminal=invalid_tool_call stream=1 calls=%zu\n",
+                id.c_str(), parser.calls().size());
         http::fail(502, parser.error(),
                    "model_output_error", "invalid_tool_call");
+    }
     const std::string finish = (o.reason == "length" || parser.has_partial_call())
                                    ? "length"
                                    : (parser.calls().empty() ? o.reason : "tool_calls");
@@ -2484,6 +2490,7 @@ void handle_responses(const http::Request& q, http::Response* r, http::Stream* s
         }
         json response = response_object(incomplete ? "incomplete" : "completed", output, &o);
         if (parser.has_partial_call() && o.reason != "length") {
+            fprintf(stderr, "API %s terminal=invalid_tool_call responses=1 stream=0\n", id.c_str());
             response["status"] = "failed";
             response.erase("incomplete_details");
             response["error"] = {{"code", "invalid_tool_call"},
@@ -2680,6 +2687,7 @@ void handle_responses(const http::Request& q, http::Response* r, http::Stream* s
     json final_response =
         response_object(incomplete ? "incomplete" : "completed", output_slots, &o);
     if (partial_call && o.reason != "length") {
+        fprintf(stderr, "API %s terminal=invalid_tool_call responses=1 stream=1\n", id.c_str());
         final_response["status"] = "failed";
         final_response.erase("incomplete_details");
         final_response["error"] = {{"code", "invalid_tool_call"},

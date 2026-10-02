@@ -316,6 +316,11 @@ struct PleWin {
     for (size_t i = 0; i < depth; i++) free_[i] = depth - 1 - i;
     size_t nfree = depth;
     size_t sub = 0, done = 0;
+    // GetTickCount64 is deliberately coarse/cheap: diagnose multi-second
+    // stalls without a high-resolution clock call for each tiny row.
+    const char* timing_env = getenv("GDEC_REQUEST_TIMING");
+    const bool timing = n >= 512 && timing_env && atoi(timing_env) != 0;
+    uint64_t submit_ms = 0, wait_ms = 0, max_submit_ms = 0, max_wait_ms = 0;
     while (done < n) {
       while (sub < n && nfree > 0) {
         size_t slot = free_[--nfree];
@@ -325,7 +330,12 @@ struct PleWin {
         uint64_t off = g_ple_foff + (addrs[sub] - table_va);
         ov->Offset = (DWORD)(off & 0xffffffffu);
         ov->OffsetHigh = (DWORD)(off >> 32);
+        const uint64_t before_submit = timing ? GetTickCount64() : 0;
         BOOL r = ReadFile(fh, staging + sub * g_ple_rb, g_ple_rb, nullptr, ov);
+        if (timing) {
+          const uint64_t elapsed = GetTickCount64() - before_submit;
+          submit_ms += elapsed; max_submit_ms = std::max(max_submit_ms, elapsed);
+        }
         if (!r && GetLastError() != ERROR_IO_PENDING) {
           fprintf(stderr, "ple_win: ReadFile row %zu failed: %lu\n", sub,
                   GetLastError());
@@ -336,18 +346,32 @@ struct PleWin {
       DWORD got = 0;
       ULONG_PTR key = 0;
       OVERLAPPED* pov = nullptr;
+      const uint64_t before_wait = timing ? GetTickCount64() : 0;
       BOOL okr = GetQueuedCompletionStatus(iocp, &got, &key, &pov, INFINITE);
-      size_t slot = (size_t)(pov - ovs.data());
-      if (!okr || got != g_ple_rb) {
+      if (timing) {
+        const uint64_t elapsed = GetTickCount64() - before_wait;
+        wait_ms += elapsed; max_wait_ms = std::max(max_wait_ms, elapsed);
+      }
+      const uintptr_t address = (uintptr_t)pov, first = (uintptr_t)ovs.data();
+      const bool valid = pov && address >= first &&
+          address - first < depth * sizeof(OVERLAPPED) &&
+          (address - first) % sizeof(OVERLAPPED) == 0;
+      const size_t slot = valid ? (address - first) / sizeof(OVERLAPPED) : 0;
+      if (!okr || !valid || got != g_ple_rb) {
         fprintf(stderr,
                 "ple_win: read completion failed (row=%zu, got=%lu, err=%lu)\n",
-                pov ? rows[slot] : (size_t)-1, (unsigned long)got,
+                valid ? rows[slot] : (size_t)-1, (unsigned long)got,
                 (unsigned long)GetLastError());
         abort();
       }
       free_[nfree++] = slot;
       done++;
     }
+    if (timing)
+      fprintf(stderr, "[ple-row-wait] rows=%zu submit_ms=%llu completion_wait_ms=%llu "
+                      "max_submit_ms=%llu max_completion_wait_ms=%llu\n", n,
+              (unsigned long long)submit_ms, (unsigned long long)wait_ms,
+              (unsigned long long)max_submit_ms, (unsigned long long)max_wait_ms);
   }
 };
 
