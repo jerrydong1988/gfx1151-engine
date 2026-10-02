@@ -5,7 +5,8 @@
 *English: [README_EN.md](README_EN.md)*
 
 这是 [gfx1151-engine 上游实验项目](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine)
-的研究 Fork，当前分支为 `codex/halogen-v2-support`。面向 **Windows 11 /
+的研究 Fork，主开发分支为 `codex/halogen-v2-support`；本轮研究分支为
+`codex/v2-reference-speed-20261002`。面向 **Windows 11 /
 Ryzen AI Max+ 395 / Radeon 8060S（gfx1151）/ 128 GiB 统一内存**，重点是
 Halogen Flash-Next v2 HGN 格式支持、专家计算与 Prefill 优化，以及串行/MTP 的数值对齐。
 目标模型仍是 Qwen3.8-Flash-Next（`qwen4_exp`）及兼容结构，不是通用模型推理框架。
@@ -19,6 +20,16 @@ R19 完成上游基础设施整合与同权重的三方 v2 对照，新增可切
 局部收益和有限数值检查不代表跨输入长度的稳定整体加速。
 这些编号是本分支研究阶段，不是上游发布版本。
 当前结果不构成生产可用、全场景无损或全面超过上游的承诺。
+
+## R20：保持参考数值顺序的专家加速
+
+新增默认关闭的 `GDEC_V2_EXACT_REUSE=1`：保留原 exact 的 FP32 乘加与归约顺序，
+通过输入复用、tile 和寄存器优化加速专家 Prefill。512/1K/8K/16K 共 15,859 个
+评分位置首选 token 全部一致，同一二进制开关对照的全词表原始 logits 指纹也一致。
+这是有限样例的验证，不是全场景证明，亦不表示原 hybrid 已变成 exact 的无损替代。
+
+[原因拆分、算子搜索、完整请求计时及边界](docs/REFERENCE_SPEED_R20.md)。
+本轮研究没有自动替换日常部署或改写权重。
 
 ## R19：同步上游并融合两套 v2 计算
 

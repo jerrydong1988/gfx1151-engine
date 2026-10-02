@@ -7,6 +7,14 @@ static bool v2_upstream_dense() {
     throw std::runtime_error("GDEC_V2_DENSE_BACKEND must be fork or upstream");
   }(); return enabled;
 }
+static bool v2_exact_dense_decode() {
+  static const bool enabled=[] { const char* p=getenv("GDEC_V2_HT_DEQ_EXACT"); return p && !strcmp(p,"1"); }();
+  return enabled;
+}
+static bool v2_reference_head() {
+  static const bool enabled=[] { const char* p=getenv("GDEC_V2_REFERENCE_HEAD"); return p && !strcmp(p,"1"); }();
+  return enabled;
+}
 static bool v2_upstream_experts(int rows) {
   static const int mode=[] {
     const char* p=getenv("GDEC_V2_EXPERT_BACKEND");
@@ -120,7 +128,8 @@ static size_t devarena_estimate(const Checkpoint& ck, int maxctx) {
     const Tensor& t = kv.second;
     if (t.dtype == 10 || t.dtype == 11 || t.dtype == 4) continue;
     add(t.data_size);
-    if ((t.dtype == 16 || t.dtype == 24) && !v2_upstream_dense()) add(t.numel()*2);
+    if ((t.dtype == 16 || t.dtype == 24) &&
+        (!v2_upstream_dense() || (v2_reference_head() && t.name=="lm_head.weight"))) add(t.numel()*2);
   }
   const bool qsa_dense = getenv("GDEC_QSA_DENSE") != nullptr;
   if(ck.find("layers.0.mlp.experts.gate_up_proj.weight") &&
@@ -791,7 +800,7 @@ static void load_v2_weights(const Checkpoint& ck) {
     const __half* sv=rot.second?(const __half*)dev_ptr(*rot.second):nullptr;
     if(t.dtype==23) {g_v2_rot[t.name]={su,sv};continue;}
     if (t.dtype==16) g_v2_rot[t.name]={su,sv};
-    if (v2_upstream_dense()) continue;
+    if (v2_upstream_dense() && !(v2_reference_head() && t.name=="lm_head.weight")) continue;
     uint16_t* dst=nullptr; DALLOC(&dst,t.numel()*2);
     const int cols=(int)t.dims[t.ndims-1],rows=(int)(t.numel()/cols);
     if(t.dtype==16){g_v2_rot[t.name]={su,sv};maxcols=std::max(maxcols,uint64_t(cols));maxrows=std::max(maxrows,uint64_t(rows));}
@@ -1046,11 +1055,31 @@ static bool q6g64_gemv(const WView& w, const void* x, bool xbf16, uint64_t xs, f
 static void v2_deq_bf16(const WView& w, uint16_t* out, hipStream_t st) {
   if (w.dtype == 16) {
     const unsigned tiles = (unsigned)((w.rows / 128) * (w.cols / 128));
-    k_ht_deq_bf16<<<tiles, 256, 0, st>>>(w.data, w.suh, w.svh, out, (int)w.cols);
+    if (v2_exact_dense_decode())
+      hgnv2gpu::ht_dense_exact_streamed<<<tiles,256,0,st>>>(w.data,w.suh,w.svh,out,(int)w.cols);
+    else
+      k_ht_deq_bf16<<<tiles, 256, 0, st>>>(w.data, w.suh, w.svh, out, (int)w.cols);
   } else {
     const uint64_t ng = w.rows * (w.cols / 64);
     k_q6g64_deq_bf16<<<(unsigned)((ng + 255) / 256), 256, 0, st>>>(
         w.data, out, (int)w.rows, (int)w.cols, (int)w.scale_stride);
+  }
+  if (getenv("GDEC_V2_COMPARE_DENSE")) {
+    static std::unordered_map<const uint8_t*,bool> checked;
+    if (checked.emplace(w.data,true).second) {
+      static uint16_t* ref=nullptr;static unsigned* diff=nullptr;
+      const size_t n=w.rows*w.cols;
+      if(n*2>(64u<<20))throw std::runtime_error("dense comparison scratch too small");
+      if(!ref){CK(hipMalloc(&ref,64u<<20));CK(hipMalloc(&diff,4));}
+      if(w.dtype==16)
+        hgnv2gpu::ht_dense<<<dim3(w.cols/128,w.rows/128),256,0,st>>>(w.ht_data,w.su,w.sv,ref,(int)w.cols);
+      else
+        hgnv2gpu::q6_dense<<<(unsigned)((n+255)/256),256,0,st>>>(w.data,ref,n,(int)w.cols);
+      CK(hipMemsetAsync(diff,0,4,st));
+      hgnv2gpu::compare_bf16_bits<<<(unsigned)((n+255)/256),256,0,st>>>(ref,out,n,diff);
+      unsigned count=0;CK(hipMemcpyAsync(&count,diff,4,hipMemcpyDeviceToHost,st));CK(hipStreamSynchronize(st));
+      fprintf(stderr,"[dense-bits] dtype=%d rows=%llu cols=%llu unequal=%u total=%zu\n",w.dtype,(unsigned long long)w.rows,(unsigned long long)w.cols,count,n);
+    }
   }
 }
 

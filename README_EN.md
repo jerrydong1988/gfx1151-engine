@@ -6,7 +6,8 @@
 
 This is a research fork of the experimental
 [upstream gfx1151-engine](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine),
-on branch `codex/halogen-v2-support`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
+with main development on `codex/halogen-v2-support` and this research on
+`codex/v2-reference-speed-20261002`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
 Radeon 8060S (gfx1151) / 128 GiB unified memory**: Halogen Flash-Next v2 HGN loading,
 expert and prefill kernels, and numerical alignment between serial and MTP decoding.
 The target remains Qwen3.8-Flash-Next (`qwen4_exp`) and compatible architectures,
@@ -31,6 +32,17 @@ As of the R17 checkpoint (2026-10-02), two paged QSA candidates are available
 but default off. Tool-output failures after normal stopping now report
 `invalid_tool_call` rather than falsely claiming token-budget exhaustion.
 This interface correction does not fix model tool selection or SQL correctness.
+
+## R20: expert prefill with the reference FP32 order
+
+The default-off `GDEC_V2_EXACT_REUSE=1` candidate reuses inputs and tunes tiles and
+registers while retaining exact's FMA and reduction order. All 15,859 scored
+positions across 512/1K/8K/16K inputs preserve top tokens; paired runs of the same
+binary also preserve full-vocabulary raw-logit fingerprints. These are bounded
+tests, not a universal equivalence claim or a lossless replacement of R19 hybrid.
+
+[Diagnosis, kernel search, full-request timings and limits](docs/REFERENCE_SPEED_R20.md).
+This research does not automatically replace the daily deployment or alter weights.
 
 ## R19: upstream integration and selectable v2 arithmetic
 

@@ -161,6 +161,7 @@
 #include "parts/26_kernels_moe_gguf.inc"
 #include "parts/27_kernels_moe_lut.inc"
 #include "parts/28_kernels_hgn_v2.inc"
+#include "parts/29_kernels_v2_exact_batch.inc"
 #include "parts/27_kernels_moe_lut_upstream.inc"
 #include "parts/28_kernels_hgn_v2_upstream.inc"
 #include "parts/29_kernels_v2_fused.inc"

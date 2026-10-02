@@ -200,7 +200,9 @@ static int run(GpuModel& m, std::vector<int> tokens, const Opts& o) {
   fprintf(stderr, "kld: %d chunks x %u ctx, %d scored/chunk, base=%s save=%s\n", n_chunk,
           n_ctx, nrow, cmp ? o.base.c_str() : "-", o.save.empty() ? "-" : o.save.c_str());
   std::vector<float> logits;
-  std::vector<uint16_t> base((size_t)nrow * nv), saved;
+  // Saving a new reference does not read a baseline. Avoid another full
+  // vocabulary-sized allocation for long-context numerical diagnostics.
+  std::vector<uint16_t> base(cmp ? (size_t)nrow * nv : 0), saved;
   if (out.is_open()) saved.resize((size_t)nrow * nv);
   std::vector<Row> rows(nrow);
   std::vector<double> save_nll(nrow);
@@ -209,6 +211,18 @@ static int run(GpuModel& m, std::vector<int> tokens, const Opts& o) {
   double s_pd = 0, s_pd2 = 0, s_pd4 = 0;
   size_t same = 0, count = 0;
   auto t0 = std::chrono::steady_clock::now();
+  std::ofstream diagnostics;
+  std::ofstream raw_hashes;
+  if (const char* path=getenv("GDEC_KLD_RAW_HASHES")) {
+    raw_hashes.open(path);
+    if (!raw_hashes) throw std::runtime_error("cannot open raw logit fingerprints");
+    raw_hashes << "chunk,values,fnv1a_u32\n";
+  }
+  if (const char* path=getenv("GDEC_KLD_DIAGNOSTICS")) {
+    diagnostics.open(path);
+    if (!diagnostics) throw std::runtime_error("cannot open KLD diagnostics");
+    diagnostics << "chunk,position,reference_top,candidate_top,reference_margin,candidate_margin,kld\n";
+  }
   for (int c = 0; c < n_chunk; c++) {
     m.reset_state();
     const int* tk = tokens.data() + (size_t)c * n_ctx;
@@ -235,6 +249,12 @@ static int run(GpuModel& m, std::vector<int> tokens, const Opts& o) {
       m.batch_logits_rows((int)n_ctx - last, first - last, nrow, logits);
     }
     const int* tgt = tk + first + 1;
+    if (raw_hashes.is_open()) {
+      uint64_t hash=14695981039346656037ull;
+      for (float value:logits) { uint32_t bits;memcpy(&bits,&value,4);hash=(hash^bits)*1099511628211ull; }
+      raw_hashes << c << ',' << logits.size() << ',' << std::hex << hash << std::dec << '\n';
+      raw_hashes.flush();
+    }
     if (out.is_open()) {
       parallel_rows(nrow, [&](int i) {
         save_nll[i] = save_row(n_vocab, logits.data() + (size_t)i * n_vocab,
@@ -256,6 +276,21 @@ static int run(GpuModel& m, std::vector<int> tokens, const Opts& o) {
         rows[i] = compare_row(n_vocab, logits.data() + (size_t)i * n_vocab,
                               base.data() + (size_t)i * nv, tgt[i]);
       });
+      if (diagnostics) for (int i=0;i<nrow;++i) {
+        const float* q=logits.data()+(size_t)i*n_vocab;
+        const uint16_t* b=base.data()+(size_t)i*nv;
+        float scale;memcpy(&scale,b,4);b+=4;
+        int b1=0,b2=1,q1=0,q2=1;
+        if(b[b2]>b[b1])std::swap(b1,b2);
+        if(q[q2]>q[q1])std::swap(q1,q2);
+        for(int j=2;j<n_vocab;++j){
+          if(b[j]>b[b1]){b2=b1;b1=j;}else if(b[j]>b[b2])b2=j;
+          if(q[j]>q[q1]){q2=q1;q1=j;}else if(q[j]>q[q2])q2=j;
+        }
+        diagnostics << c << ',' << first+i << ',' << b1 << ',' << q1 << ','
+                    << scale*(int(b[b1])-int(b[b2])) << ',' << q[q1]-q[q2] << ','
+                    << rows[i].kld << '\n';
+      }
       for (const Row& r : rows) {
         if (!std::isfinite(r.kld) || !std::isfinite(r.nll)) {
           fprintf(stderr, "kld: non-finite value in chunk %d\n", c);

@@ -1057,6 +1057,14 @@ static uint64_t fingerprint(const GpuModel& m) {
     add((uint64_t)v2_upstream_experts(1));
     add((uint64_t)v2_upstream_experts(17));
     add((uint64_t)v2_ht_ordered());
+    const char* rank_env=getenv("GDEC_V2_GROUPED_RANK_ORDERED");
+    const bool rank_ordered=rank_env && !strcmp(rank_env,"1");
+    if(v2_exact_dense_decode() || v2_reference_head() || rank_ordered) {
+      add(0x7632723230706f6cULL);
+      add((uint64_t)v2_exact_dense_decode());
+      add((uint64_t)v2_reference_head());
+      add((uint64_t)rank_ordered);
+    }
   }
   // A forced runtime solution can change FP32 reduction order. Keep it out
   // of automatic-policy checkpoints, even when that policy happens to pick it.

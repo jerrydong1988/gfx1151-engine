@@ -1004,7 +1004,7 @@ struct GpuModel {
     std::vector<float> tmp;
     auto upload = [&](const char* name, float* dst, size_t n) {
       const Tensor& t = ckpt.at(name);
-      if (v2_upstream_dense() && (t.dtype == 16 || t.dtype == 24)) {  // hgn v2 (fp32 indexer projection): decode on GPU
+      if (v2_upstream_dense() && !v2_exact_dense_decode() && (t.dtype == 16 || t.dtype == 24)) {  // hgn v2 (fp32 indexer projection): decode on GPU
         uint16_t* bf;
         CK(hipMalloc(&bf, n * 2));
         v2_deq_bf16(wview(t), bf, g_str);
@@ -2088,7 +2088,12 @@ struct GpuModel {
     k_moe_lut<moelut::kQ4R128,false,BN,Precise,Group128,LdsSync,DeferredScale,PermuteQ4><<<dim3(d/128,nt,64/BN),256,0,g_str>>>(
         b,hr,nullptr,d_moetiles,d_moentiles,d_guvb,nullptr,d,mid);
     }
-    if (Precise && Group128 && !aligned_spec_active() && P > 16 && k == 10 &&
+    static const bool rank_ordered = [] { const char* p=getenv("GDEC_V2_GROUPED_RANK_ORDERED");return p && !strcmp(p,"1"); }();
+    if (rank_ordered && Precise && Group128) {
+      hgnv2gpu::rotate_fast<<<dim3(d/128,P*k),128,0,g_str>>>(d_guvb,d_guvb,dn.sv,d,true);
+      hgnv2gpu::original_pairids<<<(P*k+255)/256,256,0,g_str>>>(moe_routing.values_out,d_pairids,P*k);
+      k_moe_reduce_pw<10><<<dim3((d+255)/256,P),256,0,g_str>>>(d_guvb,d_pairids,d_pweight,out,P,d);
+    } else if (Precise && Group128 && !aligned_spec_active() && P > 16 && k == 10 &&
         d % 128 == 0 && v2_moe_reduce_had_enabled()) {
       static const bool noted = [] {
         fprintf(stderr, "[v2-moe] experimental grouped reduce/inverse-Hadamard fusion active\n");
@@ -2151,11 +2156,20 @@ struct GpuModel {
       }
       const int nt=(P*k+63)/64+g_cfg.experts;
       if(mode==V2MoeMode::Exact){
+        static const bool reuse = [] { const char* p=getenv("GDEC_V2_EXACT_REUSE");return p && !strcmp(p,"1"); }();
         float* xr=(float*)d_xbf16b;float* hr=d_hidb;
         hgnv2gpu::rotate_fast<<<dim3(d/128,P),128,0,g_str>>>(x,xr,gu.su,d,false);
+        if (reuse)
+          hgnv2gpu::expert_batch_exact_reuse<16,8,false,2,1,false,true,1><<<dim3((2*mid+15)/16,nt,4),64,0,g_str>>>(gu.data,
+              (const __half*)(gu.data+gu.rows*gu.cols/2),xr,d_guvb,d_tokidx,(const int*)d_moetiles,d_moentiles,d,2*mid);
+        else
         hgnv2gpu::expert_batch_exact<8,true><<<dim3((2*mid+7)/8,nt,8),256,0,g_str>>>(gu.data,
             (const __half*)(gu.data+gu.rows*gu.cols/2),xr,d_guvb,d_tokidx,(const int*)d_moetiles,d_moentiles,d,2*mid);
         hgnv2gpu::activate_rotate<<<dim3(mid/128,P*k),128,0,g_str>>>(d_guvb,hr,gu.sv,dn.su,mid);
+        if (reuse)
+          hgnv2gpu::expert_batch_exact_reuse<8,4,false,4,1,true,true><<<dim3((d+15)/16,nt,8),128,0,g_str>>>(dn.data,
+              (const __half*)(dn.data+dn.rows*dn.cols/2),hr,d_guvb,nullptr,(const int*)d_moetiles,d_moentiles,mid,d);
+        else
         hgnv2gpu::expert_batch_exact<8,true><<<dim3((d+7)/8,nt,8),256,0,g_str>>>(dn.data,
             (const __half*)(dn.data+dn.rows*dn.cols/2),hr,d_guvb,nullptr,(const int*)d_moetiles,d_moentiles,mid,d);
         hgnv2gpu::rotate_fast<<<dim3(d/128,P*k),128,0,g_str>>>(d_guvb,d_guvb,dn.sv,d,true);
@@ -2723,6 +2737,11 @@ struct GpuModel {
         exit(1);
       }
       e.algo = hres[bi].algo;
+      if (getenv("GDEC_LT_CHOICES")) {
+        fprintf(stderr,"[lt-choice] N=%llu K=%llu P=%d heuristic=%d algo=",(unsigned long long)N,(unsigned long long)K,P,bi);
+        for(unsigned char b:e.algo.data)fprintf(stderr,"%02x",b);
+        fprintf(stderr,"\n");
+      }
       hipblasLtMatmulPreferenceDestroy(pref);
       it = lt_algos.emplace(key, e).first;
     }
@@ -4835,8 +4854,51 @@ struct GpuModel {
     k_ple_ring_wr<<<9, 256, 0, g_str>>>(d_Unb, d_ring, P, 10240, base, vbptr());
   }
 
+  // Offline numerical diagnosis only. Fixed, evenly-spaced rows; no policy
+  // decision depends on these observations. Disabled in normal execution.
+  int numerical_trace_chunk_ = -1;
+  void numerical_trace(const char* stage, int l, int base, const void* device,
+                       int rows, int cols, int dtype = 0) {
+    static const char* dir = getenv("GDEC_NUMERICAL_TRACE_DIR");
+    static const int trace_chunk = getenv("GDEC_NUMERICAL_TRACE_CHUNK") ? atoi(getenv("GDEC_NUMERICAL_TRACE_CHUNK")) : 0;
+    if (!dir || !*dir || numerical_trace_chunk_ != trace_chunk || !device) return;
+    const int nr = std::min(16, rows);
+    std::vector<uint32_t> indices(nr);
+    std::vector<float> values((size_t)nr * cols);
+    std::vector<uint16_t> halfs(dtype == 1 ? values.size() : 0);
+    std::vector<int> ints(dtype == 2 ? values.size() : 0);
+    for (int j=0; j<nr; ++j) {
+      indices[j] = nr == 1 ? 0 : j * (rows - 1) / (nr - 1);
+      const size_t row = indices[j];
+      if (dtype == 1)
+        CK(hipMemcpyAsync(halfs.data()+(size_t)j*cols,
+             (const uint16_t*)device+row*cols, cols*2, hipMemcpyDeviceToHost, g_str));
+      else if (dtype == 2)
+        CK(hipMemcpyAsync(ints.data()+(size_t)j*cols,
+             (const int*)device+row*cols, cols*4, hipMemcpyDeviceToHost, g_str));
+      else
+        CK(hipMemcpyAsync(values.data()+(size_t)j*cols,
+             (const float*)device+row*cols, cols*4, hipMemcpyDeviceToHost, g_str));
+    }
+    CK(hipStreamSynchronize(g_str));
+    for (size_t j=0; j<values.size(); ++j) {
+      if (dtype == 1) { uint32_t bits=uint32_t(halfs[j])<<16; memcpy(&values[j],&bits,4); }
+      else if (dtype == 2) values[j]=(float)ints[j];
+    }
+    char name[1024];
+    snprintf(name,sizeof name,"%s/b%d-l%02d-%s.bin",dir,base,l,stage);
+    FILE* file=fopen(name,"wb");
+    if (!file) throw std::runtime_error("cannot open numerical trace output");
+    uint32_t header[4]={(uint32_t)rows,(uint32_t)cols,(uint32_t)nr,(uint32_t)dtype};
+    bool ok=fwrite(header,4,4,file)==4 && fwrite(indices.data(),4,nr,file)==(size_t)nr &&
+            fwrite(values.data(),4,values.size(),file)==values.size();
+    ok=fclose(file)==0 && ok;
+    if (!ok) throw std::runtime_error("cannot write numerical trace output");
+  }
+
   void enq_layer_b(int l, int P, bool fuse_prev_mlp = false,
                    bool flush_mlp = true, int base = 0) {
+    if (l == 0) ++numerical_trace_chunk_;
     char attn_prefix[128], mlp_prefix[128];
     snprintf(attn_prefix, sizeof attn_prefix,
              "layers.%d.attn_hyper_connection", l);
@@ -4849,6 +4911,7 @@ struct GpuModel {
       gr_read_b(attn_prefix, P);
     }
     }
+    numerical_trace("attn-in",l,base,d_xb,P,g_cfg.d);
     { PrefillProfileSpan profile_attention(prefill_profile_,
           is_qsa(l) ? PrefillGpuProfile::Qsa : PrefillGpuProfile::Gdn);
     if (is_qsa(l))
@@ -4856,6 +4919,7 @@ struct GpuModel {
     else
       gdn_b(l, l - (l + 1) / 4, P);
     }
+    numerical_trace("attn-out",l,base,d_yb,P,g_cfg.d);
     if (dbg) {
       h_rms("gpu", l, "attn-x", d_xb + (size_t)(P - 1) * 2560, 2560);
       h_rms("gpu", l, "attn-y", d_yb + (size_t)(P - 1) * 2560, 2560);
@@ -4870,7 +4934,10 @@ struct GpuModel {
       gr_read_b(mlp_prefix, P);
     }
     }
+    numerical_trace("moe-in",l,base,d_xb,P,g_cfg.d);
     moe_b(l, P);
+    numerical_trace("moe-out",l,base,d_yb,P,g_cfg.d);
+    numerical_trace("router",l,base,d_topidsb,P,16,2);
     if (dbg) {
       h_rms("gpu", l, "mlp-x", d_xb + (size_t)(P - 1) * 2560, 2560);
       h_rms("gpu", l, "mlp-y", d_yb + (size_t)(P - 1) * 2560, 2560);
@@ -6711,6 +6778,7 @@ struct GpuModel {
     host.resize((size_t)n * g_cfg.vocab);
     if (!n) return;
     gr_read_b("hyper_connection_mixer", P);
+    numerical_trace("head-in",g_cfg.layers,0,d_xb,P,g_cfg.d);
     const WView& lw = wview(ckpt.at("lm_head.weight"));
     for (int off = first; off < first + n; off += 64) {
       int rows = std::min(64, first + n - off);
