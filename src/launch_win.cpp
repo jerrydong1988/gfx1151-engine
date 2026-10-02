@@ -966,13 +966,6 @@ int main(int argc, char** argv) {
     } else {
         printf("KV：不分页（KV_PAGED=0）\n");
     }
-    if (check_only) {
-        printf("检查通过；没有启动引擎或 API。\n");
-        fflush(stdout);
-        pause_if_own_console();
-        return 0;
-    }
-
     // 生产选项与 Linux start.sh 一致。GDEC_PREFILL_CHUNK 只在 service.conf 的
     // PREFILL_CHUNK>0 时设置（0 = 不碰外部环境，引擎用内置默认：Windows 8192）。
     // 实测（128K，PORTING-WINDOWS.md）：4096 比 8192 省 ~3.6 GiB arena、稳态 PP
@@ -986,6 +979,14 @@ int main(int argc, char** argv) {
         "GDEC_INDEX_FUSED2", "GDEC_PP_MOE_OUT", "GDEC_INDEX_STREAM_SELECT",
     };
     for (const char* f : flags) SetEnvironmentVariableA(f, "1");
+    // Persistent, explicit research/production switches. load_conf has already
+    // omitted keys supplied by the parent environment. Apply configured GDEC_*
+    // switches after built-in defaults so direct native launches can reproduce
+    // a tested policy without a separate PowerShell entry point.
+    for (const auto& entry : g_conf) {
+        if (entry.first.compare(0, 5, "GDEC_") == 0)
+            SetEnvironmentVariableA(entry.first.c_str(), entry.second.c_str());
+    }
     SetEnvironmentVariableA("GDEC_KVSNAP", kvsnap_max_gb ? "1" : "0");
     SetEnvironmentVariableA("GDEC_KVSNAP_MAX_GB",
                             std::to_string(kvsnap_max_gb).c_str());
@@ -1018,6 +1019,22 @@ int main(int argc, char** argv) {
     if (prefill_chunk)
         SetEnvironmentVariableA("GDEC_PREFILL_CHUNK",
                                 std::to_string(prefill_chunk).c_str());
+
+    // Record the effective child environment in both dry runs and launcher logs.
+    // GetEnvironmentVariable reads the Win32 environment updated above, unlike
+    // the C runtime's original getenv snapshot.
+    LPCH environment = GetEnvironmentStringsA();
+    if (environment) {
+        for (const char* item = environment; *item; item += strlen(item) + 1)
+            if (strncmp(item, "GDEC_", 5) == 0) printf("runtime %s\n", item);
+        FreeEnvironmentStringsA(environment);
+    }
+    if (check_only) {
+        printf("检查通过；没有启动引擎或 API。\n");
+        fflush(stdout);
+        pause_if_own_console();
+        return 0;
+    }
 
     CreateDirectoryA("logs", nullptr);
     g_plan.engine_log = "logs\\engine-win-" + g_stamp + ".log";

@@ -6,8 +6,8 @@
 
 This is a research fork of the experimental
 [upstream gfx1151-engine](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine),
-with main development on `codex/halogen-v2-support` and this research on
-`codex/task-reliability-r23-20261002`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
+with historical development on `codex/halogen-v2-support` and the practical mainline on
+`codex/hybrid-mainline`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
 Radeon 8060S (gfx1151) / 128 GiB unified memory**: Halogen Flash-Next v2 HGN loading,
 expert and prefill kernels, and numerical alignment between serial and MTP decoding.
 The target remains Qwen3.8-Flash-Next (`qwen4_exp`) and compatible architectures,

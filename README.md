@@ -5,8 +5,8 @@
 *English: [README_EN.md](README_EN.md)*
 
 这是 [gfx1151-engine 上游实验项目](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine)
-的研究 Fork，主开发分支为 `codex/halogen-v2-support`；本轮研究分支为
-`codex/task-reliability-r23-20261002`。面向 **Windows 11 /
+的研究 Fork，历史开发分支为 `codex/halogen-v2-support`；当前实用主线为
+`codex/hybrid-mainline`。面向 **Windows 11 /
 Ryzen AI Max+ 395 / Radeon 8060S（gfx1151）/ 128 GiB 统一内存**，重点是
 Halogen Flash-Next v2 HGN 格式支持、专家计算与 Prefill 优化，以及串行/MTP 的数值对齐。
 目标模型仍是 Qwen3.8-Flash-Next（`qwen4_exp`）及兼容结构，不是通用模型推理框架。
@@ -20,6 +20,16 @@ R19 完成上游基础设施整合与同权重的三方 v2 对照，新增可切
 局部收益和有限数值检查不代表跨输入长度的稳定整体加速。
 这些编号是本分支研究阶段，不是上游发布版本。
 当前结果不构成生产可用、全场景无损或全面超过上游的承诺。
+
+## 当前 Windows 实用部署
+
+已选定 **v2 hybrid + aligned MTP gamma 2** 为本机实用主线。直接双击
+`start_win.exe`，从 `service.conf` 读取完整计算参数；不再需要多个 PowerShell
+快捷方式切换方案。配置样例为 [windows_hybrid.conf.example](tools/windows_hybrid.conf.example)，
+部署方式和限制见 [Windows 融合版部署](docs/WINDOWS_HYBRID_DEPLOYMENT.md)。
+本次仅补齐原生启动器的配置读取与诊断，推理引擎/API 沿用 R21–R23 验证过的二进制。
+exact 路径与历史实验继续保留在源码，未作为另外的本机服务部署。
+R23 的独立交付校验仍属于测试客户端，没有随引擎安装进 Octop。
 
 ## R23：输出预算与独立交付校验
 
