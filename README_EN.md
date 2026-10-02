@@ -7,7 +7,7 @@
 This is a research fork of the experimental
 [upstream gfx1151-engine](https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine),
 with main development on `codex/halogen-v2-support` and this research on
-`codex/v2-dataflow-r21-20261002`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
+`codex/route-quality-r22-20261002`. Work targets **Windows 11 / Ryzen AI Max+ 395 /
 Radeon 8060S (gfx1151) / 128 GiB unified memory**: Halogen Flash-Next v2 HGN loading,
 expert and prefill kernels, and numerical alignment between serial and MTP decoding.
 The target remains Qwen3.8-Flash-Next (`qwen4_exp`) and compatible architectures,
@@ -32,6 +32,24 @@ As of the R17 checkpoint (2026-10-02), two paged QSA candidates are available
 but default off. Tool-output failures after normal stopping now report
 `invalid_tool_call` rather than falsely claiming token-budget exhaustion.
 This interface correction does not fix model tool selection or SQL correctness.
+
+## R22: actual tool tasks across hybrid and exact profiles
+
+The same R21 binary runs both arithmetic profiles on three synthetic ledgers and
+three code-repair instances: 12 paired task attempts. With 4096 output tokens per
+turn, hybrid passes 4/6 and exact 3/6. Four failures exhaust the output budget;
+one exact ledger task ends naturally but submits incorrect SQL deduplication
+results. **Reference arithmetic does not guarantee correct business logic, and
+these small counts do not establish an accuracy ranking.**
+
+Weighted Prefill / Decode rates including failed requests are 1051.52 / 45.79
+(office hybrid), 652.21 / 25.47 (office exact), 574.81 / 45.65 (code hybrid), and
+417.77 / 24.33 (code exact), in tokens/s. Prefill counts newly processed tokens,
+excluding prefix-cache hits. Whole-task time also depends on plans and output
+length. Hybrid remains the speed path and R21 the numerical reference; this
+round changes no inference kernels, weights, or daily deployment.
+
+[Frozen protocol, every outcome, independent checks and separate budget diagnostic](docs/ROUTE_QUALITY_R22.md).
 
 ## R21: exact dataflow and small-batch layout
 
