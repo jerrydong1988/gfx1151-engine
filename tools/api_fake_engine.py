@@ -36,6 +36,18 @@ def handle(conn):
         entry = {"req": req, "seed": seed, "cancel": 0, "tokens": 0, "done": False}
         with TRACE_LOCK:
             TRACE.append(entry)
+        if seed == 616164:
+            # Fault injection: acknowledge neither GEN nor cancel. The API
+            # must retire this connection after its cancellation grace period.
+            while True:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    return
+                pending += chunk
+                while b"\n" in pending:
+                    command, pending = pending.split(b"\n", 1)
+                    if command == f"X {req}".encode("ascii"):
+                        record_cancel(req)
         deadline = time.monotonic() + (2.2 if seed == 616163 else 6.0)
         cancelled = False
         while time.monotonic() < deadline:
@@ -162,7 +174,7 @@ def handle(conn):
                 reason = "length" if seed == 717104 else "done"
                 send_line(conn, f"D {req} {reason} {n_ids} {len(tokens)} 1.0 2.0 0 0 0 0 0")
                 continue
-            if seed in (616161, 616162, 616163):
+            if seed in (616161, 616162, 616163, 616164):
                 cancellable(req, seed)
                 continue
 
