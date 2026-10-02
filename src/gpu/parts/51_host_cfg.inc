@@ -2832,7 +2832,7 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
                 log_ts(), (long long)g.req,
                 cancel ? "cancel" : reason.c_str());
       if ((use_spec || use_ngram || use_chain) && m.last_spec_rounds > 0) {
-        int acc_n = m.live_spec_commits - m.live_spec_rounds;
+        int acc_n = std::max(0, m.live_spec_commits - m.live_spec_rounds);
         fprintf(stderr,
                 "%s req %lld | draft acceptance = %.3f (%d accepted / %d "
                 "proposed), mean len = %.2f, drafter %s\n",

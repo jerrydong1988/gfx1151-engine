@@ -7452,9 +7452,9 @@
     "fork": true,
     "hybrid": true
   },
-  "final_engine_sha256": "4b1c75dd8ff1e15cdaec9a002e859fa018bd345875c8f22cb44438ab615b3a63",
+  "final_engine_sha256": "c94d801ce0bea83d94c7323dfc1310d1f3f72746970627f95fcb0e2edcc5f6cb",
   "display_only_rebuild": {
-    "change": "Only nonnegative acceptance display in two host log statements; no raw-counter, protocol, sampling or kernel change",
+    "change": "Only nonnegative acceptance display in the API and engine progress/final host log statements; no raw-counter, protocol, sampling or kernel change",
     "before": {
       "gdec-win.exe": {
         "sha256": "e3d153e68a895eaea8850e18f4b8cf7892c6c9e05bae6ceac71e6d01226cbe74",
@@ -7470,14 +7470,14 @@
     },
     "after": {
       "gdec-win.exe": {
-        "sha256": "4b1c75dd8ff1e15cdaec9a002e859fa018bd345875c8f22cb44438ab615b3a63",
+        "sha256": "c94d801ce0bea83d94c7323dfc1310d1f3f72746970627f95fcb0e2edcc5f6cb",
         "gpu_image_sha256": "ed082ee7cfce861b90270ef5a046baea570ccc385d836dd05ad43d0153868961"
       },
       "gdec-api-win.exe": {
-        "sha256": "ca3f01f5e1cafcea08cd6d0377fe94fd695dd7f17ec6965a6cba08d1782fe64d"
+        "sha256": "a4b38906fe189454670929271a37af5f5d0dfb884148af89b77433e5e60f7da0"
       },
       "gdec-bench.exe": {
-        "sha256": "cd6f67e27ee68f2a02c9c0a46759d6cda1c53d0774941213f999b80d275dee2f",
+        "sha256": "3fe7531064f435e84b68ddb0acedd362a3f4c04da771981eb0d32d6c69598f57",
         "gpu_image_sha256": "eb41063a61233d00d0acad7a2440aeb2fbc18d89a2bf36b9e69ab6961c5f6c75"
       }
     },
@@ -7486,19 +7486,23 @@
   "display_fix_api_regression": [
     {
       "case": "tools-56",
-      "returncode": 0
+      "returncode": 0,
+      "api_sha256": "a4b38906fe189454670929271a37af5f5d0dfb884148af89b77433e5e60f7da0"
     },
     {
       "case": "disconnect-1",
-      "returncode": 0
+      "returncode": 0,
+      "api_sha256": "a4b38906fe189454670929271a37af5f5d0dfb884148af89b77433e5e60f7da0"
     },
     {
       "case": "disconnect-2",
-      "returncode": 0
+      "returncode": 0,
+      "api_sha256": "a4b38906fe189454670929271a37af5f5d0dfb884148af89b77433e5e60f7da0"
     },
     {
       "case": "cancel-timeout",
-      "returncode": 0
+      "returncode": 0,
+      "api_sha256": "a4b38906fe189454670929271a37af5f5d0dfb884148af89b77433e5e60f7da0"
     }
   ]
 }

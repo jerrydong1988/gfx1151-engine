@@ -56,6 +56,7 @@
   },
   "profiles": {
     "v2-exact": {
+      "GDEC_DRAFTER": "mtp",
       "MODEL_FILE": "qwen38-flash-next-v2.hgn",
       "NGRAM_FILE": "qwen38-flash-next-ngram.hgn",
       "MTP_FILE": "",
@@ -71,6 +72,7 @@
       "GDEC_V2_MOE_REDUCE_HAD": "0"
     },
     "v2-fork": {
+      "GDEC_DRAFTER": "mtp",
       "MODEL_FILE": "qwen38-flash-next-v2.hgn",
       "NGRAM_FILE": "qwen38-flash-next-ngram.hgn",
       "MTP_FILE": "",
@@ -82,6 +84,7 @@
       "V2_HT_ORDERED": "0"
     },
     "v2-hybrid": {
+      "GDEC_DRAFTER": "mtp",
       "MODEL_FILE": "qwen38-flash-next-v2.hgn",
       "NGRAM_FILE": "qwen38-flash-next-ngram.hgn",
       "MTP_FILE": "",

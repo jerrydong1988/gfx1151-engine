@@ -3,6 +3,8 @@
 param(
     [ValidateSet('v2-exact', 'v2-fork', 'v2-hybrid', 'w4b')]
     [string]$Profile = 'v2-exact',
+    [ValidateSet('serial', 'mtp', 'chain')]
+    [string]$Drafter,
     [string]$ModelDirectory,
     [string]$Root,
     [switch]$Check
@@ -45,6 +47,7 @@ foreach ($settings in @($profiles.common, $selected)) {
         $launch.EnvironmentVariables[$entry.Name] = [string]$entry.Value
     }
 }
+if ($Drafter) { $launch.EnvironmentVariables['GDEC_DRAFTER'] = $Drafter }
 $launch.EnvironmentVariables['MODEL_DIR'] = $ModelDirectory
 foreach ($key in @('MODEL_FILE', 'NGRAM_FILE', 'MTP_FILE', 'OVERLAY_FILE', 'VISION_FILE', 'TOKENIZER_DIR')) {
     if ($launch.EnvironmentVariables.ContainsKey($key) -and $launch.EnvironmentVariables[$key]) {

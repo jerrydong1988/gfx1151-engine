@@ -232,6 +232,7 @@ logprobs、Responses 非流式/流式和红色 PNG 识别均通过。这不是 2
 ```powershell
 .\tools\start_windows_profile.ps1 -Profile v2-exact -ModelDirectory C:\path\to\weights -Check
 .\tools\start_windows_profile.ps1 -Profile v2-hybrid -ModelDirectory C:\path\to\weights
+.\tools\start_windows_profile.ps1 -Profile v2-hybrid -Drafter serial -ModelDirectory C:\path\to\weights
 ```
 
 配置值在 `tools/windows_profiles.json`：`v2-exact` 保留本分支保守计算，`v2-fork`
@@ -240,6 +241,13 @@ logprobs、Responses 非流式/流式和红色 PNG 识别均通过。这不是 2
 v2 的 gamma 为 2，w4b 为 4，RAM/SSD 检查点关闭，视觉塔启用。现场测试记录会另外
 区分纯文本测速与带视觉塔的兼容性测试。`IPROJ_SOLUTION=-711` 是本机运行库验证过的
 研究设置，不保证其他 GPU/运行库存在同一 solution。
+
+三个 v2 预设还显式设置 `GDEC_DRAFTER=mtp`，使 API 的默认请求路由与本轮 Agent
+MTP 测试一致。没有这个设置，引擎默认是 ngram 优先、MTP 补充的 `chain` 策略；
+不要把 chain 结果当作纯 MTP 对照。`w4b` 预设保留这个原有默认策略；表里的 w4b
+原始协议短任务明确指定了 MTP，API 兼容性烟测则覆盖默认 chain。
+需要关闭推测时可使用 `-Drafter serial`；`-Drafter mtp` / `chain` 也可显式覆盖预设。
+这只作用于该次启动的进程，不改持久配置。
 
 本轮 Agent 三组比较都使用同一整合后 API、相同客户端及最多两次工具拒绝恢复。
 因此它比较计算路径在固定工具环境里的表现，不是原上游完整 API 栈与本分支的可靠性排名。
