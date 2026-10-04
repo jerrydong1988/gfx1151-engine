@@ -6,6 +6,7 @@ start_win.exe
 __pycache__/
 data/kvsnap
 data/ppbench/
+data/kld/
 data/*.bin
 .rocprofv3
 

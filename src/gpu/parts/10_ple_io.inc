@@ -649,7 +649,8 @@ __device__ __forceinline__ float4 kv_ld4(const uint16_t* __restrict__ p) {
 // table's left edge (position < tab_base).
 __device__ void index_norm_rope(float value, const float* weight, float* out,
                                 int position, float eps, double theta,
-                                const float2* cs_tab = nullptr, int tab_base = 0) {
+                                const float2* cs_tab = nullptr, int tab_base = 0,
+                                uint16_t* out16 = nullptr) {
   __shared__ float values[128], sums[128];
   int d = threadIdx.x;
   sums[d] = value * value;
@@ -676,6 +677,7 @@ __device__ void index_norm_rope(float value, const float* weight, float* out,
                 : values[d] * cs + values[d - 32] * sn;
   }
   out[d] = v;
+  if (out16) out16[d] = __half_as_ushort(__float2half_rn(v));  // C1 f16 twin (RNE)
   (void)theta;
 }
 
@@ -683,7 +685,8 @@ __global__ void k_index_q(const float* proj, const float* norm, float* queries,
                            int P, float eps, double theta, const int* pos = nullptr,
                            int base = 0, const float2* cs_tab = nullptr,
                            const int* __restrict__ d_rdelta = nullptr,
-                           const int* __restrict__ d_vb = nullptr) {
+                           const int* __restrict__ d_vb = nullptr,
+                           uint16_t* queries16 = nullptr) {
   int t = blockIdx.x, h = blockIdx.y;
   if (d_vb) base = *d_vb;  // P3-A: device-mirrored base (graph-replayable)
   // d_rdelta (M-RoPE decode): rope angle position += request rope_delta.
@@ -693,7 +696,8 @@ __global__ void k_index_q(const float* proj, const float* norm, float* queries,
   if (d_rdelta) position += *d_rdelta;
   index_norm_rope(proj[(size_t)t * 640 + h * 128 + threadIdx.x], norm,
                   queries + (size_t)t * 512 + h * 128, position, eps,
-                  theta, cs_tab, base);
+                  theta, cs_tab, base,
+                  queries16 ? queries16 + (size_t)t * 512 + h * 128 : nullptr);
 }
 
 // Pooled indexer keys: absolute 4-token blocks. base = absolute position of
@@ -705,7 +709,8 @@ __global__ void k_index_pool(const float* proj, const float* norm, float* keys,
                               const float* ring = nullptr,
                               const float2* cs_tab = nullptr,
                               const int* __restrict__ ptab = nullptr,
-                              const int* __restrict__ d_vb = nullptr) {
+                              const int* __restrict__ d_vb = nullptr,
+                              uint16_t* keys16 = nullptr) {
   if (d_vb) base = *d_vb;  // P3-A: device-mirrored base (graph-replayable)
   int b = blockIdx.x + (base / 4), d = threadIdx.x;  // absolute block id
   float v = 0.f;
@@ -714,8 +719,9 @@ __global__ void k_index_pool(const float* proj, const float* norm, float* keys,
     v += lt >= 0 ? proj[(size_t)lt * 640 + 512 + d]
                  : ring[(size_t)((b * 4 + j) % 4) * 128 + d];
   }
-  index_norm_rope(v * 0.25f, norm, keys + (size_t)ik_blk(ptab, b) * 128, b * 4,
-                  eps, theta, cs_tab, base);
+  const size_t blk = (size_t)ik_blk(ptab, b) * 128;
+  index_norm_rope(v * 0.25f, norm, keys + blk, b * 4,
+                  eps, theta, cs_tab, base, keys16 ? keys16 + blk : nullptr);
 }
 
 __global__ void k_index_ring(const float* proj, float* ring, int P, int base = 0,
@@ -729,7 +735,8 @@ __global__ void k_index_ring(const float* proj, float* ring, int P, int base = 0
 __global__ void k_index_append(const float* proj, const float* norm, float* ring,
                                 float* keys, const int* pos, float eps, double theta,
                                 const int* __restrict__ d_rdelta = nullptr,
-                                const int* __restrict__ ptab = nullptr) {
+                                const int* __restrict__ ptab = nullptr,
+                                uint16_t* keys16 = nullptr) {
   int t = *pos, d = threadIdx.x;
   ring[(t % 4) * 128 + d] = proj[512 + d];
   __syncthreads();
@@ -740,7 +747,8 @@ __global__ void k_index_append(const float* proj, const float* norm, float* ring
   // cache position + request rope_delta (zero for text-only).
   int position = t - 3 + (d_rdelta ? *d_rdelta : 0);
   index_norm_rope(v * 0.25f, norm, keys + (size_t)ik_blk(ptab, t / 4) * 128,
-                  position, eps, theta);
+                  position, eps, theta, nullptr, 0,
+                  keys16 ? keys16 + (size_t)ik_blk(ptab, t / 4) * 128 : nullptr);
 }
 
 template <bool BatchRows = false>
@@ -805,6 +813,25 @@ __global__ void k_ik_gather(const float* __restrict__ src,
   if (b >= nb) return;
   dst[(size_t)b * 128 + threadIdx.x] =
       src[(size_t)ik_blk(ptab, b) * 128 + threadIdx.x];
+}
+// C1 f16 twin gather (same layout, 16-bit elements)
+__global__ void k_ik_gather16(const uint16_t* __restrict__ src,
+                              const int* __restrict__ ptab,
+                              uint16_t* __restrict__ dst, int nb) {
+  int b = blockIdx.x;
+  if (b >= nb) return;
+  dst[(size_t)b * 128 + threadIdx.x] =
+      src[(size_t)ik_blk(ptab, b) * 128 + threadIdx.x];
+}
+// C1: rebuild f16 twin blocks [0, nb) from the fp32 indexer keys (kvsnap
+// restore writes only fp32 pages; twins are derived state, not saved).
+__global__ void k_ik_twin_build(const float* __restrict__ src,
+                                const int* __restrict__ ptab,
+                                uint16_t* __restrict__ dst, int nb) {
+  int b = blockIdx.x;
+  if (b >= nb) return;
+  const size_t blk = (size_t)ik_blk(ptab, b) * 128 + threadIdx.x;
+  dst[blk] = __half_as_ushort(__float2half_rn(src[blk]));
 }
 
 // Exact top-512 via bounded merges, using rocPRIM radix sort. Float scores are
@@ -925,16 +952,16 @@ __global__ void k_moe_route_unpack(const int* keys, const int* values,
 
 struct MoeTile { int expert, first, count; };
 
-__global__ void k_moe_tiles(const int* eoff, MoeTile* tiles, int* total, int experts) {
+__global__ void k_moe_tiles(const int* eoff, MoeTile* tiles, int* total, int experts, int cap) {
   using Scan = rocprim::block_scan<int, 512>;
   __shared__ Scan::storage_type storage;
   int e = threadIdx.x;
   int first = e < experts ? eoff[e] : 0;
   int ne = e < experts ? eoff[e + 1] - first : 0;
-  int count = (ne + 63) / 64, begin;
+  int count = (ne + cap - 1) / cap, begin;
   Scan().exclusive_scan(count, begin, 0, storage);
   if (e == 511) *total = begin + count;
-  for (int j = 0; j < count; j++) tiles[begin + j] = {e, first + j * 64, min(64, ne - j * 64)};
+  for (int j = 0; j < count; j++) tiles[begin + j] = {e, first + j * cap, min(cap, ne - j * cap)};
 }
 
 struct GpuMoeRouting {

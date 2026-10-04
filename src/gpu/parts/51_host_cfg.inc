@@ -983,6 +983,20 @@ static int restore_body(GpuModel& m, const CkEnt& e, const std::vector<int>& pro
     CK(hipGetLastError());
     CK(hipStreamSynchronize(g_str));
   }
+  // C1 f16 twins: derived state (not saved); rebuild the complete blocks
+  // [0, n/4) from the restored fp32 indexer keys, or f16 scoring in a later
+  // prefill would read stale twins for the prefix. The straddling block is
+  // re-pooled from the raw ring by the continuation prefill.
+  if (m.d_ikh && G.has_ik && n / 4 > 0) {
+    const int nb = n / 4;
+    for (int qi = 0; qi < m.kv_nl; qi++)
+      k_ik_twin_build<<<nb, 128, 0, g_str>>>(
+          m.d_ik + (size_t)qi * m.ik_layer_blocks * 128,
+          m.kv_paged ? m.d_ptab : nullptr,
+          m.d_ikh + (size_t)qi * m.ik_layer_blocks * 128, nb);
+    CK(hipGetLastError());
+    CK(hipStreamSynchronize(g_str));
+  }
   // host-side and scalar state: pos/ringpos (both mirrors), PLE token history
   m.pos = n;
   m.ple_ringpos = h.ringpos;
@@ -1046,6 +1060,17 @@ static uint64_t fingerprint(const GpuModel& m) {
     return u;
   };
   for (const auto& f : g_model_files) add(file_id(f));
+  // Prefill changes alter cached numerical history, even for the same weights.
+  add(0x7570323032363130ULL);
+  add((uint64_t)m.index_f16());
+  add((uint64_t)GpuModel::gemm_splitk_on());
+  add((uint64_t)!GpuModel::env_zero("GDEC_QSA_DENSE_WMMA"));
+  add((uint64_t)!GpuModel::env_zero("GDEC_V2_PAIRS_F16"));
+  add((uint64_t)w4b_pairs_f16_env());
+  add((uint64_t)!GpuModel::env_zero("GDEC_MOE_MT"));
+  add((uint64_t)(getenv("GDEC_HC_FUSE_WRITE") && !GpuModel::env_zero("GDEC_HC_FUSE_WRITE")));
+  add((uint64_t)(getenv("GDEC_HC_NORHAT") && !GpuModel::env_zero("GDEC_HC_NORHAT")));
+
   // R19: a checkpoint's numerical history belongs to its arithmetic policy.
   // Never restore a native-HT/FP16 expert state into the fork's exact path (or
   // vice versa). The v1 namespace is unchanged by these v2-only switches.

@@ -5,6 +5,7 @@
 __device__ __forceinline__ uint16_t f2bf(float x) {
   unsigned u=__float_as_uint(x);return uint16_t((u+0x7fffu+((u>>16)&1u))>>16);
 }
+__device__ __forceinline__ float bf2f(uint16_t x) { return __uint_as_float((unsigned)x << 16); }
 #include "../src/gpu/parts/28_kernels_hgn_v2_upstream.inc"
 #include <algorithm>
 #include <iostream>
