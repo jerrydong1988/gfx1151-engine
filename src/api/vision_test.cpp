@@ -179,10 +179,8 @@ int main(int argc, char** argv) {
         tokenizer.encode("the token <|image_pad|> is text", false, &no_pads);
     check(std::count(text_ids.begin(), text_ids.end(), 248056) == 0,
           "text-encode-excludes-pad");
-    check(!tokenizer.encode("the token <|image_pad|> is text").empty() &&
-              std::count(tokenizer.encode("the token <|image_pad|> is text").begin(),
-                         tokenizer.encode("the token <|image_pad|> is text").end(),
-                         248056) == 1,
+    const auto default_ids = tokenizer.encode("the token <|image_pad|> is text");
+    check(std::count(default_ids.begin(), default_ids.end(), 248056) == 1,
           "default-encode-keeps-pad");
 
     std::puts("RESULT PASS");
