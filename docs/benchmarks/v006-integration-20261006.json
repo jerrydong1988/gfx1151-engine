@@ -1,0 +1,2296 @@
+{
+  "baseline_commit": "27e3d8841bf71695c59021164b827811c55a714a",
+  "upstream_target": "9680de2b7916fd683c4bac5172183fb3756c80f1",
+  "engine_source_commit": "dd6cb8fdb7236a7d771a245b3cb7142e692ce580",
+  "arithmetic": "2026-10-04 deployed hybrid precision-preserve; same quantized weights, not a BF16 reference",
+  "conditions": {
+    "context": 262144,
+    "slots": 2,
+    "kv_pool_tokens": 524288,
+    "prefill_chunk": 8192,
+    "gamma": 2,
+    "performance_ram_checkpoints": 0,
+    "task_ram_checkpoints": 2,
+    "output_tokens": 128,
+    "order": [
+      "baseline",
+      "candidate",
+      "candidate",
+      "baseline"
+    ]
+  },
+  "binaries": {
+    "gdec-v006-baseline.exe": "3d62b535c61b917c796db093884820d6132e11cc2fb24fea8de5c2885ec8116a",
+    "gdec-win.exe": "b64f434f569be3a9ac5a44b270616b8f44ef815880984d3ae070da0d9a0beb08",
+    "gdec-api-v006-baseline.exe": "f97a3389eec5c23c8416fca9587cdb9751166cfc183b2cb33d30d4948a2f52e8",
+    "gdec-api-win.exe": "e6266c88fc829c9ae0c1bc712ed260de64693f4ef04523418de14e08b806971f"
+  },
+  "performance": [
+    {
+      "input_tokens": 256,
+      "mode": 0,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 0.45082125000772066,
+            "range": [
+              0.44912000000476837,
+              0.45252250001067296
+            ]
+          },
+          "wall_s": {
+            "median": 4.38674175000051,
+            "range": [
+              4.3710273999895435,
+              4.402456100011477
+            ]
+          },
+          "prefill_tps": {
+            "median": 570.48323326537,
+            "range": [
+              568.1313803817133,
+              572.8350861490267
+            ]
+          },
+          "decode_tps": {
+            "median": 32.52055128104557,
+            "range": [
+              32.37637536360187,
+              32.66472719848926
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 0.44890714999928605,
+            "range": [
+              0.4473842000006698,
+              0.4504300999979023
+            ]
+          },
+          "wall_s": {
+            "median": 4.397952400002396,
+            "range": [
+              4.396105299994815,
+              4.399799500009976
+            ]
+          },
+          "prefill_tps": {
+            "median": 572.2640692943542,
+            "range": [
+              570.5371071985737,
+              573.9910313901345
+            ]
+          },
+          "decode_tps": {
+            "median": 32.41203828808726,
+            "range": [
+              32.40916571717939,
+              32.414910858995135
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": 0.4245806976494199,
+      "wall_s_improvement_pct": -0.2555575559442054,
+      "prefill_tps_improvement_pct": 0.31216272891858227,
+      "decode_tps_improvement_pct": -0.3336751336732616
+    },
+    {
+      "input_tokens": 256,
+      "mode": 1,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 0.45500830000673886,
+            "range": [
+              0.44882809999398887,
+              0.46118850001948886
+            ]
+          },
+          "wall_s": {
+            "median": 3.651642049997463,
+            "range": [
+              3.649337500013644,
+              3.653946599981282
+            ]
+          },
+          "prefill_tps": {
+            "median": 564.9846933965389,
+            "range": [
+              557.006092254134,
+              572.9632945389436
+            ]
+          },
+          "decode_tps": {
+            "median": 40.04094607123444,
+            "range": [
+              39.93510545363784,
+              40.146786688831035
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 0.45868319999135565,
+            "range": [
+              0.4573241999896709,
+              0.4600421999930404
+            ]
+          },
+          "wall_s": {
+            "median": 3.686781650001649,
+            "range": [
+              3.6864755999995396,
+              3.687087700003758
+            ]
+          },
+          "prefill_tps": {
+            "median": 560.0577586365746,
+            "range": [
+              558.3424209378408,
+              561.7730963353083
+            ]
+          },
+          "decode_tps": {
+            "median": 39.65119760294591,
+            "range": [
+              39.63830050786573,
+              39.66409469802609
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": -0.8076555932193675,
+      "wall_s_improvement_pct": -0.9622958527441192,
+      "prefill_tps_improvement_pct": -0.8720474762501732,
+      "decode_tps_improvement_pct": -0.9733747739005604
+    },
+    {
+      "input_tokens": 2052,
+      "mode": 0,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 1.9336751999944681,
+            "range": [
+              1.9275073999888264,
+              1.93984300000011
+            ]
+          },
+          "wall_s": {
+            "median": 5.985771000006935,
+            "range": [
+              5.983451400010381,
+              5.988090600003488
+            ]
+          },
+          "prefill_tps": {
+            "median": 1062.8365455945905,
+            "range": [
+              1059.6436870642913,
+              1066.0294041248897
+            ]
+          },
+          "decode_tps": {
+            "median": 31.58791846575364,
+            "range": [
+              31.521658827295788,
+              31.65417810421149
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 1.93002400000114,
+            "range": [
+              1.9224100999999791,
+              1.9376379000023007
+            ]
+          },
+          "wall_s": {
+            "median": 6.002958099998068,
+            "range": [
+              5.9969412999926135,
+              6.008974900003523
+            ]
+          },
+          "prefill_tps": {
+            "median": 1064.637626925684,
+            "range": [
+              1060.1911650736245,
+              1069.084088777743
+            ]
+          },
+          "decode_tps": {
+            "median": 31.426471827267267,
+            "range": [
+              31.41412654002847,
+              31.438817114506065
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": 0.18882178316909876,
+      "wall_s_improvement_pct": -0.28713260148297565,
+      "prefill_tps_improvement_pct": 0.16945986083738174,
+      "decode_tps_improvement_pct": -0.5111024921170576
+    },
+    {
+      "input_tokens": 2052,
+      "mode": 1,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 1.9346433999889996,
+            "range": [
+              1.9330076999904122,
+              1.936279099987587
+            ]
+          },
+          "wall_s": {
+            "median": 5.566090499982238,
+            "range": [
+              5.54303559998516,
+              5.589145399979316
+            ]
+          },
+          "prefill_tps": {
+            "median": 1062.4969461468609,
+            "range": [
+              1062.0568293566587,
+              1062.937062937063
+            ]
+          },
+          "decode_tps": {
+            "median": 35.24788747583514,
+            "range": [
+              35.03969340268273,
+              35.45608154898756
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 1.9329777999955695,
+            "range": [
+              1.921945499983849,
+              1.94401010000729
+            ]
+          },
+          "wall_s": {
+            "median": 5.618490899985773,
+            "range": [
+              5.611153899983037,
+              5.625827899988508
+            ]
+          },
+          "prefill_tps": {
+            "median": 1063.0564112187085,
+            "range": [
+              1056.8058917443477,
+              1069.3069306930693
+            ]
+          },
+          "decode_tps": {
+            "median": 34.73062469138594,
+            "range": [
+              34.557235421166304,
+              34.904013961605585
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": 0.08609338513958431,
+      "wall_s_improvement_pct": -0.9414219909593988,
+      "prefill_tps_improvement_pct": 0.052655687517646314,
+      "decode_tps_improvement_pct": -1.467500101399894
+    },
+    {
+      "input_tokens": 8192,
+      "mode": 0,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 5.9340378000051714,
+            "range": [
+              5.906612699996913,
+              5.96146290001343
+            ]
+          },
+          "wall_s": {
+            "median": 10.152076600003056,
+            "range": [
+              10.137211900000693,
+              10.16694130000542
+            ]
+          },
+          "prefill_tps": {
+            "median": 1381.560331990706,
+            "range": [
+              1375.2812006849545,
+              1387.8394632964576
+            ]
+          },
+          "decode_tps": {
+            "median": 30.34568695499547,
+            "range": [
+              30.25504053702697,
+              30.436333372963976
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 5.909238099993672,
+            "range": [
+              5.896309600007953,
+              5.922166599979391
+            ]
+          },
+          "wall_s": {
+            "median": 10.04075975001615,
+            "range": [
+              9.935364300006768,
+              10.146155200025532
+            ]
+          },
+          "prefill_tps": {
+            "median": 1387.187957942225,
+            "range": [
+              1384.1812682696045,
+              1390.1946476148455
+            ]
+          },
+          "decode_tps": {
+            "median": 31.00615416679844,
+            "range": [
+              30.118355726017086,
+              31.893952607579795
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": 0.41792285198246654,
+      "wall_s_improvement_pct": 1.0964934010335645,
+      "prefill_tps_improvement_pct": 0.4073384144874956,
+      "decode_tps_improvement_pct": 2.1764780371671284
+    },
+    {
+      "input_tokens": 8192,
+      "mode": 1,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 5.931018349991064,
+            "range": [
+              5.911787399993045,
+              5.950249299989082
+            ]
+          },
+          "wall_s": {
+            "median": 9.187661099989782,
+            "range": [
+              9.168594599992502,
+              9.206727599987062
+            ]
+          },
+          "prefill_tps": {
+            "median": 1382.2217686627878,
+            "range": [
+              1377.8256189451022,
+              1386.6179183804736
+            ]
+          },
+          "decode_tps": {
+            "median": 39.30358967136712,
+            "range": [
+              39.301175964874574,
+              39.30600337785967
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 5.884630200001993,
+            "range": [
+              5.866581899987068,
+              5.902678500016918
+            ]
+          },
+          "wall_s": {
+            "median": 9.183281549994717,
+            "range": [
+              9.173050000012154,
+              9.193513099977281
+            ]
+          },
+          "prefill_tps": {
+            "median": 1393.269938813392,
+            "range": [
+              1388.9454052221092,
+              1397.5944724046747
+            ]
+          },
+          "decode_tps": {
+            "median": 38.804844527237194,
+            "range": [
+              38.47194253253584,
+              39.13774652193854
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": 0.7821279121340143,
+      "wall_s_improvement_pct": 0.04766773553575682,
+      "prefill_tps_improvement_pct": 0.7993051767150628,
+      "decode_tps_improvement_pct": -1.2689557068454376
+    },
+    {
+      "input_tokens": 32768,
+      "mode": 0,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 22.320700350013794,
+            "range": [
+              22.267915600008564,
+              22.373485100019025
+            ]
+          },
+          "wall_s": {
+            "median": 26.49575860000914,
+            "range": [
+              26.467169100011233,
+              26.524348100007046
+            ]
+          },
+          "prefill_tps": {
+            "median": 1468.7663528599508,
+            "range": [
+              1465.349545432186,
+              1472.1831602877155
+            ]
+          },
+          "decode_tps": {
+            "median": 30.657872574045506,
+            "range": [
+              30.480544839739014,
+              30.835200308352
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 22.185587150001084,
+            "range": [
+              22.181732700002613,
+              22.189441599999554
+            ]
+          },
+          "wall_s": {
+            "median": 26.52129530000093,
+            "range": [
+              26.48869550001109,
+              26.55389509999077
+            ]
+          },
+          "prefill_tps": {
+            "median": 1477.7834488045792,
+            "range": [
+              1477.560185957587,
+              1478.0067116515713
+            ]
+          },
+          "decode_tps": {
+            "median": 29.52226950327568,
+            "range": [
+              29.32685698574898,
+              29.71768202080238
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": 0.6053268844345531,
+      "wall_s_improvement_pct": -0.09638033157420463,
+      "prefill_tps_improvement_pct": 0.6139231013204047,
+      "decode_tps_improvement_pct": -3.704115698266715
+    },
+    {
+      "input_tokens": 32768,
+      "mode": 1,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 22.414954499996384,
+            "range": [
+              22.362340799998492,
+              22.467568199994275
+            ]
+          },
+          "wall_s": {
+            "median": 25.981363999992027,
+            "range": [
+              25.977005199994892,
+              25.985722799989162
+            ]
+          },
+          "prefill_tps": {
+            "median": 1462.5939459877548,
+            "range": [
+              1459.2221163352008,
+              1465.9657756403087
+            ]
+          },
+          "decode_tps": {
+            "median": 35.89559401064645,
+            "range": [
+              35.40998118844749,
+              36.38120683284541
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 22.248480449983617,
+            "range": [
+              22.21779189998051,
+              22.279168999986723
+            ]
+          },
+          "wall_s": {
+            "median": 25.80772219999926,
+            "range": [
+              25.776713300001575,
+              25.83873109999695
+            ]
+          },
+          "prefill_tps": {
+            "median": 1473.63566089514,
+            "range": [
+              1471.6872664558782,
+              1475.5840553344021
+            ]
+          },
+          "decode_tps": {
+            "median": 35.960612239980875,
+            "range": [
+              35.957076240238216,
+              35.96414823972353
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": 0.7426918935427383,
+      "wall_s_improvement_pct": 0.668332116792708,
+      "prefill_tps_improvement_pct": 0.7549405587022548,
+      "decode_tps_improvement_pct": 0.1811315040925167
+    },
+    {
+      "input_tokens": 131072,
+      "mode": 0,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 91.94462115000351,
+            "range": [
+              91.16743610001868,
+              92.72180619998835
+            ]
+          },
+          "wall_s": {
+            "median": 96.5738306500134,
+            "range": [
+              95.79322430002503,
+              97.35443700000178
+            ]
+          },
+          "prefill_tps": {
+            "median": 1426.4235846653678,
+            "range": [
+              1414.4302707415852,
+              1438.4168985891506
+            ]
+          },
+          "decode_tps": {
+            "median": 27.649685396432762,
+            "range": [
+              27.629079606285615,
+              27.67029118657991
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 91.24658730000374,
+            "range": [
+              90.43472509999992,
+              92.05844950000755
+            ]
+          },
+          "wall_s": {
+            "median": 95.9421728499874,
+            "range": [
+              95.13589139998658,
+              96.74845429998823
+            ]
+          },
+          "prefill_tps": {
+            "median": 1437.3160983593389,
+            "range": [
+              1424.534617825811,
+              1450.097578892867
+            ]
+          },
+          "decode_tps": {
+            "median": 27.25872944851432,
+            "range": [
+              27.226511815880713,
+              27.290947081147927
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": 0.7591894351937819,
+      "wall_s_improvement_pct": 0.6540672517331872,
+      "prefill_tps_improvement_pct": 0.763624060277046,
+      "decode_tps_improvement_pct": -1.4139616502431587
+    },
+    {
+      "input_tokens": 131072,
+      "mode": 1,
+      "tokens_equal_all_four_runs": true,
+      "output_tokens": 128,
+      "times": {
+        "baseline": {
+          "ttft_s": {
+            "median": 93.74932849999459,
+            "range": [
+              93.71236599999247,
+              93.78629099999671
+            ]
+          },
+          "wall_s": {
+            "median": 97.42862874999992,
+            "range": [
+              97.39573280001059,
+              97.46152469998924
+            ]
+          },
+          "prefill_tps": {
+            "median": 1398.7714433249257,
+            "range": [
+              1398.2534633101413,
+              1399.2894233397103
+            ]
+          },
+          "decode_tps": {
+            "median": 34.80084071065663,
+            "range": [
+              34.13970607846798,
+              35.46197534284527
+            ]
+          }
+        },
+        "candidate": {
+          "ttft_s": {
+            "median": 93.05139039999631,
+            "range": [
+              93.0457893999992,
+              93.05699139999342
+            ]
+          },
+          "wall_s": {
+            "median": 96.68038159998832,
+            "range": [
+              96.68012899998575,
+              96.68063419999089
+            ]
+          },
+          "prefill_tps": {
+            "median": 1409.286194320709,
+            "range": [
+              1409.1445170848237,
+              1409.4278715565945
+            ]
+          },
+          "decode_tps": {
+            "median": 35.27054595130935,
+            "range": [
+              35.213204951856945,
+              35.32788695076176
+            ]
+          }
+        }
+      },
+      "ttft_s_improvement_pct": 0.7444726390742336,
+      "wall_s_improvement_pct": 0.7679951566716412,
+      "prefill_tps_improvement_pct": 0.7517133014089407,
+      "decode_tps_improvement_pct": 1.349695096615554
+    }
+  ],
+  "all_generation_tokens_equal": true,
+  "all_serial_mtp_pairs_equal": true,
+  "load_seconds_excluded_from_request_timings": {
+    "a1": 22.603472999995574,
+    "b1": 165.50679539999692,
+    "b2": 21.56687539999257,
+    "a2": 21.57122949999757
+  },
+  "raw_logit_fingerprints_equal": {
+    "512": true,
+    "8192": true
+  },
+  "raw_logit_scored_positions": 6135,
+  "unit_checks": {
+    "gpu_45": true,
+    "api_421": true,
+    "disconnect": true,
+    "cancel": true,
+    "tool_failures": true,
+    "config_6": true
+  },
+  "tool_tasks": {
+    "baseline-office": {
+      "status": "complete",
+      "success": true,
+      "tasks": [
+        {
+          "scenario": "office",
+          "status": "complete",
+          "success": true,
+          "task_wall_s": 341.25288539999747,
+          "scoring_wall_s": 0.023603899986483157,
+          "evaluation": {
+            "success": true,
+            "scenario": "office",
+            "checks": {
+              "overview_read": true,
+              "structured_submission_stored": true,
+              "fixture_unchanged": true,
+              "complete_invoices_and_payments_read": true,
+              "actual_read_only_SQL_executed": true,
+              "exact_structured_ground_truth": true,
+              "independent_delivery_accepted": true
+            },
+            "details": {
+              "expected": {
+                "kind": "office",
+                "receivable_cents": 3444889837,
+                "applied_payment_cents": 2222233862,
+                "balance_cents": 1222655975,
+                "eligible_invoice_count": 481,
+                "invoice_exclusions": {
+                  "conflicting_latest_revision": 6,
+                  "non_posted": 49,
+                  "non_cny": 37,
+                  "missing_amount": 27
+                },
+                "payment_exclusions": {
+                  "conflicting_event": 5,
+                  "not_settled": 32,
+                  "non_cny": 11,
+                  "after_cutoff": 20,
+                  "ineligible_or_missing_invoice": 59
+                },
+                "by_department": [
+                  {
+                    "department": "产品丙",
+                    "invoice_count": 97,
+                    "receivable_cents": 685874835,
+                    "applied_payment_cents": 440524128,
+                    "balance_cents": 245350707
+                  },
+                  {
+                    "department": "华北丁",
+                    "invoice_count": 99,
+                    "receivable_cents": 631401686,
+                    "applied_payment_cents": 450724986,
+                    "balance_cents": 180676700
+                  },
+                  {
+                    "department": "华南戊",
+                    "invoice_count": 100,
+                    "receivable_cents": 831743909,
+                    "applied_payment_cents": 542462319,
+                    "balance_cents": 289281590
+                  },
+                  {
+                    "department": "服务乙",
+                    "invoice_count": 97,
+                    "receivable_cents": 613981373,
+                    "applied_payment_cents": 375211976,
+                    "balance_cents": 238769397
+                  },
+                  {
+                    "department": "采购甲",
+                    "invoice_count": 88,
+                    "receivable_cents": 681888034,
+                    "applied_payment_cents": 413310453,
+                    "balance_cents": 268577581
+                  }
+                ],
+                "by_year": [
+                  {
+                    "issued_year": 2022,
+                    "invoice_count": 101,
+                    "receivable_cents": 675962169,
+                    "applied_payment_cents": 459407731,
+                    "balance_cents": 216554438
+                  },
+                  {
+                    "issued_year": 2023,
+                    "invoice_count": 90,
+                    "receivable_cents": 700072713,
+                    "applied_payment_cents": 503739793,
+                    "balance_cents": 196332920
+                  },
+                  {
+                    "issued_year": 2024,
+                    "invoice_count": 97,
+                    "receivable_cents": 652597779,
+                    "applied_payment_cents": 370588993,
+                    "balance_cents": 282008786
+                  },
+                  {
+                    "issued_year": 2025,
+                    "invoice_count": 106,
+                    "receivable_cents": 757041719,
+                    "applied_payment_cents": 565598839,
+                    "balance_cents": 191442880
+                  },
+                  {
+                    "issued_year": 2026,
+                    "invoice_count": 87,
+                    "receivable_cents": 659215457,
+                    "applied_payment_cents": 322898506,
+                    "balance_cents": 336316951
+                  }
+                ],
+                "overdue_top5": [
+                  {
+                    "invoice_id": "r23-d-I588516",
+                    "department": "华南戊",
+                    "due_date": "2026-02-25",
+                    "balance_cents": 27837674
+                  },
+                  {
+                    "invoice_id": "r23-d-I707626",
+                    "department": "采购甲",
+                    "due_date": "2026-04-19",
+                    "balance_cents": 26466383
+                  },
+                  {
+                    "invoice_id": "r23-d-I456192",
+                    "department": "产品丙",
+                    "due_date": "2025-06-04",
+                    "balance_cents": 24982304
+                  },
+                  {
+                    "invoice_id": "r23-d-I770765",
+                    "department": "产品丙",
+                    "due_date": "2026-06-30",
+                    "balance_cents": 24897009
+                  },
+                  {
+                    "invoice_id": "r23-d-I676606",
+                    "department": "产品丙",
+                    "due_date": "2025-10-25",
+                    "balance_cents": 24693054
+                  }
+                ]
+              },
+              "submitted": {
+                "kind": "office",
+                "eligible_invoice_count": 481,
+                "receivable_cents": 3444889837,
+                "applied_payment_cents": 2222233862,
+                "balance_cents": 1222655975,
+                "by_department": [
+                  {
+                    "department": "产品丙",
+                    "invoice_count": 97,
+                    "receivable_cents": 685874835,
+                    "applied_payment_cents": 440524128,
+                    "balance_cents": 245350707
+                  },
+                  {
+                    "department": "华北丁",
+                    "invoice_count": 99,
+                    "receivable_cents": 631401686,
+                    "applied_payment_cents": 450724986,
+                    "balance_cents": 180676700
+                  },
+                  {
+                    "department": "华南戊",
+                    "invoice_count": 100,
+                    "receivable_cents": 831743909,
+                    "applied_payment_cents": 542462319,
+                    "balance_cents": 289281590
+                  },
+                  {
+                    "department": "服务乙",
+                    "invoice_count": 97,
+                    "receivable_cents": 613981373,
+                    "applied_payment_cents": 375211976,
+                    "balance_cents": 238769397
+                  },
+                  {
+                    "department": "采购甲",
+                    "invoice_count": 88,
+                    "receivable_cents": 681888034,
+                    "applied_payment_cents": 413310453,
+                    "balance_cents": 268577581
+                  }
+                ],
+                "by_year": [
+                  {
+                    "issued_year": 2022,
+                    "invoice_count": 101,
+                    "receivable_cents": 675962169,
+                    "applied_payment_cents": 459407731,
+                    "balance_cents": 216554438
+                  },
+                  {
+                    "issued_year": 2023,
+                    "invoice_count": 90,
+                    "receivable_cents": 700072713,
+                    "applied_payment_cents": 503739793,
+                    "balance_cents": 196332920
+                  },
+                  {
+                    "issued_year": 2024,
+                    "invoice_count": 97,
+                    "receivable_cents": 652597779,
+                    "applied_payment_cents": 370588993,
+                    "balance_cents": 282008786
+                  },
+                  {
+                    "issued_year": 2025,
+                    "invoice_count": 106,
+                    "receivable_cents": 757041719,
+                    "applied_payment_cents": 565598839,
+                    "balance_cents": 191442880
+                  },
+                  {
+                    "issued_year": 2026,
+                    "invoice_count": 87,
+                    "receivable_cents": 659215457,
+                    "applied_payment_cents": 322898506,
+                    "balance_cents": 336316951
+                  }
+                ],
+                "overdue_top5": [
+                  {
+                    "invoice_id": "r23-d-I588516",
+                    "department": "华南戊",
+                    "due_date": "2026-02-25",
+                    "balance_cents": 27837674
+                  },
+                  {
+                    "invoice_id": "r23-d-I707626",
+                    "department": "采购甲",
+                    "due_date": "2026-04-19",
+                    "balance_cents": 26466383
+                  },
+                  {
+                    "invoice_id": "r23-d-I456192",
+                    "department": "产品丙",
+                    "due_date": "2025-06-04",
+                    "balance_cents": 24982304
+                  },
+                  {
+                    "invoice_id": "r23-d-I770765",
+                    "department": "产品丙",
+                    "due_date": "2026-06-30",
+                    "balance_cents": 24897009
+                  },
+                  {
+                    "invoice_id": "r23-d-I676606",
+                    "department": "产品丙",
+                    "due_date": "2025-10-25",
+                    "balance_cents": 24693054
+                  }
+                ],
+                "invoice_exclusions": {
+                  "conflicting_latest_revision": 6,
+                  "non_posted": 49,
+                  "non_cny": 37,
+                  "missing_amount": 27
+                },
+                "payment_exclusions": {
+                  "conflicting_event": 5,
+                  "not_settled": 32,
+                  "non_cny": 11,
+                  "after_cutoff": 20,
+                  "ineligible_or_missing_invoice": 59
+                }
+              },
+              "input_records": 1002,
+              "ground_truth_method": "Independent Python grouping and integer arithmetic, not the agent SQL.",
+              "delivery_guard": {
+                "events": [
+                  {
+                    "accepted": true,
+                    "failed_fields": [],
+                    "recoverable": false,
+                    "rejection_count": 0,
+                    "input_sha256": "e3780034e0b6473b191e13ffb0a897c39768583010878cfca344673c0e0b7344",
+                    "verifier_wall_s": 0.16576199998962693
+                  }
+                ],
+                "method": "SQL recomputed from declared source contract; hidden Python grader is separate"
+              }
+            },
+            "tool_calls": 24,
+            "successful_tool_calls": 22,
+            "final_text_used_for_scoring": false
+          },
+          "tool_failure_count": 2,
+          "test_suite_failure_count": 0
+        }
+      ],
+      "records": 17,
+      "output_tokens": 13343,
+      "tool_calls": 24,
+      "canonical_transcript_sha256": "76d9318797bfbd453061bc19811e845c70f30859fb7ccaf40b3bdf49d6394df1",
+      "record_sha256": "31420a53070df0ceb095799859571ffc379b210c3168159f9bc21ffe401eaaed"
+    },
+    "baseline-code": {
+      "status": "complete",
+      "success": true,
+      "tasks": [
+        {
+          "scenario": "code",
+          "status": "complete",
+          "success": true,
+          "task_wall_s": 129.06225279998034,
+          "scoring_wall_s": 0.09167780002462678,
+          "evaluation": {
+            "success": true,
+            "scenario": "code",
+            "checks": {
+              "overview_read": true,
+              "structured_submission_stored": true,
+              "fixture_unchanged": true,
+              "parser_and_tests_read": true,
+              "baseline_test_before_first_edit": true,
+              "function_actually_changed": true,
+              "current_source_public_test_passed": true,
+              "private_contract_cases_pass": true,
+              "truthful_structured_submission": true
+            },
+            "details": {
+              "private_test": {
+                "executor": "bounded_python_ast_fixture_cpu",
+                "suite": "private",
+                "passed": 545,
+                "total": 545,
+                "failures": [],
+                "float_or_round_present": false,
+                "success": true
+              },
+              "source_sha256": "2bd20313d8d6e575fc178d9da829a1ddbe7871fe5b8cbd512529811fd1aebdb2",
+              "submission": {
+                "kind": "code",
+                "summary": "定位到旧实现用 str.isdigit() 做数字校验，会把全角/其他 Unicode 数字（如１２.３４、上标数字）当作合法并交给 int() 解析，导致畸形金额被接受；同时小数位换算依赖截断拼接、缺少对整数部分为空的显式检查。修复后的 parse_amount_cents 保持签名不变：仅接受 str，只 strip 首尾 ASCII 空白（空格/\\t/\\r/\\n，内部空白仍非法）；按“可选单个 +/- → 可选 ¥/￥ → 非空整数部分 → 可选小数点+1~2位”顺序解析；逗号分组要求首组1~3位、后续恰3位且不得出现在小数部分；改用 all(ch in '0123456789' ...) 强制 ASCII 数字，拒绝指数、下划线、括号、NaN/Inf、Unicode 数字与多余符号；金额全程用整数计算（1位小数×10，2位直接取整，int(digits)*100+frac_cents），不调用 float/round，避免二进制浮点误差；绝对值超过 999999999.99 元抛 ValueError，负零归一为 0。公开测试从 22/24（T012、T019 失败）修复后 24/24 全部通过，且检查确认源码不含 float/round。",
+                "tests_passed": true
+              },
+              "execution_scope": "Fixed function only; bounded Python AST interpreter, not a full repository or shell."
+            },
+            "tool_calls": 7,
+            "successful_tool_calls": 7,
+            "final_text_used_for_scoring": false
+          },
+          "tool_failure_count": 0,
+          "test_suite_failure_count": 1
+        }
+      ],
+      "records": 7,
+      "output_tokens": 5507,
+      "tool_calls": 7,
+      "canonical_transcript_sha256": "56a24aa61395d77d7b8555438ba86176fb5f3350b0952f33ab22b60c3e0c9223",
+      "record_sha256": "bbfa06608faa0e097cd1b314444cf3ef65f082c487e0831afd3588b11d3541c3"
+    },
+    "candidate-office": {
+      "status": "complete",
+      "success": true,
+      "tasks": [
+        {
+          "scenario": "office",
+          "status": "complete",
+          "success": true,
+          "task_wall_s": 343.80572669999674,
+          "scoring_wall_s": 0.02218109997920692,
+          "evaluation": {
+            "success": true,
+            "scenario": "office",
+            "checks": {
+              "overview_read": true,
+              "structured_submission_stored": true,
+              "fixture_unchanged": true,
+              "complete_invoices_and_payments_read": true,
+              "actual_read_only_SQL_executed": true,
+              "exact_structured_ground_truth": true,
+              "independent_delivery_accepted": true
+            },
+            "details": {
+              "expected": {
+                "kind": "office",
+                "receivable_cents": 3444889837,
+                "applied_payment_cents": 2222233862,
+                "balance_cents": 1222655975,
+                "eligible_invoice_count": 481,
+                "invoice_exclusions": {
+                  "conflicting_latest_revision": 6,
+                  "non_posted": 49,
+                  "non_cny": 37,
+                  "missing_amount": 27
+                },
+                "payment_exclusions": {
+                  "conflicting_event": 5,
+                  "not_settled": 32,
+                  "non_cny": 11,
+                  "after_cutoff": 20,
+                  "ineligible_or_missing_invoice": 59
+                },
+                "by_department": [
+                  {
+                    "department": "产品丙",
+                    "invoice_count": 97,
+                    "receivable_cents": 685874835,
+                    "applied_payment_cents": 440524128,
+                    "balance_cents": 245350707
+                  },
+                  {
+                    "department": "华北丁",
+                    "invoice_count": 99,
+                    "receivable_cents": 631401686,
+                    "applied_payment_cents": 450724986,
+                    "balance_cents": 180676700
+                  },
+                  {
+                    "department": "华南戊",
+                    "invoice_count": 100,
+                    "receivable_cents": 831743909,
+                    "applied_payment_cents": 542462319,
+                    "balance_cents": 289281590
+                  },
+                  {
+                    "department": "服务乙",
+                    "invoice_count": 97,
+                    "receivable_cents": 613981373,
+                    "applied_payment_cents": 375211976,
+                    "balance_cents": 238769397
+                  },
+                  {
+                    "department": "采购甲",
+                    "invoice_count": 88,
+                    "receivable_cents": 681888034,
+                    "applied_payment_cents": 413310453,
+                    "balance_cents": 268577581
+                  }
+                ],
+                "by_year": [
+                  {
+                    "issued_year": 2022,
+                    "invoice_count": 101,
+                    "receivable_cents": 675962169,
+                    "applied_payment_cents": 459407731,
+                    "balance_cents": 216554438
+                  },
+                  {
+                    "issued_year": 2023,
+                    "invoice_count": 90,
+                    "receivable_cents": 700072713,
+                    "applied_payment_cents": 503739793,
+                    "balance_cents": 196332920
+                  },
+                  {
+                    "issued_year": 2024,
+                    "invoice_count": 97,
+                    "receivable_cents": 652597779,
+                    "applied_payment_cents": 370588993,
+                    "balance_cents": 282008786
+                  },
+                  {
+                    "issued_year": 2025,
+                    "invoice_count": 106,
+                    "receivable_cents": 757041719,
+                    "applied_payment_cents": 565598839,
+                    "balance_cents": 191442880
+                  },
+                  {
+                    "issued_year": 2026,
+                    "invoice_count": 87,
+                    "receivable_cents": 659215457,
+                    "applied_payment_cents": 322898506,
+                    "balance_cents": 336316951
+                  }
+                ],
+                "overdue_top5": [
+                  {
+                    "invoice_id": "r23-d-I588516",
+                    "department": "华南戊",
+                    "due_date": "2026-02-25",
+                    "balance_cents": 27837674
+                  },
+                  {
+                    "invoice_id": "r23-d-I707626",
+                    "department": "采购甲",
+                    "due_date": "2026-04-19",
+                    "balance_cents": 26466383
+                  },
+                  {
+                    "invoice_id": "r23-d-I456192",
+                    "department": "产品丙",
+                    "due_date": "2025-06-04",
+                    "balance_cents": 24982304
+                  },
+                  {
+                    "invoice_id": "r23-d-I770765",
+                    "department": "产品丙",
+                    "due_date": "2026-06-30",
+                    "balance_cents": 24897009
+                  },
+                  {
+                    "invoice_id": "r23-d-I676606",
+                    "department": "产品丙",
+                    "due_date": "2025-10-25",
+                    "balance_cents": 24693054
+                  }
+                ]
+              },
+              "submitted": {
+                "kind": "office",
+                "eligible_invoice_count": 481,
+                "receivable_cents": 3444889837,
+                "applied_payment_cents": 2222233862,
+                "balance_cents": 1222655975,
+                "by_department": [
+                  {
+                    "department": "产品丙",
+                    "invoice_count": 97,
+                    "receivable_cents": 685874835,
+                    "applied_payment_cents": 440524128,
+                    "balance_cents": 245350707
+                  },
+                  {
+                    "department": "华北丁",
+                    "invoice_count": 99,
+                    "receivable_cents": 631401686,
+                    "applied_payment_cents": 450724986,
+                    "balance_cents": 180676700
+                  },
+                  {
+                    "department": "华南戊",
+                    "invoice_count": 100,
+                    "receivable_cents": 831743909,
+                    "applied_payment_cents": 542462319,
+                    "balance_cents": 289281590
+                  },
+                  {
+                    "department": "服务乙",
+                    "invoice_count": 97,
+                    "receivable_cents": 613981373,
+                    "applied_payment_cents": 375211976,
+                    "balance_cents": 238769397
+                  },
+                  {
+                    "department": "采购甲",
+                    "invoice_count": 88,
+                    "receivable_cents": 681888034,
+                    "applied_payment_cents": 413310453,
+                    "balance_cents": 268577581
+                  }
+                ],
+                "by_year": [
+                  {
+                    "issued_year": 2022,
+                    "invoice_count": 101,
+                    "receivable_cents": 675962169,
+                    "applied_payment_cents": 459407731,
+                    "balance_cents": 216554438
+                  },
+                  {
+                    "issued_year": 2023,
+                    "invoice_count": 90,
+                    "receivable_cents": 700072713,
+                    "applied_payment_cents": 503739793,
+                    "balance_cents": 196332920
+                  },
+                  {
+                    "issued_year": 2024,
+                    "invoice_count": 97,
+                    "receivable_cents": 652597779,
+                    "applied_payment_cents": 370588993,
+                    "balance_cents": 282008786
+                  },
+                  {
+                    "issued_year": 2025,
+                    "invoice_count": 106,
+                    "receivable_cents": 757041719,
+                    "applied_payment_cents": 565598839,
+                    "balance_cents": 191442880
+                  },
+                  {
+                    "issued_year": 2026,
+                    "invoice_count": 87,
+                    "receivable_cents": 659215457,
+                    "applied_payment_cents": 322898506,
+                    "balance_cents": 336316951
+                  }
+                ],
+                "overdue_top5": [
+                  {
+                    "invoice_id": "r23-d-I588516",
+                    "department": "华南戊",
+                    "due_date": "2026-02-25",
+                    "balance_cents": 27837674
+                  },
+                  {
+                    "invoice_id": "r23-d-I707626",
+                    "department": "采购甲",
+                    "due_date": "2026-04-19",
+                    "balance_cents": 26466383
+                  },
+                  {
+                    "invoice_id": "r23-d-I456192",
+                    "department": "产品丙",
+                    "due_date": "2025-06-04",
+                    "balance_cents": 24982304
+                  },
+                  {
+                    "invoice_id": "r23-d-I770765",
+                    "department": "产品丙",
+                    "due_date": "2026-06-30",
+                    "balance_cents": 24897009
+                  },
+                  {
+                    "invoice_id": "r23-d-I676606",
+                    "department": "产品丙",
+                    "due_date": "2025-10-25",
+                    "balance_cents": 24693054
+                  }
+                ],
+                "invoice_exclusions": {
+                  "conflicting_latest_revision": 6,
+                  "non_posted": 49,
+                  "non_cny": 37,
+                  "missing_amount": 27
+                },
+                "payment_exclusions": {
+                  "conflicting_event": 5,
+                  "not_settled": 32,
+                  "non_cny": 11,
+                  "after_cutoff": 20,
+                  "ineligible_or_missing_invoice": 59
+                }
+              },
+              "input_records": 1002,
+              "ground_truth_method": "Independent Python grouping and integer arithmetic, not the agent SQL.",
+              "delivery_guard": {
+                "events": [
+                  {
+                    "accepted": true,
+                    "failed_fields": [],
+                    "recoverable": false,
+                    "rejection_count": 0,
+                    "input_sha256": "e3780034e0b6473b191e13ffb0a897c39768583010878cfca344673c0e0b7344",
+                    "verifier_wall_s": 0.12252360000275075
+                  }
+                ],
+                "method": "SQL recomputed from declared source contract; hidden Python grader is separate"
+              }
+            },
+            "tool_calls": 24,
+            "successful_tool_calls": 22,
+            "final_text_used_for_scoring": false
+          },
+          "tool_failure_count": 2,
+          "test_suite_failure_count": 0
+        }
+      ],
+      "records": 17,
+      "output_tokens": 13343,
+      "tool_calls": 24,
+      "canonical_transcript_sha256": "76d9318797bfbd453061bc19811e845c70f30859fb7ccaf40b3bdf49d6394df1",
+      "record_sha256": "f2b65410b36f040fd8134d8f763462c8d1f1b28ececc68f49cc96e452aa81ead"
+    },
+    "candidate-code": {
+      "status": "complete",
+      "success": true,
+      "tasks": [
+        {
+          "scenario": "code",
+          "status": "complete",
+          "success": true,
+          "task_wall_s": 148.74330820000614,
+          "scoring_wall_s": 0.06425429999944754,
+          "evaluation": {
+            "success": true,
+            "scenario": "code",
+            "checks": {
+              "overview_read": true,
+              "structured_submission_stored": true,
+              "fixture_unchanged": true,
+              "parser_and_tests_read": true,
+              "baseline_test_before_first_edit": true,
+              "function_actually_changed": true,
+              "current_source_public_test_passed": true,
+              "private_contract_cases_pass": true,
+              "truthful_structured_submission": true
+            },
+            "details": {
+              "private_test": {
+                "executor": "bounded_python_ast_fixture_cpu",
+                "suite": "private",
+                "passed": 545,
+                "total": 545,
+                "failures": [],
+                "float_or_round_present": false,
+                "success": true
+              },
+              "source_sha256": "2bd20313d8d6e575fc178d9da829a1ddbe7871fe5b8cbd512529811fd1aebdb2",
+              "submission": {
+                "kind": "code",
+                "summary": "定位到旧实现用 str.isdigit() 做数字校验，会把全角/其他 Unicode 数字（如１２.３４、上标数字）当作合法并交给 int() 解析，导致畸形金额被接受；同时小数位换算依赖截断拼接、缺少对整数部分为空的显式检查。修复后的 parse_amount_cents 保持签名不变：仅接受 str，只 strip 首尾 ASCII 空白（空格/\\t/\\r/\\n，内部空白仍非法）；按“可选单个 +/- → 可选 ¥/￥ → 非空整数部分 → 可选小数点+1~2位”顺序解析；逗号分组要求首组1~3位、后续恰3位且不得出现在小数部分；改用 all(ch in '0123456789' ...) 强制 ASCII 数字，拒绝指数、下划线、括号、NaN/Inf、Unicode 数字与多余符号；金额全程用整数计算（1位小数×10，2位直接取整，int(digits)*100+frac_cents），不调用 float/round，避免二进制浮点误差；绝对值超过 999999999.99 元抛 ValueError，负零归一为 0。公开测试从 22/24（T012、T019 失败）修复后 24/24 全部通过，且检查确认源码不含 float/round。",
+                "tests_passed": true
+              },
+              "execution_scope": "Fixed function only; bounded Python AST interpreter, not a full repository or shell."
+            },
+            "tool_calls": 7,
+            "successful_tool_calls": 7,
+            "final_text_used_for_scoring": false
+          },
+          "tool_failure_count": 0,
+          "test_suite_failure_count": 1
+        }
+      ],
+      "records": 7,
+      "output_tokens": 5507,
+      "tool_calls": 7,
+      "canonical_transcript_sha256": "56a24aa61395d77d7b8555438ba86176fb5f3350b0952f33ab22b60c3e0c9223",
+      "record_sha256": "c8bc62cab9684cdba85d1da4f0ffd80e5f8633814c307bd5f8426ecad70a8789"
+    }
+  },
+  "all_tool_tasks_passed": true,
+  "prototype_screen": {
+    "baseline": [
+      {
+        "input_tokens": 2052,
+        "ttft_s": 1.951617599988822,
+        "wall_s": 5.589467699988745,
+        "prefill_tps": 1053.6044362292052
+      },
+      {
+        "input_tokens": 8192,
+        "ttft_s": 5.948606699996162,
+        "wall_s": 9.238680100010242,
+        "prefill_tps": 1377.9414980404028
+      },
+      {
+        "input_tokens": 32768,
+        "ttft_s": 22.43709009999293,
+        "wall_s": 25.950347999983933,
+        "prefill_tps": 1461.063426596812
+      }
+    ],
+    "control": [
+      {
+        "input_tokens": 2052,
+        "ttft_s": 1.9773220000206493,
+        "wall_s": 5.588372199999867,
+        "prefill_tps": 1038.9347374816466
+      },
+      {
+        "input_tokens": 8192,
+        "ttft_s": 6.008550600003218,
+        "wall_s": 9.259203399997205,
+        "prefill_tps": 1364.1510690734697
+      },
+      {
+        "input_tokens": 32768,
+        "ttft_s": 22.81910739999148,
+        "wall_s": 26.293408099998487,
+        "prefill_tps": 1436.7455748429218
+      }
+    ],
+    "layout": [
+      {
+        "input_tokens": 2052,
+        "ttft_s": 1.9778250000090338,
+        "wall_s": 5.5506255000073,
+        "prefill_tps": 1038.9347374816466
+      },
+      {
+        "input_tokens": 8192,
+        "ttft_s": 5.996131299994886,
+        "wall_s": 9.254294700018363,
+        "prefill_tps": 1367.2702995910875
+      },
+      {
+        "input_tokens": 32768,
+        "ttft_s": 22.777390999981435,
+        "wall_s": 26.33961409999756,
+        "prefill_tps": 1439.3646554450575
+      }
+    ],
+    "candidate": [
+      {
+        "input_tokens": 2052,
+        "ttft_s": 1.9578836000000592,
+        "wall_s": 5.578880299988668,
+        "prefill_tps": 1049.2943342196768
+      },
+      {
+        "input_tokens": 8192,
+        "ttft_s": 5.956261900020763,
+        "wall_s": 9.225336600007722,
+        "prefill_tps": 1376.4134617000186
+      },
+      {
+        "input_tokens": 32768,
+        "ttft_s": 22.511911100009456,
+        "wall_s": 25.958455399988452,
+        "prefill_tps": 1456.303775865747
+      }
+    ],
+    "router": [
+      {
+        "input_tokens": 2052,
+        "ttft_s": 1.942267600010382,
+        "wall_s": 5.540752700006124,
+        "prefill_tps": 1058.3866309057148
+      },
+      {
+        "input_tokens": 8192,
+        "ttft_s": 5.908849899977213,
+        "wall_s": 9.155006499990122,
+        "prefill_tps": 1387.3223932666092
+      },
+      {
+        "input_tokens": 32768,
+        "ttft_s": 22.355529099993873,
+        "wall_s": 25.808813200012082,
+        "prefill_tps": 1466.464383371597
+      }
+    ]
+  },
+  "upstream_router_original_failed_cases": 35,
+  "router_corrected_failed_cases": 0,
+  "runtime_files_hash_equal": 262,
+  "precision_settings": {
+    "GDEC_INDEX_F16": "0",
+    "GDEC_V2_PAIRS_F16": "0",
+    "GDEC_W4B_PAIRS_F16": "0",
+    "GDEC_GEMM_SPLITK": "0",
+    "GDEC_QSA_DENSE_WMMA": "0",
+    "GDEC_MOE_MT": "1",
+    "GDEC_HC_NORHAT": "0",
+    "GDEC_HC_FUSE_WRITE": "0"
+  },
+  "date": "2026-10-06",
+  "api_source_commit": "4e00e91470749f89689018ba7301d8b1f4f218c4",
+  "release_url": "https://github.com/IIIIIllllIIIIIlllll/gfx1151-engine/releases/tag/v0.0.6",
+  "additional_upstream_commits_since_deployed_baseline": 19,
+  "already_integrated_upstream_commits_in_deployed_baseline": 11,
+  "commit_decisions": [
+    {
+      "commit": "06fb1d7",
+      "decision": "omit",
+      "reason": "Experimental dense LUT dispatch failed its upstream performance gate; keep existing arithmetic."
+    },
+    {
+      "commit": "5e40843",
+      "decision": "defer",
+      "reason": "Changes the arithmetic dispatch of v2 batches of 9-24 rows; narrow benefit outside gamma-2 verification and normal 8192-row chunks, with upstream KLD rather than exact equality evidence."
+    },
+    {
+      "commit": "d51095b",
+      "decision": "do not copy tooling",
+      "reason": "Local tests cover token cache reuse, mixed literals/images, fragmented output, and complete multi-turn tool tasks."
+    },
+    {
+      "commit": "4bdfc55",
+      "decision": "not applicable",
+      "reason": "w4b benchmarking; deployed model is HGN v2."
+    },
+    {
+      "commit": "99679ed",
+      "decision": "not applicable",
+      "reason": "w4b kernel; deployed v2 already has the earlier multi-tile implementation."
+    },
+    {
+      "commit": "1118198",
+      "decision": "omit",
+      "reason": "Archived GDN pipeline prototype failed upstream performance gate."
+    },
+    {
+      "commit": "2f49635",
+      "decision": "tested and rejected",
+      "reason": "Isolated arena-layout screen did not show material benefit; removed from final production source."
+    },
+    {
+      "commit": "e17fc1d",
+      "decision": "not applicable",
+      "reason": "The new dense-LUT allocation that this fixes was not introduced."
+    },
+    {
+      "commit": "0e2548d",
+      "decision": "omit",
+      "reason": "Experimental tool variants are not needed by the selected implementation."
+    },
+    {
+      "commit": "15eafb2",
+      "decision": "reference only",
+      "reason": "Allocation placement lessons informed isolated testing; no runtime patch."
+    },
+    {
+      "commit": "de0d650",
+      "decision": "partial port",
+      "reason": "Preserve prior image embeddings during growth; retain the configured 16-image limit."
+    },
+    {
+      "commit": "d8d6b21",
+      "decision": "corrected partial port",
+      "reason": "Use wave32 router after fixing bit-reversed tie priority; keep existing local profiling infrastructure."
+    },
+    {
+      "commit": "59bdf35",
+      "decision": "retain existing parts; omit new defaults",
+      "reason": "KV-only MTP ingest already integrated. Skip new BF16 index projection defaults, asynchronous checkpoints, Linux PLE rings, and unrelated HC experiments."
+    },
+    {
+      "commit": "8cb8e63",
+      "decision": "defer",
+      "reason": "Linux/default and projection kernel changes do not have enough evidence to replace the current Windows precision-preserve path."
+    },
+    {
+      "commit": "53c72f8",
+      "decision": "partial port",
+      "reason": "Adopt ThinkSplitter immediate safe-prefix emission; keep local checkpoint and GDN state restoration logic."
+    },
+    {
+      "commit": "46ca703",
+      "decision": "retain existing equivalent; omit QSA union",
+      "reason": "Local ordered HT already handles determinism. New union changes numerical behavior; not enabled."
+    },
+    {
+      "commit": "01de407",
+      "decision": "omit",
+      "reason": "Performance-negative experimental kernels and profiling tools."
+    },
+    {
+      "commit": "ec7ecfa",
+      "decision": "method reviewed; gate not copied",
+      "reason": "The upstream script can print FAIL while exiting zero. Locally assert exact raw-logit fingerprints and retain all outcomes."
+    },
+    {
+      "commit": "9680de2",
+      "decision": "port",
+      "reason": "Plain-text image/video pad literals must not trigger vision rejection; fix temporary-vector iterator misuse in upstream added test."
+    }
+  ],
+  "tool_task_scope": {
+    "office": "R23-d synthetic ledger, actual read-only SQLite, independent integer-arithmetic grader and delivery guard.",
+    "code": "R23-d fixed Python function in bounded AST interpreter; 545 private contract cases, not a full repository or shell task.",
+    "first_run_retained": true,
+    "office_two_tool_errors_recovered_in_both_arms": true,
+    "transcript_normalization": "Only generated tool-call IDs removed; business identifiers and message content retained."
+  },
+  "code_followup_reason": "Original candidate code task took 148.743s vs 129.062s baseline (15.25% slower), concentrated in late decode. Preselected three-run follow-up: candidate, baseline, candidate with router disabled. Original result retained.",
+  "performance_interpretation": "The 40-request A/B/B/A engine-wire benchmark shows small long-input TTFT improvements, not universal task acceleration. Full tool-task wall times fluctuate; baseline also slowed substantially in follow-up. Background CPU activity was observed, but the root cause was not established. No thermal, power, or system-wide quiet-state control was applied.",
+  "code_followup": [
+    {
+      "arm": "candidate",
+      "success": true,
+      "requests": 7,
+      "task_wall_s": 130.49271620000945,
+      "output_tokens": 5507,
+      "tool_failures": 0,
+      "private_test": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 545,
+        "total": 545,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "canonical_transcript_sha256": "56a24aa61395d77d7b8555438ba86176fb5f3350b0952f33ab22b60c3e0c9223",
+      "record_sha256": "33ffb204100aa832da4a613171e9bce8aa4a5ff31dca35a613a15bb2e7de3f4b",
+      "engine_identity": {
+        "pid": 23004,
+        "args": [
+          "C:\\Users\\Jerry\\Projects\\gfx1151-engine\\build\\gdec-win.exe",
+          "C:\\LingLong\\NovaStudio\\NovaMax\\data\\models_dir\\llm\\peonist-ai\\halogen-qwen3.8-flash-next\\qwen38-flash-next-v2.hgn",
+          "C:\\LingLong\\NovaStudio\\NovaMax\\data\\models_dir\\llm\\peonist-ai\\halogen-qwen3.8-flash-next\\qwen38-flash-next-ngram.hgn",
+          "--serve",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "18870",
+          "--maxctx",
+          "262144",
+          "--gamma",
+          "2"
+        ],
+        "engine_sha256": "b64f434f569be3a9ac5a44b270616b8f44ef815880984d3ae070da0d9a0beb08",
+        "env": {
+          "GDEC_API_MAX_IMAGES": "16",
+          "GDEC_CKPT_TOKENS": "0",
+          "GDEC_DRAFTER": "mtp",
+          "GDEC_EXPERT_PROFILE": "0",
+          "GDEC_GDN_FUSED": "1",
+          "GDEC_GDN_PROFILE": "0",
+          "GDEC_GDN_STREAM": "1",
+          "GDEC_GDN_WAVE": "1",
+          "GDEC_GEMM_SPLITK": "0",
+          "GDEC_GEMM_WMMA": "1",
+          "GDEC_GR_BF16": "1",
+          "GDEC_GR_PROFILE": "0",
+          "GDEC_HC_FUSE_WRITE": "0",
+          "GDEC_HC_NORHAT": "0",
+          "GDEC_HC_NORM_WAVE": "0",
+          "GDEC_INDEX_F16": "0",
+          "GDEC_INDEX_FUSED2": "1",
+          "GDEC_INDEX_SCORE_PAGED": "0",
+          "GDEC_INDEX_STREAM_SELECT": "1",
+          "GDEC_IPROJ_SOLUTION": "-711",
+          "GDEC_KVSNAP": "0",
+          "GDEC_KVSNAP_MAX_GB": "0",
+          "GDEC_KV_PAGED": "1",
+          "GDEC_KV_POOL_TOKENS": "524288",
+          "GDEC_MOE_LT": "1",
+          "GDEC_MOE_LT_BF16": "1",
+          "GDEC_MOE_MT": "1",
+          "GDEC_MTP_BRANCH_STRIDED": "1",
+          "GDEC_MTP_INGEST_FUSED": "1",
+          "GDEC_MTP_INGEST_KV_ONLY": "1",
+          "GDEC_MTP_INGEST_PROFILE": "0",
+          "GDEC_MTP_PREFILL_TAIL": "0",
+          "GDEC_MTP_TAP_NORM_DUAL": "0",
+          "GDEC_MTP_TAP_NORM_FUSED": "1",
+          "GDEC_NOWARMUP": "1",
+          "GDEC_PARALLEL": "2",
+          "GDEC_PLE_LOOKAHEAD": "1",
+          "GDEC_PLE_PAGE_IO": "0",
+          "GDEC_PLE_PAGE_VERIFY": "0",
+          "GDEC_PP_MOE_OUT": "1",
+          "GDEC_PREFILL_CHUNK": "8192",
+          "GDEC_PREFILL_PROFILE": "0",
+          "GDEC_PREFILL_SKIP_INTERMEDIATE_HEAD": "0",
+          "GDEC_QSA_DENSE_WMMA": "0",
+          "GDEC_QSA_HEAD_INTERLEAVE": "1",
+          "GDEC_QSA_KV_BF16": "1",
+          "GDEC_QSA_KV_FUSED": "1",
+          "GDEC_QSA_WMMA": "1",
+          "GDEC_QSA_WMMA_BTV": "1",
+          "GDEC_RCKPT_MAX": "2",
+          "GDEC_REQUEST_TIMING": "1",
+          "GDEC_RETRY_CHECKPOINT": "1",
+          "GDEC_ROPE_ATTN_SCALE": "0",
+          "GDEC_ROPE_BETA_FAST": "32",
+          "GDEC_ROPE_BETA_SLOW": "1",
+          "GDEC_ROPE_FACTOR": "1",
+          "GDEC_ROPE_ORIGINAL_CTX": "262144",
+          "GDEC_SPEC_ADAPT": "0",
+          "GDEC_SPEC_ADAPT_GREEDY": "0",
+          "GDEC_SPEC_GAMMA": "2",
+          "GDEC_SPEC_PRECISION": "aligned",
+          "GDEC_SPEC_QSA_BATCH": "1",
+          "GDEC_SPEC_SERIAL_ORDER_MR": "1",
+          "GDEC_SPEC_SKIP_UNUSED_FINAL": "1",
+          "GDEC_SPEC_TRACE": "0",
+          "GDEC_V2_BF16_GEMV": "0",
+          "GDEC_V2_DENSE_BACKEND": "upstream",
+          "GDEC_V2_EXACT_DATAFLOW": "0",
+          "GDEC_V2_EXACT_ORDER": "0",
+          "GDEC_V2_EXACT_REUSE": "0",
+          "GDEC_V2_EXPERT_BACKEND": "upstream-prefill",
+          "GDEC_V2_HT_ORDERED": "1",
+          "GDEC_V2_MOE": "grouped",
+          "GDEC_V2_MOE_DEFER_SCALE": "1",
+          "GDEC_V2_MOE_DOWN_GROUP4": "0",
+          "GDEC_V2_MOE_FUSED_GU": "2",
+          "GDEC_V2_MOE_GU_DOUBLE_BUFFER": "0",
+          "GDEC_V2_MOE_LDS_SYNC": "0",
+          "GDEC_V2_MOE_PERMUTE_Q4": "1",
+          "GDEC_V2_MOE_REDUCE_HAD": "1",
+          "GDEC_V2_NATIVE_HT": "1",
+          "GDEC_V2_PAIRS_F16": "0",
+          "GDEC_W4B_PAIRS_F16": "0"
+        },
+        "started_utc": "2026-10-06T12:34:11Z",
+        "protocol_info": "I 1 0 262144 8 1 1 0 0 0 2 262144 1 1",
+        "ready_s": 58.20516380001209,
+        "exit_code": 1
+      },
+      "http_wall_seconds_by_turn": [
+        2.606087399995886,
+        5.955010300007416,
+        45.849189500004286,
+        44.22483560000546,
+        1.3670530999952462,
+        19.092663700022968,
+        11.107917699991958
+      ],
+      "decode_tps_by_turn": [
+        50.30570389288755,
+        42.88326921864161,
+        42.467259291371846,
+        45.68850581834287,
+        45.566502463054185,
+        42.33210427862418,
+        47.74460872021847
+      ]
+    },
+    {
+      "arm": "baseline",
+      "success": true,
+      "requests": 7,
+      "task_wall_s": 186.75964940001722,
+      "output_tokens": 5507,
+      "tool_failures": 0,
+      "private_test": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 545,
+        "total": 545,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "canonical_transcript_sha256": "56a24aa61395d77d7b8555438ba86176fb5f3350b0952f33ab22b60c3e0c9223",
+      "record_sha256": "a4f173fc8a85ba56802987e53b06ad92a895dfd47507b518fc0c5117e8c255c3",
+      "engine_identity": {
+        "pid": 36312,
+        "args": [
+          "C:\\Users\\Jerry\\Projects\\gfx1151-engine\\build\\gdec-v006-baseline.exe",
+          "C:\\LingLong\\NovaStudio\\NovaMax\\data\\models_dir\\llm\\peonist-ai\\halogen-qwen3.8-flash-next\\qwen38-flash-next-v2.hgn",
+          "C:\\LingLong\\NovaStudio\\NovaMax\\data\\models_dir\\llm\\peonist-ai\\halogen-qwen3.8-flash-next\\qwen38-flash-next-ngram.hgn",
+          "--serve",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "18870",
+          "--maxctx",
+          "262144",
+          "--gamma",
+          "2"
+        ],
+        "engine_sha256": "3d62b535c61b917c796db093884820d6132e11cc2fb24fea8de5c2885ec8116a",
+        "env": {
+          "GDEC_API_MAX_IMAGES": "16",
+          "GDEC_CKPT_TOKENS": "0",
+          "GDEC_DRAFTER": "mtp",
+          "GDEC_EXPERT_PROFILE": "0",
+          "GDEC_GDN_FUSED": "1",
+          "GDEC_GDN_PROFILE": "0",
+          "GDEC_GDN_STREAM": "1",
+          "GDEC_GDN_WAVE": "1",
+          "GDEC_GEMM_SPLITK": "0",
+          "GDEC_GEMM_WMMA": "1",
+          "GDEC_GR_BF16": "1",
+          "GDEC_GR_PROFILE": "0",
+          "GDEC_HC_FUSE_WRITE": "0",
+          "GDEC_HC_NORHAT": "0",
+          "GDEC_HC_NORM_WAVE": "0",
+          "GDEC_INDEX_F16": "0",
+          "GDEC_INDEX_FUSED2": "1",
+          "GDEC_INDEX_SCORE_PAGED": "0",
+          "GDEC_INDEX_STREAM_SELECT": "1",
+          "GDEC_IPROJ_SOLUTION": "-711",
+          "GDEC_KVSNAP": "0",
+          "GDEC_KVSNAP_MAX_GB": "0",
+          "GDEC_KV_PAGED": "1",
+          "GDEC_KV_POOL_TOKENS": "524288",
+          "GDEC_MOE_LT": "1",
+          "GDEC_MOE_LT_BF16": "1",
+          "GDEC_MOE_MT": "1",
+          "GDEC_MTP_BRANCH_STRIDED": "1",
+          "GDEC_MTP_INGEST_FUSED": "1",
+          "GDEC_MTP_INGEST_KV_ONLY": "1",
+          "GDEC_MTP_INGEST_PROFILE": "0",
+          "GDEC_MTP_PREFILL_TAIL": "0",
+          "GDEC_MTP_TAP_NORM_DUAL": "0",
+          "GDEC_MTP_TAP_NORM_FUSED": "1",
+          "GDEC_NOWARMUP": "1",
+          "GDEC_PARALLEL": "2",
+          "GDEC_PLE_LOOKAHEAD": "1",
+          "GDEC_PLE_PAGE_IO": "0",
+          "GDEC_PLE_PAGE_VERIFY": "0",
+          "GDEC_PP_MOE_OUT": "1",
+          "GDEC_PREFILL_CHUNK": "8192",
+          "GDEC_PREFILL_PROFILE": "0",
+          "GDEC_PREFILL_SKIP_INTERMEDIATE_HEAD": "0",
+          "GDEC_QSA_DENSE_WMMA": "0",
+          "GDEC_QSA_HEAD_INTERLEAVE": "1",
+          "GDEC_QSA_KV_BF16": "1",
+          "GDEC_QSA_KV_FUSED": "1",
+          "GDEC_QSA_WMMA": "1",
+          "GDEC_QSA_WMMA_BTV": "1",
+          "GDEC_RCKPT_MAX": "2",
+          "GDEC_REQUEST_TIMING": "1",
+          "GDEC_RETRY_CHECKPOINT": "1",
+          "GDEC_ROPE_ATTN_SCALE": "0",
+          "GDEC_ROPE_BETA_FAST": "32",
+          "GDEC_ROPE_BETA_SLOW": "1",
+          "GDEC_ROPE_FACTOR": "1",
+          "GDEC_ROPE_ORIGINAL_CTX": "262144",
+          "GDEC_SPEC_ADAPT": "0",
+          "GDEC_SPEC_ADAPT_GREEDY": "0",
+          "GDEC_SPEC_GAMMA": "2",
+          "GDEC_SPEC_PRECISION": "aligned",
+          "GDEC_SPEC_QSA_BATCH": "1",
+          "GDEC_SPEC_SERIAL_ORDER_MR": "1",
+          "GDEC_SPEC_SKIP_UNUSED_FINAL": "1",
+          "GDEC_SPEC_TRACE": "0",
+          "GDEC_V2_BF16_GEMV": "0",
+          "GDEC_V2_DENSE_BACKEND": "upstream",
+          "GDEC_V2_EXACT_DATAFLOW": "0",
+          "GDEC_V2_EXACT_ORDER": "0",
+          "GDEC_V2_EXACT_REUSE": "0",
+          "GDEC_V2_EXPERT_BACKEND": "upstream-prefill",
+          "GDEC_V2_HT_ORDERED": "1",
+          "GDEC_V2_MOE": "grouped",
+          "GDEC_V2_MOE_DEFER_SCALE": "1",
+          "GDEC_V2_MOE_DOWN_GROUP4": "0",
+          "GDEC_V2_MOE_FUSED_GU": "2",
+          "GDEC_V2_MOE_GU_DOUBLE_BUFFER": "0",
+          "GDEC_V2_MOE_LDS_SYNC": "0",
+          "GDEC_V2_MOE_PERMUTE_Q4": "1",
+          "GDEC_V2_MOE_REDUCE_HAD": "1",
+          "GDEC_V2_NATIVE_HT": "1",
+          "GDEC_V2_PAIRS_F16": "0",
+          "GDEC_W4B_PAIRS_F16": "0"
+        },
+        "started_utc": "2026-10-06T12:37:30Z",
+        "protocol_info": "I 1 0 262144 8 1 1 0 0 0 2 262144 1 1",
+        "ready_s": 22.08434309999575,
+        "exit_code": 1
+      },
+      "http_wall_seconds_by_turn": [
+        2.5105417000013404,
+        6.139445999986492,
+        73.13501189998351,
+        58.81647449999582,
+        2.420055400027195,
+        27.10883610000019,
+        16.341136000002734
+      ],
+      "decode_tps_by_turn": [
+        53.32239540607055,
+        41.251289102784455,
+        28.031816111286307,
+        35.28934247677656,
+        37.59398496240601,
+        29.585798816568047,
+        32.67320990120704
+      ]
+    },
+    {
+      "arm": "router-off",
+      "success": true,
+      "requests": 7,
+      "task_wall_s": 130.38021609999123,
+      "output_tokens": 5507,
+      "tool_failures": 0,
+      "private_test": {
+        "executor": "bounded_python_ast_fixture_cpu",
+        "suite": "private",
+        "passed": 545,
+        "total": 545,
+        "failures": [],
+        "float_or_round_present": false,
+        "success": true
+      },
+      "canonical_transcript_sha256": "56a24aa61395d77d7b8555438ba86176fb5f3350b0952f33ab22b60c3e0c9223",
+      "record_sha256": "3ce8a5c0fa07472015ea7a3a9a1944f91c5d5c1fd0d4a01f692c934ef23d5f1e",
+      "engine_identity": {
+        "pid": 46976,
+        "args": [
+          "C:\\Users\\Jerry\\Projects\\gfx1151-engine\\build\\gdec-win.exe",
+          "C:\\LingLong\\NovaStudio\\NovaMax\\data\\models_dir\\llm\\peonist-ai\\halogen-qwen3.8-flash-next\\qwen38-flash-next-v2.hgn",
+          "C:\\LingLong\\NovaStudio\\NovaMax\\data\\models_dir\\llm\\peonist-ai\\halogen-qwen3.8-flash-next\\qwen38-flash-next-ngram.hgn",
+          "--serve",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "18870",
+          "--maxctx",
+          "262144",
+          "--gamma",
+          "2"
+        ],
+        "engine_sha256": "b64f434f569be3a9ac5a44b270616b8f44ef815880984d3ae070da0d9a0beb08",
+        "env": {
+          "GDEC_API_MAX_IMAGES": "16",
+          "GDEC_CKPT_TOKENS": "0",
+          "GDEC_DRAFTER": "mtp",
+          "GDEC_EXPERT_PROFILE": "0",
+          "GDEC_GDN_FUSED": "1",
+          "GDEC_GDN_PROFILE": "0",
+          "GDEC_GDN_STREAM": "1",
+          "GDEC_GDN_WAVE": "1",
+          "GDEC_GEMM_SPLITK": "0",
+          "GDEC_GEMM_WMMA": "1",
+          "GDEC_GR_BF16": "1",
+          "GDEC_GR_PROFILE": "0",
+          "GDEC_HC_FUSE_WRITE": "0",
+          "GDEC_HC_NORHAT": "0",
+          "GDEC_HC_NORM_WAVE": "0",
+          "GDEC_INDEX_F16": "0",
+          "GDEC_INDEX_FUSED2": "1",
+          "GDEC_INDEX_SCORE_PAGED": "0",
+          "GDEC_INDEX_STREAM_SELECT": "1",
+          "GDEC_IPROJ_SOLUTION": "-711",
+          "GDEC_KVSNAP": "0",
+          "GDEC_KVSNAP_MAX_GB": "0",
+          "GDEC_KV_PAGED": "1",
+          "GDEC_KV_POOL_TOKENS": "524288",
+          "GDEC_MOE_LT": "1",
+          "GDEC_MOE_LT_BF16": "1",
+          "GDEC_MOE_MT": "1",
+          "GDEC_MTP_BRANCH_STRIDED": "1",
+          "GDEC_MTP_INGEST_FUSED": "1",
+          "GDEC_MTP_INGEST_KV_ONLY": "1",
+          "GDEC_MTP_INGEST_PROFILE": "0",
+          "GDEC_MTP_PREFILL_TAIL": "0",
+          "GDEC_MTP_TAP_NORM_DUAL": "0",
+          "GDEC_MTP_TAP_NORM_FUSED": "1",
+          "GDEC_NOWARMUP": "1",
+          "GDEC_PARALLEL": "2",
+          "GDEC_PLE_LOOKAHEAD": "1",
+          "GDEC_PLE_PAGE_IO": "0",
+          "GDEC_PLE_PAGE_VERIFY": "0",
+          "GDEC_PP_MOE_OUT": "1",
+          "GDEC_PREFILL_CHUNK": "8192",
+          "GDEC_PREFILL_PROFILE": "0",
+          "GDEC_PREFILL_SKIP_INTERMEDIATE_HEAD": "0",
+          "GDEC_QSA_DENSE_WMMA": "0",
+          "GDEC_QSA_HEAD_INTERLEAVE": "1",
+          "GDEC_QSA_KV_BF16": "1",
+          "GDEC_QSA_KV_FUSED": "1",
+          "GDEC_QSA_WMMA": "1",
+          "GDEC_QSA_WMMA_BTV": "1",
+          "GDEC_RCKPT_MAX": "2",
+          "GDEC_REQUEST_TIMING": "1",
+          "GDEC_RETRY_CHECKPOINT": "1",
+          "GDEC_ROPE_ATTN_SCALE": "0",
+          "GDEC_ROPE_BETA_FAST": "32",
+          "GDEC_ROPE_BETA_SLOW": "1",
+          "GDEC_ROPE_FACTOR": "1",
+          "GDEC_ROPE_ORIGINAL_CTX": "262144",
+          "GDEC_SPEC_ADAPT": "0",
+          "GDEC_SPEC_ADAPT_GREEDY": "0",
+          "GDEC_SPEC_GAMMA": "2",
+          "GDEC_SPEC_PRECISION": "aligned",
+          "GDEC_SPEC_QSA_BATCH": "1",
+          "GDEC_SPEC_SERIAL_ORDER_MR": "1",
+          "GDEC_SPEC_SKIP_UNUSED_FINAL": "1",
+          "GDEC_SPEC_TRACE": "0",
+          "GDEC_V2_BF16_GEMV": "0",
+          "GDEC_V2_DENSE_BACKEND": "upstream",
+          "GDEC_V2_EXACT_DATAFLOW": "0",
+          "GDEC_V2_EXACT_ORDER": "0",
+          "GDEC_V2_EXACT_REUSE": "0",
+          "GDEC_V2_EXPERT_BACKEND": "upstream-prefill",
+          "GDEC_V2_HT_ORDERED": "1",
+          "GDEC_V2_MOE": "grouped",
+          "GDEC_V2_MOE_DEFER_SCALE": "1",
+          "GDEC_V2_MOE_DOWN_GROUP4": "0",
+          "GDEC_V2_MOE_FUSED_GU": "2",
+          "GDEC_V2_MOE_GU_DOUBLE_BUFFER": "0",
+          "GDEC_V2_MOE_LDS_SYNC": "0",
+          "GDEC_V2_MOE_PERMUTE_Q4": "1",
+          "GDEC_V2_MOE_REDUCE_HAD": "1",
+          "GDEC_V2_NATIVE_HT": "1",
+          "GDEC_V2_PAIRS_F16": "0",
+          "GDEC_W4B_PAIRS_F16": "0",
+          "GDEC_ROUTER_W32": "0"
+        },
+        "started_utc": "2026-10-06T12:41:09Z",
+        "protocol_info": "I 1 0 262144 8 1 1 0 0 0 2 262144 1 1",
+        "ready_s": 57.14938129999791,
+        "exit_code": 1
+      },
+      "http_wall_seconds_by_turn": [
+        3.1065356000035536,
+        6.390769999998156,
+        45.36981800000649,
+        43.45591849999619,
+        1.3600437999994028,
+        18.966168699989794,
+        11.058663700008765
+      ],
+      "decode_tps_by_turn": [
+        49.36958833358651,
+        40.88586030664395,
+        42.927570903155846,
+        46.486324941979646,
+        45.712873733629856,
+        42.6400914883189,
+        48.04321046148015
+      ]
+    }
+  ],
+  "source_evidence_directory": "C:\\Users\\Jerry\\Projects\\gfx1151-engine\\logs\\v006",
+  "evidence_sha256": {
+    "api-cancel.log": "36f609a4f1eeb216e4094a7e94009380ba2037e03dc1f9097e00aa356a7b1dbc",
+    "api-disconnect.log": "a1553664a2b7a85647d7ea854b0493ec8d7bc6500c019e17ba330335073b5141",
+    "api-tool.log": "a7047d032f4f3db0d21dba60d9286052b5d2d1911a0bdf2259687e72afd5bd76",
+    "api-unit-final.log": "717a38293cd39fae1a89d9e6f4f8f44f45bf5b1ff15d21b647be12429532b01a",
+    "baseline-env.json": "36bdbad59be337e5c85aaae4785f4eb641a55e0a3aeef8072339d9a91385351a",
+    "build-api.log": "7c8b14c3c07e8851083ff36ea4acd01ff4060c6be3706ce0203f36b94544c294",
+    "build-engine-final.log": "a447bde14d6985a97ea0da21e3a94dffe0562296449e329a5b78a2aa9561979f",
+    "build-engine.log": "a447bde14d6985a97ea0da21e3a94dffe0562296449e329a5b78a2aa9561979f",
+    "code-recheck-baseline\\api.log": "ef4df79ec3d7c6bf409cca1a6540b17d9d2e61a3a5f9b43dac1d9e82cf5576df",
+    "code-recheck-baseline\\code.json": "a4f173fc8a85ba56802987e53b06ad92a895dfd47507b518fc0c5117e8c255c3",
+    "code-recheck-baseline\\code.log": "4973a91379c855b473e174d4957c077927592cc6a09fa915f3443e4cf89023e7",
+    "code-recheck-baseline-api.json": "88541b849ad572abc992d40f18c471fcc794eac44072adea6cab3ceb74b7fbd9",
+    "code-recheck-baseline.engine.log": "01fe982825c8ced2e2dc90bae9ca5f52f999d461f076bab56844bf72fb7fa92f",
+    "code-recheck-baseline.identity.json": "6a90336f5a5051a239a6b68fc9bc229e6ae04155a03cc58e451b6b94ef113fc0",
+    "code-recheck-candidate\\api.log": "8f774bcf6319a855fe62a822a3ca27562e47c3ca7c262c83e8a81ccb8ec3eca9",
+    "code-recheck-candidate\\code.json": "33ffb204100aa832da4a613171e9bce8aa4a5ff31dca35a613a15bb2e7de3f4b",
+    "code-recheck-candidate\\code.log": "4973a91379c855b473e174d4957c077927592cc6a09fa915f3443e4cf89023e7",
+    "code-recheck-candidate-api.json": "9ec603e9ef51ed0a5cb0717f5bda48037a1b11c87485ec0fbd76524cdf223176",
+    "code-recheck-candidate.engine.log": "d9f0954cf3d57ab4b43e575a0c2f02adbfa216b00601358922c239c963c451f8",
+    "code-recheck-candidate.identity.json": "bd043741f2b9a93ce613ec7c8d70a5baf720f03d40eafdbfdde2b7c8964bd6e1",
+    "code-recheck-router-off\\api.log": "d49ecf116dc9074b34e5f6c261fe7b1c4ff31dc1ebf3fe838fef0cc36493d2c5",
+    "code-recheck-router-off\\code.json": "3ce8a5c0fa07472015ea7a3a9a1944f91c5d5c1fd0d4a01f692c934ef23d5f1e",
+    "code-recheck-router-off\\code.log": "4973a91379c855b473e174d4957c077927592cc6a09fa915f3443e4cf89023e7",
+    "code-recheck-router-off-api.json": "9ec603e9ef51ed0a5cb0717f5bda48037a1b11c87485ec0fbd76524cdf223176",
+    "code-recheck-router-off.engine.log": "140d17a5d86bf60349d8916509a9877882fcb755c83f7f926171be950118f29d",
+    "code-recheck-router-off.identity.json": "9eb8f333ba58c7ac91a3e6fad052c8136b532e79b8abb00a36fdec969e34617c",
+    "code-recheck.log": "16303a71b20cdf8348435aac5fab681e36fb2fcc91663a8043304f44729ac6ba",
+    "compare.py": "5b0fbb0b9146b86e32b06bd1a6c6ee6df34f0d184cc845e723546df2f01b872f",
+    "config-tests-final.log": "2943c588e8bbcb44303b6ff0f4c95358d82bb4a0e2e6fc3f231a5dcbb5f2e666",
+    "config-tests.log": "15831fd2958737df5ae7b829f0c44994cb79dfd16ffbf1895618fb4d29527064",
+    "confirm-a1.engine.log": "bdd1ab84b1a1b89774de576a7e5902730690086ed851129e081d773d9d012d9d",
+    "confirm-a1.identity.json": "5d916dc72b0abddc3ae6e7b389d10fa5de3d590554db301b33be45e3434e055d",
+    "confirm-a1.json": "86b6962b5ec93e52007f0a6fa62c103c51af7e7bdbb1dd4e95d62000bd5d9856",
+    "confirm-a2.engine.log": "3a54ac652d71faf10866dabf20034644aa62b868fc120c8d7dd9f210b7d64819",
+    "confirm-a2.identity.json": "65f1211a7d1e9c0afbbd3ea8112bb7caf38dc8457e7fda6e2da3014751162c7f",
+    "confirm-a2.json": "031bfc57de19b686ecdfc1a2dc0b5ac861d4784d3578d67f565e5ec50e12afc1",
+    "confirm-b1.engine.log": "0b7311f58b19b146c817a280c586fe49aa476a36c8d4e2db79cae222493747a6",
+    "confirm-b1.identity.json": "abd11ff53f917bf4e9b1524e298d095c9e3c5af18ebd8f76b63475649660f4c5",
+    "confirm-b1.json": "43803298dbdb7303d7b3ccd9a1783fd692bb14600e343246de8578a1a33f5a1b",
+    "confirm-b2.engine.log": "8b74329b9df6466ca1b2acd0e5684991038b538e69ee839b4644b7951138f36b",
+    "confirm-b2.identity.json": "dd6289d8ee075abfde07dac54a7b4261b1722418ab963430dc5e5f2cefc1a24b",
+    "confirm-b2.json": "e270673833dd491bf8f7c2a29f6d5e60b664da3b5f0911cda8e3775340adb126",
+    "confirm.log": "0a81a9b4e1c572919772b3453963e94270d46e00f2db04672962dbebdff670e2",
+    "deploy.py": "f8c520d7a6eda0ce316894ad3df889315ad4f9c6a62551a43d15f908d2de6741",
+    "final_suite.py": "b08e3cfd8591afc2ce504f28c0efb9c8a50aa28d5de8f7c1b5b8f1cb1454613c",
+    "finalize_deployment.py": "c55c6cff1cde0272aa3c765b8269b8ce54a44ee8d432abb5d0928e1ae9d64e22",
+    "gpu-fixed.log": "2877aaee8f8e6aba6aa161dee3b01d9f7900c952045be3e2c6ce7f4aaef568ad",
+    "gpu-upstream-original.log": "b29eae4291bbb16fca43f29872c311eaf3521ab147b0b15f97796f901bff0757",
+    "input-131072.json": "0df2b8bf45dc186f3054ab7c4607aca86fa9dc24954f10c79833f675a0028faa",
+    "input-2052.json": "82ab1be02b422055c95f287c65a44c977b4a821e3b6252f389c00ae7dc0f83fe",
+    "input-256.json": "c709490657ce43a08bc0ce8ccd6ff4bc4f58446276bc6083d513fc5fb8905c1a",
+    "input-32768.json": "b49cf630e8ac882af09b09c81732694a47097cc9579ea2d899a814bf3942b319",
+    "input-8192.json": "b90fcb15d877cd08e02f6e400c813ff548333505253922d1c5402b56b5efc402",
+    "kld-512-baseline.hash.csv": "dc277340ad9ed794d1e8bf3596c5cec908e85d0dcf188a7aa928d0b8474281fb",
+    "kld-512-baseline.identity.json": "60e9a0ac0b90ea55afe9a2a4ad7b336c51dea42a51f6022b306375846c80b90c",
+    "kld-512-baseline.log": "eb994da735ae4281cdb0ada556fbdc4cf6e7fe98a4d2336b67a8069cfe72939c",
+    "kld-512-candidate.hash.csv": "dc277340ad9ed794d1e8bf3596c5cec908e85d0dcf188a7aa928d0b8474281fb",
+    "kld-512-candidate.identity.json": "1f9fb56a7aaf4aa3acbd6a5ad0e0276fd0a4e2d56853f0efbde5df654ba1aac2",
+    "kld-512-candidate.log": "6aac561cf255dbf62073fba0d3a16953207eec2ae7c173308c7d15214081e02f",
+    "kld-8192-baseline.hash.csv": "85c1e59f5873cc2266473492557a98fc3bc20ec6042a4632634e8bfa1d0fd4f0",
+    "kld-8192-baseline.identity.json": "a416cfd24f357c4abdbe86074e29e104db9c4563db1daae77290d15756c77ba7",
+    "kld-8192-baseline.log": "7f8fd833ddbe4c5a32d3e78ee5b79cd29456b3cc4c10654c81d544295ebc115b",
+    "kld-8192-candidate.hash.csv": "85c1e59f5873cc2266473492557a98fc3bc20ec6042a4632634e8bfa1d0fd4f0",
+    "kld-8192-candidate.identity.json": "42c94fd040024c33829aea469bec1a9322f6f0f3282109b6fa12847357d0f77c",
+    "kld-8192-candidate.log": "f652208eea15338cf7e976dbd5ccedd825c250dc7814e409b4c54e2f54c51969",
+    "kld.log": "515fdeccc25e230bf15afe377ae2589f88103d4e048901a1794626c5e52d6b9c",
+    "prepare_report.py": "72df1f55528c971095180f1efa6f2a4cc84deafa3367631661acce11f987d12b",
+    "recheck-host-cpu.json": "9d4ef876e704c2f0f991b2b1a18739e02af3af640f63492116b78c8b37faf098",
+    "recheck-host-gpu.json": "a4a9963d70d61de75dfca255b02a0fae27680ccf053d56e5fb63f846a4522b53",
+    "recheck_code.py": "10cfad9661b42d37c977787d7a3276fdc9e129a3593289480bfe2fb3e211f933",
+    "run_eval.py": "0d58a270934b9c9fb9889756e0fbd5a785784198e88c467a7a231c25cc6828a5",
+    "runtime-comparison.json": "db7d10fd3dbdf07b649cee0f9d25378e6d919c5c98a448a6da9856210136f8f4",
+    "screen-baseline.engine.log": "4c983833161bd41e13ca4cb3ee82749a69b677612b3d2ccea4e96aa9f6d68897",
+    "screen-baseline.identity.json": "7d19b9181ca93ce579d27456740cad60ceea680f968a142bf4008a0f18adf75e",
+    "screen-baseline.json": "18bd33951a639659dcb535ac1c383086cfb098af00cf29637fb97a56f33dab8d",
+    "screen-candidate.engine.log": "e74d31feba4b86ea7b856b6a2c4a66f443671c405ed2f1893090414442bf3c3c",
+    "screen-candidate.identity.json": "ebee894bc4f43eaf6dfed6e44a5d27e882955ae219b5e06f21eef9c5e1a08fd5",
+    "screen-candidate.json": "6a317db02d713dae55efec32066f2a7e46c855b476889708bb8807811182d5cf",
+    "screen-control.engine.log": "7bdf7005fe43d77403d0811849724e9472c4788926d5fde540650b07d610a217",
+    "screen-control.identity.json": "fe9a6d73411368ba9d32c22fb526d10b0fc64391dca683c6be73048f19281839",
+    "screen-control.json": "b78ab59e5e7dfeed3a9a065ab511faa697d2c67621831346e5909e2715b373f6",
+    "screen-layout.engine.log": "94cbb7b555dd5bae69b6d78399b53fe5af2fc943fd090c1b11000af50b1aa521",
+    "screen-layout.identity.json": "96b6a067c2bed11a064ff02e7fe49eb08fbab346b9a6e5c465853afd336bd5ae",
+    "screen-layout.json": "942037a7a412c0c2576e25568165125fd32bda40d082bd907ebd72351fa7211d",
+    "screen-router.engine.log": "02807fa3cd0ece4aa9d8cb36a05777a97674a60cba35b69166dbf8353f0e48bd",
+    "screen-router.identity.json": "dbfcf245b15e01eeefa046216ec5c8305f3dda95f2ca34b5aebbc991cf45a23c",
+    "screen-router.json": "bf4973a34e0e6c81e6f0bd0df74b6e9fcbbb4526b559eb06751cef8aed491b22",
+    "screen.log": "972c9a8ea34d5e82f4aae1e0c8e597e544022bb023bc7a43c4cd48eafa389f4e",
+    "summarize.py": "6c0f3853176b59989b3917235b944975e3752c12337448e34988fdbff03f15f5",
+    "tasks-baseline\\api.log": "630dddee0887071e3312dc250ddf25381b5b83a2b429c035f9e60576a1b38edf",
+    "tasks-baseline\\code.json": "bbfa06608faa0e097cd1b314444cf3ef65f082c487e0831afd3588b11d3541c3",
+    "tasks-baseline\\code.log": "4973a91379c855b473e174d4957c077927592cc6a09fa915f3443e4cf89023e7",
+    "tasks-baseline\\office.json": "31420a53070df0ceb095799859571ffc379b210c3168159f9bc21ffe401eaaed",
+    "tasks-baseline\\office.log": "169898bc3babfe2227bfe9853efecf7e005fb4817b47ad883777bf88c659e116",
+    "tasks-baseline-api.json": "88541b849ad572abc992d40f18c471fcc794eac44072adea6cab3ceb74b7fbd9",
+    "tasks-baseline.engine.log": "62d77299f0f59e63bccbaaa21f7703c4914a0b24eb67ad69d142f8cec13bc486",
+    "tasks-baseline.identity.json": "7703e8216c680e07348ab353f6e007334aee185d6ad3db428a7926cb928e1450",
+    "tasks-candidate\\api.log": "1a4083afefd8ee3e2817d97daff21385a3efe93ff0aa5ca0a82a0c4d7fb9bc53",
+    "tasks-candidate\\code.json": "c8bc62cab9684cdba85d1da4f0ffd80e5f8633814c307bd5f8426ecad70a8789",
+    "tasks-candidate\\code.log": "4973a91379c855b473e174d4957c077927592cc6a09fa915f3443e4cf89023e7",
+    "tasks-candidate\\office.json": "f2b65410b36f040fd8134d8f763462c8d1f1b28ececc68f49cc96e452aa81ead",
+    "tasks-candidate\\office.log": "169898bc3babfe2227bfe9853efecf7e005fb4817b47ad883777bf88c659e116",
+    "tasks-candidate-api.json": "9ec603e9ef51ed0a5cb0717f5bda48037a1b11c87485ec0fbd76524cdf223176",
+    "tasks-candidate.engine.log": "382d7cbad7fa6e3f30dcd8758acf387eaf8019f61593f0ac6395f86768117b10",
+    "tasks-candidate.identity.json": "7c7d36c4a405faa4b548aecc76a13ea80e69b2babdbc4aa3d77cda5cded66b9f",
+    "tasks.log": "037eeadfd8a9e4108bcc4ac0b45402a96b65f05070aae9123962cb772eb5d42d",
+    "validate_deployment.py": "b85ffa8bed87784a347761802ad4ba213e102e21d87d1fdc3f841f09abec55ad"
+  },
+  "acceptance": {
+    "accepted": true,
+    "decision_date": "2026-10-06",
+    "engine_source_commit": "dd6cb8fdb7236a7d771a245b3cb7142e692ce580",
+    "api_source_commit": "4e00e91470749f89689018ba7301d8b1f4f218c4",
+    "binaries": {
+      "gdec-win.exe": "b64f434f569be3a9ac5a44b270616b8f44ef815880984d3ae070da0d9a0beb08",
+      "gdec-api-win.exe": "e6266c88fc829c9ae0c1bc712ed260de64693f4ef04523418de14e08b806971f"
+    },
+    "reasons": [
+      "Retain proven correctness fixes and legacy-equivalent wave32 routing without enabling lower-precision defaults.",
+      "All numerical, generation, API boundary and complete tool-task correctness gates passed.",
+      "Small long-input TTFT improvement; do not claim universal end-to-end task acceleration.",
+      "Follow-up candidate router-on 130.493s and router-off 130.380s are effectively the same; original candidate slowdown did not repeat, and baseline also exhibited a much larger slowdown.",
+      "Reject the unproven arena-layout change and defer arithmetic/checkpoint changes without sufficient evidence."
+    ],
+    "router_w32": "1",
+    "precision_preserved": {
+      "GDEC_INDEX_F16": "0",
+      "GDEC_V2_PAIRS_F16": "0",
+      "GDEC_W4B_PAIRS_F16": "0",
+      "GDEC_GEMM_SPLITK": "0",
+      "GDEC_QSA_DENSE_WMMA": "0",
+      "GDEC_MOE_MT": "1",
+      "GDEC_HC_NORHAT": "0",
+      "GDEC_HC_FUSE_WRITE": "0"
+    },
+    "deployment_validation": "pending"
+  }
+}
