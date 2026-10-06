@@ -11,6 +11,11 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
     <style>
       :root {
         color-scheme: dark;
+        --text-xs: 0.75rem;
+        --text-sm: 0.8125rem;
+        --text-base: 0.875rem;
+        --control-height: 40px;
+        --hover: #242b34;
         --bg: #101419;
         --sidebar: #14191f;
         --panel: #191f26;
@@ -53,7 +58,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         cursor: pointer;
       }
       button:disabled {
-        opacity: 0.45;
+        opacity: 0.64;
         cursor: default;
       }
       a {
@@ -84,7 +89,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin: 0;
       }
       h1 {
-        font-size: 29px;
+        font-size: 28px;
         letter-spacing: -0.7px;
         line-height: 1.4;
       }
@@ -103,7 +108,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .hint,
       .note {
-        font-size: 12px;
+        font-size: var(--text-sm);
       }
       .mono {
         font-family: Consolas, "Cascadia Mono", monospace;
@@ -124,7 +129,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         gap: 8px;
         align-items: center;
         justify-content: center;
-        min-height: 36px;
+        min-height: var(--control-height);
         padding: 7px 13px;
         border: 1px solid var(--border);
         border-radius: 8px;
@@ -167,7 +172,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         border: 1px solid var(--border);
         border-radius: 6px;
         padding: 3px 8px;
-        font-size: 11px;
+        font-size: var(--text-xs);
         white-space: nowrap;
         color: var(--dim);
       }
@@ -194,11 +199,6 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         border-radius: 50%;
         margin-right: 7px;
       }
-      .eyebrow {
-        font-size: 10px;
-        color: var(--dim);
-        letter-spacing: 1.5px;
-      }
       .sidebar {
         position: fixed;
         inset: 0 auto 0 0;
@@ -214,7 +214,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         display: flex;
         gap: 11px;
         align-items: center;
-        padding: 0 11px 38px;
+        padding: 0 6px 30px;
       }
       .brand-mark {
         width: 35px;
@@ -232,13 +232,14 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .brand small {
         display: block;
-        font-size: 10px;
-        letter-spacing: 1.5px;
+        font-size: var(--text-xs);
+        letter-spacing: 1px;
+        white-space: nowrap;
       }
       .nav-caption {
         padding: 0 14px 12px;
         color: var(--dim);
-        font-size: 11px;
+        font-size: var(--text-xs);
       }
       .nav {
         display: flex;
@@ -252,7 +253,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         padding: 11px 14px;
         color: var(--dim);
         border-radius: 8px;
-        font-size: 13px;
+        font-size: var(--text-base);
         white-space: nowrap;
       }
       .nav a:hover {
@@ -267,7 +268,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin-top: auto;
         padding: 17px 12px 0;
         border-top: 1px solid var(--border);
-        font-size: 11px;
+        font-size: var(--text-xs);
         color: var(--dim);
       }
       .sidebar-bottom .mono {
@@ -289,7 +290,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         gap: 14px;
       }
       .crumb {
-        font-size: 12px;
+        font-size: var(--text-sm);
         color: var(--dim);
       }
       .crumb b {
@@ -300,7 +301,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .main {
         max-width: 1760px;
         margin: auto;
-        padding: 30px 32px 28px;
+        padding: 24px 28px;
       }
       .section-title {
         display: flex;
@@ -312,10 +313,10 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .section-title p {
         color: var(--dim);
         margin-top: 6px;
-        font-size: 13px;
+        font-size: var(--text-base);
       }
       .section-title .meta {
-        font-size: 11px;
+        font-size: var(--text-xs);
         color: var(--dim);
       }
       input,
@@ -329,7 +330,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         min-width: 0;
       }
       select {
-        min-height: 36px;
+        min-height: var(--control-height);
       }
       textarea {
         width: 100%;
@@ -337,14 +338,14 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       input:disabled,
       select:disabled {
-        opacity: 0.45;
+        opacity: 0.64;
       }
       .status-strip {
-        border: 1px solid #334139;
-        background: #19221f;
+        border: 1px solid var(--border);
+        background: var(--sidebar);
         border-radius: 9px;
-        min-height: 55px;
-        padding: 12px 18px;
+        min-height: 46px;
+        padding: 9px 16px;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -356,10 +357,10 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .status-strip .mono {
         overflow-wrap: anywhere;
-        font-size: 13px;
+        font-size: var(--text-base);
       }
       .status-strip small {
-        font-size: 11px;
+        font-size: var(--text-xs);
       }
       .sep {
         height: 17px;
@@ -376,7 +377,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         background: var(--panel);
         border: 1px solid var(--border);
         border-radius: 10px;
-        padding: 19px 20px;
+        padding: 16px 18px;
         min-width: 0;
       }
       .stat.featured {
@@ -385,7 +386,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .stat .label {
         color: var(--dim);
-        font-size: 12px;
+        font-size: var(--text-sm);
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -394,7 +395,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         font-family: Consolas, monospace;
         font-weight: 600;
         font-size: 32px;
-        letter-spacing: -1px;
+        letter-spacing: -0.025em;
         margin: 9px 0;
         line-height: 1.25;
         overflow-wrap: anywhere;
@@ -403,13 +404,13 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         color: #aff0d8;
       }
       .stat .value small {
-        font-size: 12px;
+        font-size: var(--text-sm);
         font-weight: 400;
         letter-spacing: 0;
         margin-left: 6px;
       }
       .stat .foot {
-        font-size: 11px;
+        font-size: var(--text-xs);
         color: var(--dim);
       }
       .analytics,
@@ -427,7 +428,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         overflow: hidden;
       }
       .panel-head {
-        padding: 20px 22px 0;
+        padding: 18px 20px 0;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -436,11 +437,11 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .panel-head p {
         color: var(--dim);
-        font-size: 11px;
+        font-size: var(--text-xs);
         margin-top: 3px;
       }
       .panel-body {
-        padding: 20px 22px;
+        padding: 18px 20px;
       }
       .chart-switch {
         display: flex;
@@ -451,7 +452,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         border-radius: 7px;
       }
       .chart-switch button {
-        font-size: 11px;
+        font-size: var(--text-xs);
         color: var(--dim);
         background: transparent;
         border: 0;
@@ -472,7 +473,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         justify-content: space-between;
         gap: 10px;
         color: var(--dim);
-        font-size: 11px;
+        font-size: var(--text-xs);
         margin-top: 12px;
       }
       .number {
@@ -482,19 +483,16 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .number small {
         font-family: "Segoe UI", sans-serif;
-        font-size: 12px;
+        font-size: var(--text-sm);
       }
       .capacity {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 10px;
-        margin: 19px 0;
+        margin: 12px 0;
       }
       .capacity > div {
-        padding: 11px 13px;
-        border: 1px solid var(--border);
-        border-radius: 7px;
-        background: var(--soft);
+        padding: 0;
       }
       .capacity strong {
         font:
@@ -504,7 +502,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin-top: 3px;
       }
       .capacity small {
-        font-size: 11px;
+        font-size: var(--text-xs);
       }
       .summary-line {
         display: flex;
@@ -513,7 +511,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         gap: 14px;
         padding: 12px 0;
         border-bottom: 1px solid var(--border);
-        font-size: 12px;
+        font-size: var(--text-sm);
       }
       .summary-line > span {
         color: var(--dim);
@@ -528,7 +526,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .acceptance {
         padding-top: 17px;
-        font-size: 12px;
+        font-size: var(--text-sm);
       }
       .bar {
         height: 7px;
@@ -549,25 +547,25 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       table {
         border-collapse: collapse;
         width: 100%;
-        font-size: 12px;
+        font-size: var(--text-sm);
       }
       th {
         font-weight: 400;
         color: var(--dim);
         text-align: left;
         white-space: nowrap;
-        font-size: 11px;
+        font-size: var(--text-xs);
       }
       td,
       th {
-        padding: 13px 18px;
+        padding: 10px 16px;
         border-bottom: 1px solid var(--border);
       }
       tr:last-child td {
         border-bottom: 0;
       }
       td small {
-        font-size: 11px;
+        font-size: var(--text-xs);
       }
       .requests {
         min-width: 680px;
@@ -579,12 +577,13 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .requests .r-id {
         display: block;
         color: var(--dim);
-        font-size: 10px;
+        font-size: var(--text-xs);
         margin-top: 3px;
       }
       .requests .detail-btn {
         padding: 4px 10px;
-        min-height: 30px;
+        min-height: var(--control-height);
+        min-width: var(--control-height);
         border: 0;
         background: transparent;
         color: var(--dim);
@@ -598,7 +597,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         border-top: 1px solid var(--border);
         padding: 12px 20px;
         color: var(--dim);
-        font-size: 11px;
+        font-size: var(--text-xs);
         display: flex;
         justify-content: space-between;
         gap: 10px;
@@ -608,13 +607,13 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         padding: 34px 20px;
         text-align: center;
         color: var(--dim);
-        font-size: 13px;
+        font-size: var(--text-base);
       }
       .page-footer {
         display: flex;
         justify-content: space-between;
         color: var(--dim);
-        font-size: 11px;
+        font-size: var(--text-xs);
         gap: 10px;
         flex-wrap: wrap;
         margin-top: 24px;
@@ -626,7 +625,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         border: 1px solid #684047;
         padding: 11px 15px;
         border-radius: 7px;
-        font-size: 12px;
+        font-size: var(--text-sm);
         overflow-wrap: anywhere;
         margin: 12px 0;
       }
@@ -634,14 +633,14 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         display: block;
       }
       .stale {
-        opacity: 0.55;
+        opacity: 0.78;
       }
       .notice {
         padding: 12px 16px;
         border-radius: 8px;
         border: 1px solid var(--border);
         color: var(--dim);
-        font-size: 12px;
+        font-size: var(--text-sm);
         margin-bottom: 20px;
         background: var(--soft);
       }
@@ -662,7 +661,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .cell .k,
       .cell .s {
-        font-size: 11px;
+        font-size: var(--text-xs);
         color: var(--dim);
       }
       .cell .v {
@@ -677,7 +676,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .help p {
         margin-top: 17px;
         color: var(--dim);
-        font-size: 12px;
+        font-size: var(--text-sm);
       }
       .help strong {
         color: var(--fg);
@@ -692,7 +691,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .ovr td.note {
         max-width: 310px;
         min-width: 210px;
-        font-size: 11px;
+        font-size: var(--text-xs);
       }
       .ovr input,
       .ovr select {
@@ -718,7 +717,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       #ovr-status,
       #chat-status {
-        font-size: 12px;
+        font-size: var(--text-sm);
         color: var(--dim);
       }
       #ovr-meta {
@@ -734,7 +733,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         flex-direction: column;
         gap: 5px;
         color: var(--dim);
-        font-size: 11px;
+        font-size: var(--text-xs);
       }
       .cparams input,
       .cparams select {
@@ -760,7 +759,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         background: #1b2923;
       }
       .msg .role {
-        font-size: 11px;
+        font-size: var(--text-xs);
         color: var(--accent);
         margin-bottom: 6px;
       }
@@ -771,18 +770,18 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .msg .think {
         color: var(--dim);
-        border-left: 2px solid #51655c;
+        border-left: 1px solid #51655c;
         padding-left: 12px;
         margin: 10px 0;
-        font-size: 12px;
+        font-size: var(--text-sm);
       }
       .msg .stat {
-        font-size: 11px;
+        font-size: var(--text-xs);
         color: var(--dim);
         margin-top: 10px;
       }
       .msg .ovr-note {
-        font-size: 11px;
+        font-size: var(--text-xs);
         color: var(--warn);
       }
       .chat-empty {
@@ -802,7 +801,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin-bottom: 8px;
       }
       .chat-empty p {
-        font-size: 12px;
+        font-size: var(--text-sm);
         max-width: 350px;
       }
       .chat-compose {
@@ -817,10 +816,10 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       summary {
         cursor: pointer;
         color: var(--dim);
-        font-size: 12px;
+        font-size: var(--text-sm);
       }
       pre {
-        font-size: 12px;
+        font-size: var(--text-sm);
         background: var(--soft);
         padding: 16px;
         border: 1px solid var(--border);
@@ -847,7 +846,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         color: var(--accent);
       }
       .hero .lab {
-        font-size: 12px;
+        font-size: var(--text-sm);
         color: var(--dim);
       }
       .barlab,
@@ -855,7 +854,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         display: flex;
         gap: 15px;
         justify-content: space-between;
-        font-size: 11px;
+        font-size: var(--text-xs);
         color: var(--dim);
       }
       .legend {
@@ -910,12 +909,11 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         transform: translateX(-50%);
         max-width: 90vw;
         padding: 11px 20px;
-        border: 1px solid #4b645b;
         background: #263a31;
         box-shadow: 0 8px 30px #0006;
         border-radius: 8px;
         z-index: 20;
-        font-size: 13px;
+        font-size: var(--text-base);
         overflow-wrap: anywhere;
       }
       .skip {
@@ -1030,7 +1028,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         }
         .nav a {
           padding: 13px 12px;
-          font-size: 12px;
+          font-size: var(--text-sm);
           border-radius: 0;
           min-height: 46px;
         }
@@ -1044,7 +1042,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           margin-left: 0;
         }
         .topbar {
-          padding: 12px 18px;
+          padding: 9px 16px;
           min-height: 60px;
         }
         .topbar .btn-label {
@@ -1062,7 +1060,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           font-size: 25px;
         }
         .section-title p {
-          font-size: 12px;
+          font-size: var(--text-sm);
           max-width: 205px;
         }
         .section-title > .row {
@@ -1072,10 +1070,10 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         }
         .section-title select {
           max-width: 125px;
-          font-size: 12px;
+          font-size: var(--text-sm);
         }
         .section-title .meta {
-          font-size: 10px;
+          font-size: var(--text-xs);
           max-width: 125px;
         }
         .status-strip {
@@ -1094,16 +1092,16 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           font-size: 27px;
         }
         .stat .value small {
-          font-size: 10px;
+          font-size: var(--text-xs);
         }
         .stat .label {
-          font-size: 11px;
+          font-size: var(--text-xs);
         }
         .stat .label .icon {
           display: none;
         }
         .stat .foot {
-          font-size: 10px;
+          font-size: var(--text-xs);
         }
         .panel-head {
           padding: 18px 17px 0;
@@ -1136,7 +1134,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           padding: 16px;
         }
         .page-footer {
-          font-size: 10px;
+          font-size: var(--text-xs);
         }
         .drawer {
           padding: 22px;
@@ -1145,10 +1143,10 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           width: 100%;
         }
         .chart-note {
-          font-size: 10px;
+          font-size: var(--text-xs);
         }
         .crumb {
-          font-size: 11px;
+          font-size: var(--text-xs);
         }
         .crumb b {
           margin-left: 6px;
@@ -1173,6 +1171,373 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             transform: none;
             opacity: 1;
           }
+        }
+      }
+
+      ::selection {
+        background: #37594d;
+        color: #fff;
+      }
+      input,
+      textarea {
+        caret-color: var(--accent);
+      }
+      input::placeholder,
+      textarea::placeholder {
+        color: var(--dim);
+        opacity: 1;
+      }
+      a {
+        text-underline-offset: 0.2em;
+      }
+      .nav a {
+        position: relative;
+        min-height: 44px;
+      }
+      .nav a:hover:not([aria-current]) {
+        background: var(--hover);
+      }
+      .nav a[aria-current] {
+        box-shadow: inset 1px 0 var(--accent);
+      }
+      .nav a[aria-current] span {
+        font-weight: 600;
+      }
+      .nav a:hover[aria-current] {
+        color: #aff0d8;
+      }
+      .stat .value {
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow-wrap: normal;
+      }
+      .stat .foot {
+        line-height: 1.6;
+      }
+      .analytics,
+      .bottom-grid,
+      .secondary-grid {
+        align-items: start;
+      }
+      #trend-panel {
+        min-height: 296px;
+      }
+      #capacity-panel .panel-body {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0 16px;
+      }
+      #capacity-panel .number,
+      #capacity-panel .capacity,
+      #capacity-panel .hint {
+        grid-column: 1 / -1;
+      }
+      #capacity-panel .summary-line {
+        display: grid;
+        gap: 3px;
+        border: 0;
+        padding: 8px 0;
+      }
+      #capacity-panel .summary-line strong {
+        text-align: left;
+      }
+      .capacity > div + div {
+        border-left: 1px solid var(--border);
+        padding-left: 16px;
+      }
+      #s-finish {
+        max-width: 36ch;
+      }
+      .requests {
+        font-size: var(--text-base);
+      }
+      .requests td {
+        white-space: nowrap;
+      }
+      .requests .detail-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .requests .detail-btn .icon {
+        width: 16px;
+        height: 16px;
+      }
+      .chart-switch button {
+        min-height: 32px;
+      }
+      .chart-switch button:hover:not([aria-pressed="true"]) {
+        background: var(--hover);
+        color: var(--fg);
+      }
+      #chart-view {
+        max-width: 120px;
+        font-size: var(--text-xs);
+      }
+      .chart-controls {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .chart-readout {
+        min-height: 24px;
+        font-size: var(--text-xs);
+        font-variant-numeric: tabular-nums;
+        color: var(--fg);
+        margin-top: 6px;
+      }
+      #throughput {
+        outline-offset: 4px;
+      }
+      #throughput:focus-visible {
+        outline: 2px solid var(--accent);
+      }
+      .ovr td:first-child {
+        font-family: inherit;
+        font-size: var(--text-base);
+      }
+      .ovr td:first-child .param-key {
+        display: block;
+        font-family: Consolas, monospace;
+        color: var(--dim);
+        font-size: var(--text-xs);
+        margin-top: 3px;
+      }
+      .ovr tr.on {
+        background: #efc48706;
+      }
+      #settings .secondary-grid > section {
+        overflow: visible;
+      }
+      #settings .save-bar {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        border-radius: 0 0 10px 10px;
+      }
+      #ovr-save {
+        min-width: 140px;
+      }
+      .save-bar.is-dirty {
+        border-top-color: var(--warn);
+      }
+      .save-bar.is-dirty #ovr-status {
+        color: var(--warn);
+      }
+      .drawer .between {
+        justify-content: flex-end;
+      }
+      #detail-title {
+        margin-top: 12px;
+      }
+      .empty {
+        white-space: normal !important;
+        max-width: 60ch;
+      }
+      .empty strong {
+        display: block;
+        color: var(--fg);
+        margin-bottom: 5px;
+        font-weight: 500;
+      }
+      @media (min-width: 1151px) {
+        .help {
+          position: sticky;
+          top: 20px;
+        }
+      }
+      @media (max-width: 850px) {
+        .help .panel-body {
+          columns: 2;
+          column-gap: 24px;
+        }
+        .help h2 {
+          column-span: all;
+        }
+        .help p {
+          break-inside: avoid;
+        }
+      }
+      @media (max-width: 600px) {
+        :root {
+          --control-height: 44px;
+        }
+        .main {
+          padding: 20px 16px;
+        }
+        .sidebar {
+          position: sticky;
+          top: 0;
+          z-index: 5;
+        }
+        .nav {
+          padding: 0 6px;
+          gap: 0;
+          justify-content: space-between;
+          overflow: visible;
+        }
+        .nav a {
+          padding: 12px 5px;
+          font-size: var(--text-xs);
+          min-height: 48px;
+          justify-content: center;
+          flex: 1;
+        }
+        .nav [data-icon] {
+          display: none;
+        }
+        .nav a[aria-current] {
+          box-shadow: inset 0 -2px var(--accent);
+          background: transparent;
+        }
+        .topbar {
+          padding: 10px 16px;
+        }
+        .status-strip small {
+          flex-basis: 100%;
+        }
+        .status-strip {
+          gap: 6px;
+        }
+        .stat .value {
+          font-size: 25px;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: baseline;
+          column-gap: 3px;
+        }
+        .stat .value small {
+          margin-left: 0;
+        }
+        .stat .foot {
+          font-size: var(--text-xs);
+        }
+        .chart-switch button {
+          min-height: 40px;
+        }
+        .chart-controls {
+          width: 100%;
+          justify-content: space-between;
+        }
+        #chart-view {
+          min-height: 44px;
+        }
+        .chart-note {
+          flex-wrap: wrap;
+          gap: 4px;
+        }
+        .requests,
+        .ovr {
+          min-width: 0;
+        }
+        .requests thead,
+        .ovr thead {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          clip-path: inset(50%);
+          overflow: hidden;
+        }
+        .requests tbody,
+        .ovr tbody {
+          display: block;
+        }
+        .requests tr {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          gap: 12px 16px;
+          padding: 16px;
+          border-bottom: 1px solid var(--border);
+        }
+        .requests tr:last-child {
+          border-bottom: 0;
+        }
+        .requests td {
+          display: block;
+          border: 0;
+          padding: 0;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+        .requests td:nth-child(2),
+        .requests td:last-child {
+          text-align: right;
+        }
+        .requests td[data-label]::before {
+          content: attr(data-label);
+          display: block;
+          color: var(--dim);
+          font:
+            var(--text-xs)/1.5 "Segoe UI",
+            sans-serif;
+          margin-bottom: 4px;
+        }
+        .requests td.empty {
+          grid-column: 1 / -1;
+          padding: 12px 0;
+          text-align: left;
+        }
+        .requests .detail-btn {
+          border: 1px solid var(--border);
+          min-width: 72px;
+        }
+        .ovr tr {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          gap: 10px 12px;
+          padding: 16px;
+          border-bottom: 1px solid var(--border);
+        }
+        .ovr td {
+          display: block;
+          padding: 0;
+          border: 0;
+          min-width: 0;
+        }
+        .ovr td:first-child,
+        .ovr td.note {
+          grid-column: 1 / -1;
+        }
+        .ovr td.note {
+          min-width: 0;
+          max-width: none;
+        }
+        .ovr td[data-label]::before {
+          content: attr(data-label);
+          display: block;
+          color: var(--dim);
+          font-size: var(--text-xs);
+          margin-bottom: 5px;
+        }
+        .ovr input,
+        .ovr select {
+          width: 100%;
+          min-height: 44px;
+        }
+        .save-bar {
+          gap: 8px;
+          padding: 12px 16px;
+        }
+        .save-bar .btn {
+          flex: 1 1 auto;
+          font-size: var(--text-xs);
+        }
+        .save-bar #ovr-key {
+          width: 100%;
+        }
+        .help .panel-body {
+          columns: auto;
+        }
+        .summary-line {
+          font-size: var(--text-sm);
+        }
+        .table-footer,
+        .page-footer {
+          font-size: var(--text-xs);
+        }
+        .drawer {
+          padding: 18px;
         }
       }
     </style>
@@ -1291,23 +1656,42 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
                   <h2>吞吐表现</h2>
                   <p>最近已记录请求 · 逐次实测</p>
                 </div>
-                <div class="chart-switch" role="group" aria-label="吞吐图指标">
-                  <button data-chart="prefill" aria-pressed="true">
-                    Prefill</button
-                  ><button data-chart="decode" aria-pressed="false">
-                    Decode
-                  </button>
+                <div class="chart-controls">
+                  <select id="chart-view" aria-label="吞吐图横轴">
+                    <option value="request">按请求顺序</option>
+                    <option value="time">按实际时间</option>
+                  </select>
+                  <div
+                    class="chart-switch"
+                    role="group"
+                    aria-label="吞吐图指标"
+                  >
+                    <button data-chart="prefill" aria-pressed="true">
+                      Prefill</button
+                    ><button data-chart="decode" aria-pressed="false">
+                      Decode
+                    </button>
+                  </div>
                 </div>
               </div>
               <div class="panel-body">
                 <canvas
                   id="throughput"
                   role="img"
+                  tabindex="0"
+                  aria-describedby="chart-readout"
                   aria-label="请求吞吐趋势"
                 ></canvas>
+                <div
+                  class="chart-readout"
+                  id="chart-readout"
+                  aria-live="polite"
+                >
+                  将鼠标移到采样点，或聚焦图表后按方向键查看。
+                </div>
                 <div class="chart-note">
                   <span id="chart-note">等待请求记录</span
-                  ><span>tok/s · 时间 UTC</span>
+                  ><span id="chart-axis-label">tok/s · 请求顺序</span>
                 </div>
               </div>
             </section>
@@ -1628,9 +2012,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
     </div>
     <dialog class="drawer" id="request-detail" aria-labelledby="detail-title">
       <div class="between">
-        <span class="eyebrow">REQUEST DETAIL</span
-        ><button id="detail-close" class="btn" aria-label="关闭详情">
-          关闭 <span aria-hidden="true">×</span>
+        <button id="detail-close" class="btn" aria-label="关闭详情">
+          关闭 <i data-icon="close"></i>
         </button>
       </div>
       <h2 id="detail-title">请求详情</h2>
@@ -1657,6 +2040,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         chartMetric = "prefill",
         reasonFilter = "all",
         toastTimer;
+      let chartPoints = [],
+        chartSelected = -1;
       const pending = { health: false, reqs: false, memory: false };
       const hist = { committed: [], rss: [] };
       const icons = {
@@ -1669,6 +2054,9 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         arrow: '<path d="M5 16 19 6M8 6h11v11"/>',
         clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
         pause: '<path d="M9 5v14M15 5v14"/>',
+        play: '<path d="m8 4 12 8-12 8Z"/>',
+        close: '<path d="m6 6 12 12M18 6 6 18"/>',
+        chevron: '<path d="m9 5 7 7-7 7"/>',
         copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4"/>',
       };
       document.querySelectorAll("[data-icon]").forEach((el) => {
@@ -1677,6 +2065,17 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           icons[el.dataset.icon] +
           "</svg>";
       });
+      function icon(name) {
+        const el = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "svg",
+        );
+        el.setAttribute("class", "icon");
+        el.setAttribute("viewBox", "0 0 24 24");
+        el.setAttribute("aria-hidden", "true");
+        el.innerHTML = icons[name];
+        return el;
+      }
       function txt(id, value) {
         $(id).textContent = value;
       }
@@ -1965,14 +2364,17 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           ? (r.output_tokens * 1000) / r.decode_ms
           : null;
       }
-      async function tickReqs() {
+      let queuedManualRefresh = false;
+      async function tickReqs(manual = false) {
+        if (manual) queuedManualRefresh = true;
         if (
-          !pollingAllowed() ||
+          (!queuedManualRefresh && !pollingAllowed()) ||
           pending.reqs ||
           !["overview", "requests"].includes(page)
         )
           return;
         pending.reqs = true;
+        queuedManualRefresh = false;
         const q = rangeBounds().q;
         try {
           const [s, t] = await Promise.all([
@@ -2013,7 +2415,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         } finally {
           pending.reqs = false;
           updateRefreshMeta();
-          if (q !== rangeBounds().q) tickReqs();
+          if (q !== rangeBounds().q || queuedManualRefresh)
+            tickReqs(manual || queuedManualRefresh);
         }
       }
       function renderReqSummary(j) {
@@ -2172,7 +2575,11 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           const tr = node("tr"),
             td = node(
               "td",
-              reqAt ? "当前范围没有匹配记录" : "等待请求记录…",
+              reqAt
+                ? reasonFilter !== "all" && all
+                  ? "当前没有此类结果，可切换“所有结果”查看。"
+                  : "此日期范围没有请求。可调整日期，或到“对话测试”发送一次请求。"
+                : "等待请求记录…",
               "empty",
             );
           td.colSpan = 6;
@@ -2209,11 +2616,15 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             ),
           );
           const td = node("td"),
-            btn = node("button", "→", "detail-btn");
+            btn = node("button", null, "detail-btn");
+          btn.append(icon("chevron"));
           btn.setAttribute("aria-label", "查看请求 " + r.req_seq + " 详情");
           btn.dataset.recordKey = r.ts_ms + "-" + r.req_seq;
           btn.onclick = () => showDetail(r);
           td.append(btn);
+          ["输入 → 输出", "首字延迟", "生成速度"].forEach(
+            (label, i) => (tr.children[i + 2].dataset.label = label),
+          );
           tr.append(td);
           tb.append(tr);
         }
@@ -2326,7 +2737,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             v: chartMetric === "prefill" ? prefillRate(r) : decodeRate(r),
           }))
           .filter((p) => finite(p.v));
-        g.font = "11px Consolas, monospace";
+        g.font = "12px Consolas, monospace";
         g.fillStyle = "#a0adba";
         if (!data.length) {
           g.textAlign = "center";
@@ -2337,6 +2748,9 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             W / 2,
             H / 2,
           );
+          chartPoints = [];
+          chartSelected = -1;
+          txt("chart-readout", "可在“对话测试”发送请求后查看吞吐数据。");
           txt("chart-note", "全命中缓存 / 未记录耗时的请求不参与曲线");
           cv.setAttribute("aria-label", "暂无吞吐数据");
           return;
@@ -2345,10 +2759,15 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           max = Math.max(1, ...data.map((p) => p.v)) * 1.12,
           minT = data[0].t,
           maxT = data[data.length - 1].t;
-        const x = (t) =>
-            maxT === minT
-              ? pad.l + (W - pad.l - pad.r) / 2
-              : pad.l + ((t - minT) / (maxT - minT)) * (W - pad.l - pad.r),
+        const timeScale = $("chart-view").value === "time";
+        const x = (t, i) =>
+            !timeScale
+              ? pad.l +
+                (W - pad.l - pad.r) *
+                  (data.length === 1 ? 0.5 : i / (data.length - 1))
+              : maxT === minT
+                ? pad.l + (W - pad.l - pad.r) / 2
+                : pad.l + ((t - minT) / (maxT - minT)) * (W - pad.l - pad.r),
           y = (v) => H - pad.b - (v / max) * (H - pad.t - pad.b);
         for (let i = 0; i <= 3; i++) {
           const value = (max * i) / 3,
@@ -2370,20 +2789,54 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         g.lineWidth = 2;
         g.beginPath();
         data.forEach((p, i) =>
-          i ? g.lineTo(x(p.t), y(p.v)) : g.moveTo(x(p.t), y(p.v)),
+          i ? g.lineTo(x(p.t, i), y(p.v)) : g.moveTo(x(p.t, i), y(p.v)),
         );
         g.stroke();
-        for (const p of data) {
+        chartPoints = data.map((p, i) => ({ ...p, x: x(p.t, i), y: y(p.v) }));
+        for (const p of chartPoints) {
           g.fillStyle = "#89d5c1";
           g.beginPath();
-          g.arc(x(p.t), y(p.v), 3, 0, Math.PI * 2);
+          g.arc(p.x, p.y, 3, 0, Math.PI * 2);
           g.fill();
         }
         g.fillStyle = "#a0adba";
         g.textAlign = "left";
-        g.fillText(utc(minT).slice(11), pad.l, H - 4);
+        g.fillText(timeScale ? utc(minT).slice(11) : "第 1 次", pad.l, H - 4);
         g.textAlign = "right";
-        if (minT !== maxT) g.fillText(utc(maxT).slice(11), W - pad.r, H - 4);
+        if (data.length > 1)
+          g.fillText(
+            timeScale ? utc(maxT).slice(11) : "第 " + data.length + " 次",
+            W - pad.r,
+            H - 4,
+          );
+        txt(
+          "chart-axis-label",
+          timeScale ? "tok/s · 时间 UTC" : "tok/s · 请求顺序（等距）",
+        );
+        if (chartSelected >= data.length) chartSelected = data.length - 1;
+        if (chartSelected >= 0) {
+          const p = chartPoints[chartSelected];
+          g.strokeStyle = "#a0adba";
+          g.setLineDash([3, 4]);
+          g.beginPath();
+          g.moveTo(p.x, pad.t);
+          g.lineTo(p.x, H - pad.b);
+          g.stroke();
+          g.setLineDash([]);
+          g.fillStyle = "#eaf0f5";
+          g.beginPath();
+          g.arc(p.x, p.y, 5, 0, Math.PI * 2);
+          g.fill();
+          txt(
+            "chart-readout",
+            utc(p.t) +
+              " UTC · " +
+              (chartMetric === "prefill" ? "Prefill " : "Decode ") +
+              fmtRate(p.v) +
+              " tok/s",
+          );
+        } else
+          txt("chart-readout", "将鼠标移到采样点，或聚焦图表后按方向键查看。");
         txt("chart-note", "最近 " + data.length + " 次有效采样 · 未做平滑");
         cv.setAttribute(
           "aria-label",
@@ -2397,6 +2850,50 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             "；详细值见请求记录",
         );
       }
+      $("chart-view").onchange = () => {
+        chartSelected = -1;
+        drawThroughput();
+      };
+      $("throughput").addEventListener("pointermove", (e) => {
+        if (!chartPoints.length) return;
+        const x = e.clientX - $("throughput").getBoundingClientRect().left;
+        const next = chartPoints.reduce(
+          (best, p, i) =>
+            Math.abs(p.x - x) < Math.abs(chartPoints[best].x - x) ? i : best,
+          0,
+        );
+        if (next !== chartSelected) {
+          chartSelected = next;
+          drawThroughput();
+        }
+      });
+      $("throughput").addEventListener("pointerleave", () => {
+        if (document.activeElement !== $("throughput")) {
+          chartSelected = -1;
+          drawThroughput();
+        }
+      });
+      $("throughput").addEventListener("keydown", (e) => {
+        if (
+          !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key) ||
+          !chartPoints.length
+        )
+          return;
+        e.preventDefault();
+        chartSelected =
+          e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? chartPoints.length - 1
+              : Math.max(
+                  0,
+                  Math.min(
+                    chartPoints.length - 1,
+                    chartSelected + (e.key === "ArrowRight" ? 1 : -1),
+                  ),
+                );
+        drawThroughput();
+      });
       async function tickMem() {
         if (!pollingAllowed() || pending.memory || page !== "memory") return;
         if (
@@ -2549,10 +3046,11 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           const tr = document.createElement("tr");
           tr.id = "ovr-row-" + f.k;
           const name = document.createElement("td");
-          name.className = "mono";
           name.textContent = f.label;
+          if (f.label !== f.k) name.append(node("span", f.k, "param-key"));
           if (f.label !== f.k) name.title = f.k;
           const modeTd = document.createElement("td");
+          modeTd.dataset.label = "覆盖模式";
           const mode = document.createElement("select");
           mode.innerHTML =
             '<option value="client">跟随客户端</option><option value="default">默认值</option>' +
@@ -2561,12 +3059,15 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           if (f.k === "max_tokens") mode.options[2].textContent = "强制上限";
           modeTd.appendChild(mode);
           const valTd = document.createElement("td");
+          valTd.dataset.label = "参数值";
           const val = ovrValueInput(f);
           val.setAttribute("aria-label", f.label + "值");
           valTd.appendChild(val);
           const note = document.createElement("td");
           note.className = "note";
           note.textContent = f.note;
+          note.id = "note-" + f.k;
+          val.setAttribute("aria-describedby", note.id);
           tr.append(name, modeTd, valTd, note);
           tb.appendChild(tr);
           f.modeEl = mode;
@@ -2608,6 +3109,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         ovrPending = false;
       function lockOvr(b) {
         ovrPending = b;
+        $("ovr-save").textContent = b ? "正在处理…" : "保存并立即生效";
+        $("ovr-body").setAttribute("aria-busy", String(b));
         for (const f of OVR_FIELDS) {
           f.modeEl.disabled = b || !ovrLoaded;
           f.valEl.disabled = b || !ovrLoaded || f.modeEl.value === "client";
@@ -2618,6 +3121,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       function markDirty() {
         ovrDirty = true;
+        $("ovr-save").closest(".save-bar").classList.add("is-dirty");
         $("ovr-status").textContent = "有未保存的修改";
       }
 
@@ -2647,6 +3151,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           ? "持久化文件：" + state.persist_path
           : "仅内存（未持久化）";
         ovrDirty = false;
+        $("ovr-save").closest(".save-bar").classList.remove("is-dirty");
       }
 
       async function loadOvr() {
@@ -3081,7 +3586,13 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         }
       });
 
-      window.addEventListener("hashchange", activatePage);
+      window.addEventListener("hashchange", () => {
+        activatePage();
+        document
+          .querySelector('[data-page="' + page + '"]')
+          .scrollIntoView({ block: "nearest", inline: "nearest" });
+        $("content").focus({ preventScroll: true });
+      });
       window.addEventListener("resize", () => {
         drawThroughput();
         if (page === "memory") drawSpark();
@@ -3119,11 +3630,14 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         renderTables();
         drawThroughput();
         $("reqs-grid").classList.add("stale");
-        tickReqs();
+        tickReqs(true);
       };
       $("pause").onclick = () => {
         paused = !paused;
         $("pause").setAttribute("aria-pressed", String(paused));
+        $("pause")
+          .querySelector("[data-icon]")
+          .replaceChildren(icon(paused ? "play" : "pause"));
         $("pause").querySelector("span").textContent = paused
           ? "继续刷新"
           : "暂停刷新";

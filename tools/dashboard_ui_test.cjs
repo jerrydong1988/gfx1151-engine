@@ -219,13 +219,19 @@ const server = http.createServer(async (req, res) => {
 });
 const chatBodies = [],
   results = [],
+  failures = [],
   errors = [],
   external = [];
 let browser;
 async function run(name, fn) {
-  await fn();
-  results.push(name);
-  console.log("PASS " + name);
+  try {
+    await fn();
+    results.push(name);
+    console.log("PASS " + name);
+  } catch (error) {
+    failures.push({ name, error: String(error) });
+    console.error("FAIL " + name + ": " + error);
+  }
 }
 async function main() {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -287,9 +293,15 @@ async function main() {
       await page.locator("#request-detail").waitFor({ state: "visible" });
       assert.match(await text("#detail-body"), /时间（UTC）/);
       await page.keyboard.press("Escape");
-      assert.equal(
-        await detail.evaluate((el) => el === document.activeElement),
-        true,
+      await page.locator("#request-detail").waitFor({ state: "hidden" });
+      // Query focus and the current row atomically: close/poll handlers may replace
+      // the original button between a locator resolution and its evaluation.
+      await page.waitForFunction(
+        () =>
+          document.activeElement ===
+          document.querySelector("#all-table .detail-btn"),
+        null,
+        { timeout: 3000 },
       );
       await page.selectOption("#reason-filter", "all");
       await page.selectOption("#reqs-range", "0");
@@ -477,6 +489,47 @@ async function main() {
     },
   );
   await run(
+    "chart modes and keyboard inspection expose individual measurements",
+    async () => {
+      await go("overview");
+      assert.equal(await page.locator("#chart-view").inputValue(), "request");
+      await page.locator("#throughput").focus();
+      await page.keyboard.press("End");
+      assert.match(await text("#chart-readout"), /UTC.*Prefill.*tok\/s/);
+      await page.selectOption("#chart-view", "time");
+      assert.match(await text("#chart-axis-label"), /时间 UTC/);
+      await page.click('[data-chart="decode"]');
+      await page.locator("#throughput").focus();
+      await page.keyboard.press("Home");
+      assert.match(await text("#chart-readout"), /Decode.*tok\/s/);
+      await page.click('[data-chart="prefill"]');
+      await page.selectOption("#chart-view", "request");
+      await page.mouse.move(0, 0);
+      await page.locator("#content").focus();
+    },
+  );
+  await run(
+    "explicit date selection still works when automatic refresh is paused",
+    async () => {
+      await page.click("#pause");
+      const count = summaryRequests;
+      await page.selectOption("#reqs-range", "0");
+      await page.waitForFunction(
+        () => !document.getElementById("reqs-grid").classList.contains("stale"),
+      );
+      assert.equal(summaryRequests, count + 1);
+      assert.equal(
+        await page.locator("#pause").getAttribute("aria-pressed"),
+        "true",
+      );
+      await page.selectOption("#reqs-range", "1");
+      await page.waitForFunction(
+        () => !document.getElementById("reqs-grid").classList.contains("stale"),
+      );
+      await page.click("#pause");
+    },
+  );
+  await run(
     "desktop, tablet, mobile and narrow mobile layouts have no page overflow",
     async () => {
       for (const width of [1920, 1280, 768, 390, 320]) {
@@ -496,6 +549,56 @@ async function main() {
             true,
             width + " " + name + " overflow",
           );
+          assert.equal(await page.locator('[aria-current="page"]').count(), 1);
+          if (width <= 390) {
+            assert.equal(
+              await page
+                .locator(".nav a")
+                .last()
+                .evaluate(
+                  (el) => el.getBoundingClientRect().right <= innerWidth,
+                ),
+              true,
+              "all five mobile destinations visible",
+            );
+            if (name === "settings") {
+              assert.equal(
+                await page
+                  .locator(".ovr")
+                  .evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+                true,
+                "mobile form needs no horizontal scroll",
+              );
+              for (const control of await page
+                .locator("#ovr-body input, #ovr-body select")
+                .all()) {
+                assert.equal(
+                  await control.evaluate((el) => {
+                    const r = el.getBoundingClientRect();
+                    return (
+                      r.left >= 0 && r.right <= innerWidth && r.height >= 44
+                    );
+                  }),
+                  true,
+                  "mobile parameter control is visible and touch sized",
+                );
+              }
+            }
+            if (name === "requests" || name === "overview") {
+              const table = page.locator(
+                name === "overview"
+                  ? "#recent-table .requests"
+                  : "#all-table .requests",
+              );
+              assert.equal(
+                await table.evaluate(
+                  (el) => el.scrollWidth <= el.clientWidth + 1,
+                ),
+                true,
+                "mobile records need no horizontal scroll",
+              );
+            }
+          }
           if (width === 390)
             await page.screenshot({
               path: path.join(output, name + "-mobile.png"),
@@ -514,6 +617,7 @@ async function main() {
     JSON.stringify(
       {
         passed: results,
+        failures,
         errors,
         externalRequests: external,
         viewportWidths: [1920, 1600, 1280, 768, 390, 320],
@@ -524,6 +628,8 @@ async function main() {
       2,
     ),
   );
+  if (failures.length)
+    throw new Error(failures.length + " browser regression groups failed");
 }
 main()
   .catch((e) => {
