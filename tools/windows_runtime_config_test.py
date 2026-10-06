@@ -35,6 +35,11 @@ def main():
                 'MTP_FILE=""\nVISION_FILE=""\nOVERLAY_FILE=""\n'
                 f'ENGINE_PORT="{engine_port}"\nAPI_PORT="{api_port}"\n')
         cases = [
+            ('precision-and-layout',
+             'GDEC_INDEX_F16="0"\nGDEC_V2_PAIRS_F16="0"\nGDEC_GEMM_SPLITK="0"\n'
+             'GDEC_QSA_DENSE_WMMA="0"\nGDEC_BATCH_FIRST="0"\nGDEC_ROUTER_W32="0"\n', {},
+             dict.fromkeys(('GDEC_INDEX_F16', 'GDEC_V2_PAIRS_F16', 'GDEC_GEMM_SPLITK',
+                            'GDEC_QSA_DENSE_WMMA', 'GDEC_BATCH_FIRST', 'GDEC_ROUTER_W32'), '0')),
             ('configured', 'GDEC_DRAFTER="mtp"\nGDEC_MTP_INGEST_FUSED="1"\n'
              'GDEC_IPROJ_SOLUTION="-711"\n', {},
              {'GDEC_DRAFTER': 'mtp', 'GDEC_MTP_INGEST_FUSED': '1', 'GDEC_IPROJ_SOLUTION': '-711'}),

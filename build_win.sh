@@ -35,7 +35,7 @@ export HIP_PATH="$TR_WIN"
 unset ROCM_PATH HIP_PATH_64 HIP_PATH_71 HIP_PATH_72
 GPU_ARCH="${GPU_ARCH:-gfx1151}"
 TARGET="${1:-all}"
-[[ "$TARGET" == all || "$TARGET" == engine || "$TARGET" == bench || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == test || "$TARGET" == v2-test ]] || { sed -n '2,11p' "$0" >&2; exit 2; }
+[[ "$TARGET" == all || "$TARGET" == engine || "$TARGET" == bench || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == test || "$TARGET" == v2-test || "$TARGET" == v006-test ]] || { sed -n '2,11p' "$0" >&2; exit 2; }
 
 mkdir -p build build/winlibs
 [[ -f build/winlibs/rocblas.lib ]]   || cp "$TR/lib/rocblas.lib" build/winlibs/
@@ -145,6 +145,20 @@ build_test() {
 }
 
 case "$TARGET" in
+  v006-test)
+    # Pass the existing tokenizer directory; tests never download weights.
+    : "${TOK_DIR:?Set TOK_DIR to the model tokenizer directory}"
+    "$TR/lib/llvm/bin/clang++.exe" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS \
+      -Isrc/api -Ithird_party -I"$TR/include" \
+      src/api/http.cpp src/api/engine_client.cpp src/api/tokenizer.cpp \
+      src/api/chat_template.cpp src/api/json_py.cpp src/api/toolparse.cpp \
+      src/api/vision.cpp src/api/reqstat.cpp src/api/reqstat_read.cpp \
+      tools/v006_api_test.cpp -lws2_32 -o build/v006-api-test.exe
+    build/v006-api-test.exe "$TOK_DIR"
+    "$HIPCC" "${FLAGS[@]}" -Isrc/gpu tools/v006_gpu_test.cu -o build/v006-gpu-test.exe
+    build/v006-gpu-test.exe
+    ;;
+
   v2-test)
     "$TR/lib/llvm/bin/clang++.exe" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS tools/hgn_v2_test.cpp -o build/hgn-v2-test.exe
     build/hgn-v2-test.exe

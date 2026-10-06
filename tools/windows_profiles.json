@@ -1,6 +1,14 @@
 {
   "notes": "R19 Windows research presets. Relative files are resolved under ModelDirectory. These are arithmetic policies, not accuracy guarantees. No weight files or persistent environment are changed. Benchmark comparisons were text-only; loading vision reserves additional memory.",
   "common": {
+    "GDEC_INDEX_F16": "0",
+    "GDEC_V2_PAIRS_F16": "0",
+    "GDEC_W4B_PAIRS_F16": "0",
+    "GDEC_GEMM_SPLITK": "0",
+    "GDEC_QSA_DENSE_WMMA": "0",
+    "GDEC_MOE_MT": "1",
+    "GDEC_HC_NORHAT": "0",
+    "GDEC_HC_FUSE_WRITE": "0",
     "GDEC_SPEC_PRECISION": "aligned",
     "GDEC_SPEC_ADAPT": "0",
     "GDEC_SPEC_ADAPT_GREEDY": "0",
