@@ -1,855 +1,3170 @@
-// dashboard_html.inc — gdec-api 自带的控制台（由 GET / 和 GET /dashboard 返回）。
-//
-// 单文件：CSS/JS 全部内联，不引用任何外部资源（无 CDN，离线/局域网可用）。
-// 页面用同源 fetch 访问：
-//   GET /health  每 2 秒   —— API 进程自身的状态，不经过 engine
-//   GET /memory  每 10 秒  —— engine 内存记账（占用推理槽位，间隔勿低于 ~1 秒）
-//   GET/POST /admin/overrides —— 服务端采样/思考参数覆盖表（打开页面时读一次）
-//   GET /reqstat/summary|tail 每 10 秒 —— "请求统计"面板（读 data/reqstat*.bin，不经过 engine）
-//   POST /v1/chat/completions —— "对话测试"面板，以普通客户端身份流式调用
-// /memory 在 engine 不可达时返回 500；页面把错误显示在面板内并保留上次数值，
-// 继续按周期重试，不会白屏。
-
-static const char kDashboardHtml[] = R"HTMLDOC(<!DOCTYPE html>
+// Embedded, dependency-free dashboard. All endpoints are same-origin.
+// /health is API self-state, not an engine liveness check. /memory occupies
+// an inference slot and is only polled on the visible memory page when idle.
+// Request dates are UTC. Charts use real per-request records, not synthetic data.
+static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
 <html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>gdec-api 控制台</title>
-<style>
-  :root {
-    --bg: #0d1117; --panel: #161b22; --border: #30363d;
-    --fg: #e6edf3; --dim: #8b949e;
-    --ok: #3fb950; --warn: #d29922; --err: #f85149;
-    --c-committed: #58a6ff; --c-rss: #bc8cff;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--fg);
-    font: 14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
-  }
-  .mono { font-family: Consolas, "Cascadia Mono", "Courier New", monospace; }
-  header {
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-    padding: 12px 20px; border-bottom: 1px solid var(--border);
-    background: var(--panel);
-  }
-  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  header nav { display: flex; gap: 10px; font-size: 13px; }
-  header nav a { color: var(--dim); text-decoration: none; }
-  header nav a:hover { color: var(--fg); }
-  #target { color: var(--dim); font-size: 13px; }
-  .chip {
-    padding: 2px 10px; border-radius: 999px; font-size: 12px;
-    border: 1px solid var(--border); color: var(--dim);
-  }
-  .chip.ok   { color: var(--ok);   border-color: var(--ok); }
-  .chip.warn { color: var(--warn); border-color: var(--warn); }
-  .chip.err  { color: var(--err);  border-color: var(--err); }
-  .btn, #pause {
-    background: none; color: var(--dim); cursor: pointer;
-    border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px;
-    font: inherit;
-  }
-  #pause { margin-left: auto; }
-  .btn:hover, #pause:hover { color: var(--fg); border-color: var(--dim); }
-  .btn.primary { color: #fff; background: #238636; border-color: #2ea043; }
-  .btn.primary:hover { background: #2ea043; }
-  .btn:disabled { opacity: 0.45; cursor: default; }
-  main { max-width: 960px; margin: 0 auto; padding: 16px 20px 40px; }
-  .panel {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 8px; padding: 16px; margin-bottom: 16px;
-  }
-  .panel h2 { font-size: 13px; margin: 0 0 12px; color: var(--dim); font-weight: 600; }
-  .panel .meta { float: right; font-weight: 400; font-size: 12px; }
-  .hint { color: var(--dim); font-size: 12px; margin: -4px 0 12px; }
-  .kv { display: flex; gap: 28px; flex-wrap: wrap; }
-  .kv > div > .k { color: var(--dim); font-size: 12px; }
-  .kv > div > .v { font-size: 15px; }
-  .hero { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; }
-  .hero .num { font-size: 34px; font-weight: 700; }
-  .hero .lab { color: var(--dim); font-size: 13px; }
-  .bar {
-    height: 10px; border-radius: 5px; background: #21262d;
-    overflow: hidden; margin: 4px 0 4px;
-  }
-  .bar > i { display: block; height: 100%; background: var(--c-committed); }
-  .barlab { display: flex; justify-content: space-between; color: var(--dim); font-size: 12px; }
-  .grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    gap: 12px; margin-top: 14px;
-  }
-  .cell { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
-  .cell .k { color: var(--dim); font-size: 12px; }
-  .cell .v { font-size: 18px; font-weight: 600; }
-  .cell .s { color: var(--dim); font-size: 12px; }
-  .stale { opacity: 0.45; }
-  .errmsg {
-    display: none; margin-top: 12px; padding: 8px 12px; border-radius: 6px;
-    background: rgba(248,81,73,0.1); border: 1px solid var(--err); color: var(--err);
-    font-size: 13px; word-break: break-all;
-  }
-  .errmsg.show { display: block; }
-  canvas { width: 100%; height: 120px; margin-top: 14px; display: block; }
-  .legend { display: flex; gap: 18px; color: var(--dim); font-size: 12px; margin-top: 4px; }
-  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
-  details { margin-top: 14px; }
-  summary { cursor: pointer; color: var(--dim); font-size: 12px; }
-  pre {
-    background: #0d1117; border: 1px solid var(--border); border-radius: 6px;
-    padding: 10px; overflow-x: auto; font-size: 12px; margin: 8px 0 0;
-    white-space: pre-wrap; word-break: break-all;
-  }
-  input, select, textarea {
-    background: #0d1117; color: var(--fg); border: 1px solid var(--border);
-    border-radius: 6px; padding: 4px 8px; font: inherit;
-  }
-  input:disabled, select:disabled { opacity: 0.4; }
-  input[type=number] { width: 110px; }
-  input[type=checkbox] { width: auto; }
-  textarea { width: 100%; resize: vertical; }
-  table.ovr { width: 100%; border-collapse: collapse; }
-  table.ovr th { text-align: left; color: var(--dim); font-weight: 400; font-size: 12px; padding: 4px 8px; }
-  table.ovr td { padding: 5px 8px; border-top: 1px solid var(--border); vertical-align: middle; }
-  table.ovr td.note { color: var(--dim); font-size: 12px; }
-  table.ovr tr.on td:first-child { color: var(--warn); }
-  table.ovr tr.def td:first-child { color: var(--c-committed); }
-  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
-  #ovr-status, #chat-status { color: var(--dim); font-size: 12px; }
-  .cparams { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 10px; }
-  .cparams label { display: flex; flex-direction: column; color: var(--dim); font-size: 12px; gap: 2px; }
-  .cparams input[type=number] { width: 90px; }
-  #c-log { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
-  .msg { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; background: #0d1117; }
-  .msg .role { color: var(--dim); font-size: 12px; margin-bottom: 4px; }
-  .msg.user { border-color: #1f6feb; }
-  .msg .body { white-space: pre-wrap; word-break: break-word; }
-  .msg .think { white-space: pre-wrap; word-break: break-word; color: var(--dim); font-size: 13px;
-                border-left: 2px solid var(--border); padding-left: 10px; margin: 4px 0 8px; }
-  .msg .stat { color: var(--dim); font-size: 12px; margin-top: 6px; }
-  .msg .ovr-note { color: var(--warn); font-size: 12px; margin-bottom: 4px; }
-</style>
-</head>
-<body>
-<header>
-  <h1>gdec-api 控制台</h1>
-  <span class="mono" id="target"></span>
-  <span class="chip" id="conn">连接中…</span>
-  <nav><a href="#health">状态</a><a href="#reqs">请求统计</a><a href="#ovr">参数覆盖</a><a href="#chat">对话测试</a><a href="#mem">内存</a></nav>
-  <button id="pause" type="button">⏸ 暂停刷新</button>
-</header>
-<main>
-  <section class="panel" id="health">
-    <h2>健康状态 <span class="meta mono" id="health-meta"></span></h2>
-    <div class="kv">
-      <div><div class="k">状态</div><div class="v"><span class="chip" id="h-status">…</span></div></div>
-      <div><div class="k">模型</div><div class="v mono" id="h-model">-</div></div>
-      <div><div class="k">上下文</div><div class="v mono" id="h-ctx">-</div></div>
-      <div><div class="k">进行中 (in_flight)</div><div class="v mono" id="h-inflight">-</div></div>
-      <div><div class="k">已持续 (busy_for)</div><div class="v mono" id="h-busyfor">-</div></div>
-      <div><div class="k">排队 (queued)</div><div class="v mono" id="h-queued">-</div></div>
-      <div><div class="k">服务端覆盖</div><div class="v mono" id="h-ovr">-</div></div>
-    </div>
-    <div class="errmsg" id="health-err"></div>
-  </section>
-
-  <section class="panel" id="reqs">
-    <h2>请求统计 <span class="meta mono" id="reqs-meta"></span></h2>
-    <div class="row" style="margin:0 0 12px">
-      <select id="reqs-range">
-        <option value="1">今天（UTC）</option>
-        <option value="7">近 7 天（UTC）</option>
-        <option value="0">全部历史</option>
-      </select>
-      <span class="hint" style="margin:0">汇总来自服务端请求记录文件（/reqstat/summary）；下面的最近请求固定为最新 10 条（/reqstat/tail）。结束原因分三类：自然结束（生成完成或命中 stop 词）、长度上限（max_tokens 或上下文打满）、取消/断开（客户端中止）。</span>
-    </div>
-    <div class="grid" id="reqs-grid"></div>
-    <div id="reqs-acc" style="margin-top:10px"></div>
-    <table class="ovr" style="margin-top:12px">
-      <thead><tr><th>时间</th><th>结束原因</th><th>起草</th><th>prompt(命中)</th><th>prefill</th><th>输出</th><th>TTFT</th><th>decode</th><th>接受率</th></tr></thead>
-      <tbody id="reqs-body"></tbody>
-    </table>
-    <div class="errmsg" id="reqs-err"></div>
-  </section>
-
-  <section class="panel" id="ovr">
-    <h2>采样 / 思考参数（服务端覆盖） <span class="meta mono" id="ovr-meta"></span></h2>
-    <p class="hint">
-      <b>跟随客户端</b>：不干预。<b>默认值</b>：只在客户端没传该字段时使用。
-      <b>强制</b>：不管客户端传什么都改成这个值（max_tokens 的"强制"是上限，超过才压到此值）。
-      对 /v1/chat/completions、/v1/responses、/v1/completions 都生效，思考相关字段对 completions 不起作用。
-      被改写的字段会写进响应头 <span class="mono">X-Gdec-Overrides</span>。保存后立即生效，并持久化到服务端文件，重启后仍有效。
-    </p>
-    <table class="ovr">
-      <thead><tr><th>参数</th><th>模式</th><th>值</th><th>说明</th></tr></thead>
-      <tbody id="ovr-body"></tbody>
-    </table>
-    <div class="row">
-      <input id="ovr-key" type="password" placeholder="管理密钥 (GDEC_API_ADMIN_KEY)" style="display:none; width:240px">
-      <button id="ovr-save" class="btn primary" type="button">保存并生效</button>
-      <button id="ovr-reload" class="btn" type="button">从服务端重新读取</button>
-      <button id="ovr-clear" class="btn" type="button">全部改为跟随客户端</button>
-      <span id="ovr-status"></span>
-    </div>
-    <div class="errmsg" id="ovr-err"></div>
-  </section>
-
-  <section class="panel" id="chat">
-    <h2>对话测试 <span class="meta mono" id="chat-meta"></span></h2>
-    <p class="hint">
-      以普通客户端身份流式调用 /v1/chat/completions。下面是"客户端提交的值"，留空或"不传"表示请求里不带该字段。
-      服务端覆盖生效时，回复上方会列出被改写的字段。引擎是单槽位，其他客户端正在生成时，这里会排队等待。
-    </p>
-    <div class="cparams">
-      <label>思考开关<select id="c-think"><option value="">不传</option><option value="true">开</option><option value="false">关</option></select></label>
-      <label>思考强度<select id="c-effort"><option value="">不传</option><option>low</option><option>medium</option><option>xhigh</option></select></label>
-      <label>temperature<input id="c-temp" type="number" min="0" max="2" step="0.05" placeholder="不传"></label>
-      <label>top_p<input id="c-topp" type="number" min="0" max="1" step="0.01" placeholder="不传"></label>
-      <label>top_k<input id="c-topk" type="number" min="0" step="1" placeholder="不传"></label>
-      <label>min_p<input id="c-minp" type="number" min="0" max="1" step="0.01" placeholder="不传"></label>
-      <label>presence<input id="c-pres" type="number" min="-2" max="2" step="0.1" placeholder="不传"></label>
-      <label>max_tokens<input id="c-max" type="number" min="1" step="1" placeholder="不传"></label>
-      <label>seed<input id="c-seed" type="number" min="0" step="1" placeholder="随机"></label>
-    </div>
-    <textarea id="c-system" rows="2" placeholder="system 提示词（可选）"></textarea>
-    <div id="c-log"></div>
-    <textarea id="c-input" rows="3" placeholder="输入消息，Ctrl+Enter 发送"></textarea>
-    <div class="row">
-      <button id="c-send" class="btn primary" type="button">发送</button>
-      <button id="c-stop" class="btn" type="button" disabled>停止</button>
-      <button id="c-clear" class="btn" type="button">清空对话</button>
-      <span id="chat-status"></span>
-    </div>
-    <div class="errmsg" id="chat-err"></div>
-  </section>
-
-  <section class="panel" id="mem">
-    <h2>内存记账 <span class="meta mono" id="mem-meta"></span></h2>
-    <div id="mem-data">
-      <div class="hero">
-        <span class="num mono" id="m-hero" title="gpu_accessible_committed_bytes">-</span>
-        <span class="lab">GPU 可访问记账（committed）<br>
-          <span id="m-accounting" style="font-size:12px"></span></span>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>gfx1151 控制台</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101419;
+        --sidebar: #14191f;
+        --panel: #191f26;
+        --soft: #141a21;
+        --border: #2b333d;
+        --fg: #eaf0f5;
+        --dim: #a0adba;
+        --accent: #89d5c1;
+        --accent-bg: #253832;
+        --ok: #8bd6b1;
+        --warn: #efc487;
+        --err: #ff9993;
+        --c-committed: #89d5c1;
+        --c-rss: #b8a8eb;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.6 "Segoe UI Variable",
+          "Segoe UI",
+          "Microsoft YaHei",
+          sans-serif;
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+      button,
+      a {
+        touch-action: manipulation;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      button,
+      input,
+      select,
+      textarea {
+        outline-offset: 4px;
+      }
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible,
+      summary:focus-visible {
+        outline: 2px solid var(--accent);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 29px;
+        letter-spacing: -0.7px;
+        line-height: 1.4;
+      }
+      h2 {
+        font-size: 15px;
+        font-weight: 600;
+      }
+      h3 {
+        font-size: 14px;
+      }
+      small,
+      .muted,
+      .hint,
+      .note {
+        color: var(--dim);
+      }
+      .hint,
+      .note {
+        font-size: 12px;
+      }
+      .mono {
+        font-family: Consolas, "Cascadia Mono", monospace;
+        font-variant-numeric: tabular-nums;
+      }
+      .row,
+      .between {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .between {
+        justify-content: space-between;
+      }
+      .btn {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        padding: 7px 13px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--fg);
+      }
+      .btn:hover:not(:disabled) {
+        background: #263039;
+        border-color: #5a6b78;
+      }
+      .btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #10281f;
+        font-weight: 600;
+      }
+      .btn.primary:hover:not(:disabled) {
+        background: #a3e5d4;
+      }
+      .link-btn {
+        border: 0;
+        background: none;
+        color: var(--accent);
+        padding: 6px;
+        font: inherit;
+      }
+      .icon {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: none;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 3px 8px;
+        font-size: 11px;
+        white-space: nowrap;
+        color: var(--dim);
+      }
+      .chip.ok {
+        background: #21362d;
+        color: var(--ok);
+        border-color: #314b3e;
+      }
+      .chip.warn {
+        background: #382f25;
+        color: var(--warn);
+        border-color: #554432;
+      }
+      .chip.err {
+        background: #3a282a;
+        color: var(--err);
+        border-color: #664044;
+      }
+      .dot {
+        display: inline-block;
+        background: var(--ok);
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 7px;
+      }
+      .eyebrow {
+        font-size: 10px;
+        color: var(--dim);
+        letter-spacing: 1.5px;
+      }
+      .sidebar {
+        position: fixed;
+        inset: 0 auto 0 0;
+        width: 214px;
+        display: flex;
+        flex-direction: column;
+        padding: 29px 16px 20px;
+        background: var(--sidebar);
+        border-right: 1px solid var(--border);
+        z-index: 5;
+      }
+      .brand {
+        display: flex;
+        gap: 11px;
+        align-items: center;
+        padding: 0 11px 38px;
+      }
+      .brand-mark {
+        width: 35px;
+        height: 35px;
+        border: 1px solid #4d7064;
+        background: #233a31;
+        color: var(--accent);
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+      }
+      .brand strong {
+        font-size: 18px;
+        letter-spacing: 0.3px;
+      }
+      .brand small {
+        display: block;
+        font-size: 10px;
+        letter-spacing: 1.5px;
+      }
+      .nav-caption {
+        padding: 0 14px 12px;
+        color: var(--dim);
+        font-size: 11px;
+      }
+      .nav {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .nav a {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 14px;
+        color: var(--dim);
+        border-radius: 8px;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .nav a:hover {
+        background: #202a31;
+        color: var(--fg);
+      }
+      .nav a[aria-current="page"] {
+        color: #aff0d8;
+        background: var(--accent-bg);
+      }
+      .sidebar-bottom {
+        margin-top: auto;
+        padding: 17px 12px 0;
+        border-top: 1px solid var(--border);
+        font-size: 11px;
+        color: var(--dim);
+      }
+      .sidebar-bottom .mono {
+        display: block;
+        margin-top: 8px;
+        overflow-wrap: anywhere;
+      }
+      .shell {
+        margin-left: 214px;
+        min-width: 0;
+      }
+      .topbar {
+        min-height: 68px;
+        padding: 14px 32px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+      .crumb {
+        font-size: 12px;
+        color: var(--dim);
+      }
+      .crumb b {
+        font-weight: 500;
+        color: var(--fg);
+        margin-left: 10px;
+      }
+      .main {
+        max-width: 1760px;
+        margin: auto;
+        padding: 30px 32px 28px;
+      }
+      .section-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .section-title p {
+        color: var(--dim);
+        margin-top: 6px;
+        font-size: 13px;
+      }
+      .section-title .meta {
+        font-size: 11px;
+        color: var(--dim);
+      }
+      input,
+      select,
+      textarea {
+        background: var(--soft);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        padding: 8px 10px;
+        min-width: 0;
+      }
+      select {
+        min-height: 36px;
+      }
+      textarea {
+        width: 100%;
+        resize: vertical;
+      }
+      input:disabled,
+      select:disabled {
+        opacity: 0.45;
+      }
+      .status-strip {
+        border: 1px solid #334139;
+        background: #19221f;
+        border-radius: 9px;
+        min-height: 55px;
+        padding: 12px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 22px;
+      }
+      .status-strip .row {
+        min-width: 0;
+      }
+      .status-strip .mono {
+        overflow-wrap: anywhere;
+        font-size: 13px;
+      }
+      .status-strip small {
+        font-size: 11px;
+      }
+      .sep {
+        height: 17px;
+        width: 1px;
+        background: #3b4a43;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+        margin: 0 0 22px;
+      }
+      .stat {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 19px 20px;
+        min-width: 0;
+      }
+      .stat.featured {
+        background: #1c2826;
+        border-color: #3d564c;
+      }
+      .stat .label {
+        color: var(--dim);
+        font-size: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .stat .value {
+        font-family: Consolas, monospace;
+        font-weight: 600;
+        font-size: 32px;
+        letter-spacing: -1px;
+        margin: 9px 0;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+      }
+      .stat.featured .value {
+        color: #aff0d8;
+      }
+      .stat .value small {
+        font-size: 12px;
+        font-weight: 400;
+        letter-spacing: 0;
+        margin-left: 6px;
+      }
+      .stat .foot {
+        font-size: 11px;
+        color: var(--dim);
+      }
+      .analytics,
+      .bottom-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 320px;
+        gap: 20px;
+        margin-bottom: 20px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 11px;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .panel-head {
+        padding: 20px 22px 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .panel-head p {
+        color: var(--dim);
+        font-size: 11px;
+        margin-top: 3px;
+      }
+      .panel-body {
+        padding: 20px 22px;
+      }
+      .chart-switch {
+        display: flex;
+        gap: 3px;
+        background: var(--soft);
+        border: 1px solid var(--border);
+        padding: 3px;
+        border-radius: 7px;
+      }
+      .chart-switch button {
+        font-size: 11px;
+        color: var(--dim);
+        background: transparent;
+        border: 0;
+        border-radius: 5px;
+        padding: 4px 10px;
+      }
+      .chart-switch button[aria-pressed="true"] {
+        color: var(--accent);
+        background: var(--accent-bg);
+      }
+      #throughput {
+        display: block;
+        width: 100%;
+        height: 176px;
+      }
+      .chart-note {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        color: var(--dim);
+        font-size: 11px;
+        margin-top: 12px;
+      }
+      .number {
+        font-family: Consolas, monospace;
+        font-size: 32px;
+        line-height: 1.3;
+      }
+      .number small {
+        font-family: "Segoe UI", sans-serif;
+        font-size: 12px;
+      }
+      .capacity {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin: 19px 0;
+      }
+      .capacity > div {
+        padding: 11px 13px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--soft);
+      }
+      .capacity strong {
+        font:
+          22px Consolas,
+          monospace;
+        display: block;
+        margin-top: 3px;
+      }
+      .capacity small {
+        font-size: 11px;
+      }
+      .summary-line {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 14px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+      }
+      .summary-line > span {
+        color: var(--dim);
+      }
+      .summary-line strong {
+        font-weight: 500;
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
+      .summary-line:last-child {
+        border-bottom: 0;
+      }
+      .acceptance {
+        padding-top: 17px;
+        font-size: 12px;
+      }
+      .bar {
+        height: 7px;
+        border-radius: 5px;
+        background: #2b353d;
+        overflow: hidden;
+        margin: 10px 0;
+      }
+      .bar > i {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+      }
+      .table-wrap {
+        overflow: auto;
+        max-width: 100%;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12px;
+      }
+      th {
+        font-weight: 400;
+        color: var(--dim);
+        text-align: left;
+        white-space: nowrap;
+        font-size: 11px;
+      }
+      td,
+      th {
+        padding: 13px 18px;
+        border-bottom: 1px solid var(--border);
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      td small {
+        font-size: 11px;
+      }
+      .requests {
+        min-width: 680px;
+        margin-top: 14px;
+      }
+      .requests tbody tr:hover {
+        background: #202a31;
+      }
+      .requests .r-id {
+        display: block;
+        color: var(--dim);
+        font-size: 10px;
+        margin-top: 3px;
+      }
+      .requests .detail-btn {
+        padding: 4px 10px;
+        min-height: 30px;
+        border: 0;
+        background: transparent;
+        color: var(--dim);
+        border-radius: 5px;
+      }
+      .requests .detail-btn:hover {
+        color: var(--accent);
+        background: var(--accent-bg);
+      }
+      .table-footer {
+        border-top: 1px solid var(--border);
+        padding: 12px 20px;
+        color: var(--dim);
+        font-size: 11px;
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .empty {
+        padding: 34px 20px;
+        text-align: center;
+        color: var(--dim);
+        font-size: 13px;
+      }
+      .page-footer {
+        display: flex;
+        justify-content: space-between;
+        color: var(--dim);
+        font-size: 11px;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 24px;
+      }
+      .errmsg {
+        display: none;
+        color: var(--err);
+        background: #302024;
+        border: 1px solid #684047;
+        padding: 11px 15px;
+        border-radius: 7px;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+        margin: 12px 0;
+      }
+      .errmsg.show {
+        display: block;
+      }
+      .stale {
+        opacity: 0.55;
+      }
+      .notice {
+        padding: 12px 16px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        color: var(--dim);
+        font-size: 12px;
+        margin-bottom: 20px;
+        background: var(--soft);
+      }
+      .notice strong {
+        color: var(--fg);
+        font-weight: 500;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+      .cell {
+        background: var(--soft);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+      }
+      .cell .k,
+      .cell .s {
+        font-size: 11px;
+        color: var(--dim);
+      }
+      .cell .v {
+        font-size: 22px;
+        line-height: 1.5;
+      }
+      .secondary-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 20px;
+      }
+      .help p {
+        margin-top: 17px;
+        color: var(--dim);
+        font-size: 12px;
+      }
+      .help strong {
+        color: var(--fg);
+        font-weight: 500;
+      }
+      .ovr {
+        min-width: 690px;
+      }
+      .ovr td {
+        vertical-align: middle;
+      }
+      .ovr td.note {
+        max-width: 310px;
+        min-width: 210px;
+        font-size: 11px;
+      }
+      .ovr input,
+      .ovr select {
+        width: 130px;
+      }
+      .ovr .on td:first-child {
+        color: var(--warn);
+      }
+      .ovr .def td:first-child {
+        color: var(--accent);
+      }
+      .save-bar {
+        padding: 18px 22px;
+        border-top: 1px solid var(--border);
+        background: var(--panel);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .save-bar small {
+        flex-basis: 100%;
+      }
+      #ovr-status,
+      #chat-status {
+        font-size: 12px;
+        color: var(--dim);
+      }
+      #ovr-meta {
+        overflow-wrap: anywhere;
+      }
+      .cparams {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .cparams label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        color: var(--dim);
+        font-size: 11px;
+      }
+      .cparams input,
+      .cparams select {
+        width: 100%;
+      }
+      #c-log {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        max-height: 65vh;
+        overflow: auto;
+        scrollbar-gutter: stable;
+      }
+      .msg {
+        background: var(--soft);
+        border: 1px solid var(--border);
+        padding: 16px;
+        border-radius: 9px;
+        min-width: 0;
+      }
+      .msg.user {
+        border-color: #3e574c;
+        background: #1b2923;
+      }
+      .msg .role {
+        font-size: 11px;
+        color: var(--accent);
+        margin-bottom: 6px;
+      }
+      .msg .body,
+      .msg .think {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .msg .think {
+        color: var(--dim);
+        border-left: 2px solid #51655c;
+        padding-left: 12px;
+        margin: 10px 0;
+        font-size: 12px;
+      }
+      .msg .stat {
+        font-size: 11px;
+        color: var(--dim);
+        margin-top: 10px;
+      }
+      .msg .ovr-note {
+        font-size: 11px;
+        color: var(--warn);
+      }
+      .chat-empty {
+        min-height: 260px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        text-align: center;
+        gap: 10px;
+        color: var(--dim);
+      }
+      .chat-empty .icon {
+        width: 32px;
+        height: 32px;
+        color: var(--accent);
+        margin-bottom: 8px;
+      }
+      .chat-empty p {
+        font-size: 12px;
+        max-width: 350px;
+      }
+      .chat-compose {
+        padding-top: 20px;
+      }
+      .chat-compose textarea {
+        min-height: 106px;
+      }
+      details {
+        margin-top: 14px;
+      }
+      summary {
+        cursor: pointer;
+        color: var(--dim);
+        font-size: 12px;
+      }
+      pre {
+        font-size: 12px;
+        background: var(--soft);
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 420px;
+      }
+      #c-system {
+        margin-top: 7px;
+      }
+      .hero {
+        display: flex;
+        align-items: baseline;
+        gap: 20px;
+        flex-wrap: wrap;
+        margin: 0 0 22px;
+      }
+      .hero .num {
+        font:
+          38px Consolas,
+          monospace;
+        color: var(--accent);
+      }
+      .hero .lab {
+        font-size: 12px;
+        color: var(--dim);
+      }
+      .barlab,
+      .legend {
+        display: flex;
+        gap: 15px;
+        justify-content: space-between;
+        font-size: 11px;
+        color: var(--dim);
+      }
+      .legend {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+      }
+      .legend i {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-right: 5px;
+        border-radius: 3px;
+      }
+      #spark {
+        width: 100%;
+        height: 180px;
+        display: block;
+        margin: 22px 0 12px;
+      }
+      .memory-grid {
+        margin-top: 24px;
+      }
+      .drawer {
+        position: fixed;
+        inset: 0 0 0 auto;
+        width: min(480px, 100%);
+        max-width: 100%;
+        max-height: 100%;
+        height: 100%;
+        margin: 0;
+        border: 0;
+        border-left: 1px solid var(--border);
+        padding: 28px;
+        background: var(--panel);
+        color: var(--fg);
+        overflow: auto;
+      }
+      .drawer::backdrop {
+        background: #0008;
+      }
+      .drawer h2 {
+        font-size: 25px;
+        margin: 23px 0 10px;
+      }
+      .drawer .summary-line {
+        padding: 17px 0;
+      }
+      #toast {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: 90vw;
+        padding: 11px 20px;
+        border: 1px solid #4b645b;
+        background: #263a31;
+        box-shadow: 0 8px 30px #0006;
+        border-radius: 8px;
+        z-index: 20;
+        font-size: 13px;
+        overflow-wrap: anywhere;
+      }
+      .skip {
+        position: fixed;
+        top: -80px;
+        left: 12px;
+        padding: 10px;
+        background: var(--panel);
+        z-index: 99;
+      }
+      .skip:focus {
+        top: 8px;
+      }
+      .analytics > *,
+      .bottom-grid > *,
+      .secondary-grid > * {
+        min-width: 0;
+      }
+      @media (min-width: 1600px) {
+        .analytics,
+        .bottom-grid {
+          grid-template-columns: minmax(0, 1fr) 360px;
+        }
+        .stat .value {
+          font-size: 36px;
+        }
+      }
+      @media (max-width: 1150px) {
+        .sidebar {
+          width: 74px;
+          padding: 24px 10px;
+        }
+        .brand {
+          padding: 0 8px 30px;
+        }
+        .brand > span,
+        .nav-caption,
+        .nav a span,
+        .sidebar-bottom {
+          display: none;
+        }
+        .nav a {
+          justify-content: center;
+          padding: 13px 0;
+        }
+        .shell {
+          margin-left: 74px;
+        }
+        .main {
+          padding: 24px;
+        }
+        .topbar {
+          padding: 14px 24px;
+        }
+        .stats {
+          gap: 12px;
+        }
+        .stat {
+          padding: 16px;
+        }
+        .stat .value {
+          font-size: 27px;
+        }
+        .analytics,
+        .bottom-grid {
+          grid-template-columns: minmax(0, 1fr) 290px;
+        }
+        .secondary-grid {
+          grid-template-columns: minmax(0, 1fr) 270px;
+        }
+      }
+      @media (max-width: 850px) {
+        .analytics,
+        .bottom-grid,
+        .secondary-grid {
+          grid-template-columns: 1fr;
+        }
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .cparams {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .status-strip {
+          flex-wrap: wrap;
+        }
+        .section-title .meta {
+          display: block;
+          text-align: right;
+        }
+        .stats {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      @media (max-width: 600px) {
+        .sidebar {
+          position: static;
+          width: 100%;
+          padding: 0;
+          display: block;
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+        }
+        .brand {
+          display: none;
+        }
+        .nav {
+          flex-direction: row;
+          gap: 0;
+          overflow: auto;
+          padding: 0 8px;
+        }
+        .nav a {
+          padding: 13px 12px;
+          font-size: 12px;
+          border-radius: 0;
+          min-height: 46px;
+        }
+        .nav a span {
+          display: block;
+        }
+        .nav .icon {
+          display: none;
+        }
+        .shell {
+          margin-left: 0;
+        }
+        .topbar {
+          padding: 12px 18px;
+          min-height: 60px;
+        }
+        .topbar .btn-label {
+          display: none;
+        }
+        .main {
+          padding: 23px 18px;
+        }
+        .section-title {
+          align-items: flex-start;
+          gap: 10px;
+          margin-bottom: 20px;
+        }
+        .section-title h1 {
+          font-size: 25px;
+        }
+        .section-title p {
+          font-size: 12px;
+          max-width: 205px;
+        }
+        .section-title > .row {
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 6px;
+        }
+        .section-title select {
+          max-width: 125px;
+          font-size: 12px;
+        }
+        .section-title .meta {
+          font-size: 10px;
+          max-width: 125px;
+        }
+        .status-strip {
+          padding: 12px;
+        }
+        .status-strip .sep {
+          display: none;
+        }
+        .stats {
+          gap: 10px;
+        }
+        .stat {
+          padding: 15px 12px;
+        }
+        .stat .value {
+          font-size: 27px;
+        }
+        .stat .value small {
+          font-size: 10px;
+        }
+        .stat .label {
+          font-size: 11px;
+        }
+        .stat .label .icon {
+          display: none;
+        }
+        .stat .foot {
+          font-size: 10px;
+        }
+        .panel-head {
+          padding: 18px 17px 0;
+        }
+        .panel-body {
+          padding: 18px 17px;
+        }
+        .request-head > div:first-child {
+          flex-basis: 100%;
+        }
+        .table-footer {
+          padding: 12px 17px;
+        }
+        .grid {
+          gap: 10px;
+        }
+        .cell {
+          padding: 12px;
+        }
+        .cell .v {
+          font-size: 18px;
+        }
+        .hero .num {
+          font-size: 32px;
+        }
+        .cparams {
+          grid-template-columns: 1fr 1fr;
+        }
+        .save-bar {
+          padding: 16px;
+        }
+        .page-footer {
+          font-size: 10px;
+        }
+        .drawer {
+          padding: 22px;
+        }
+        .ovr-key {
+          width: 100%;
+        }
+        .chart-note {
+          font-size: 10px;
+        }
+        .crumb {
+          font-size: 11px;
+        }
+        .crumb b {
+          margin-left: 6px;
+        }
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        button,
+        a {
+          transition:
+            background 0.15s,
+            color 0.15s;
+        }
+        .drawer[open] {
+          animation: slide 0.18s ease-out;
+        }
+        @keyframes slide {
+          from {
+            transform: translateX(20px);
+            opacity: 0.5;
+          }
+          to {
+            transform: none;
+            opacity: 1;
+          }
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#content">跳转到内容</a>
+    <aside class="sidebar">
+      <a class="brand" href="#overview"
+        ><div class="brand-mark" data-icon="chip"></div>
+        <span><strong>gfx1151</strong><small>ENGINE CONSOLE</small></span></a
+      >
+      <div class="nav-caption">工作空间</div>
+      <nav class="nav" aria-label="控制台导航">
+        <a href="#overview" data-page="overview" title="运行总览"
+          ><i data-icon="grid"></i><span>运行总览</span></a
+        >
+        <a href="#requests" data-page="requests" title="请求记录"
+          ><i data-icon="list"></i><span>请求记录</span></a
+        >
+        <a href="#settings" data-page="settings" title="参数设置"
+          ><i data-icon="tune"></i><span>参数设置</span></a
+        >
+        <a href="#chat" data-page="chat" title="对话测试"
+          ><i data-icon="chat"></i><span>对话测试</span></a
+        >
+        <a href="#memory" data-page="memory" title="内存资源"
+          ><i data-icon="chip"></i><span>内存资源</span></a
+        >
+      </nav>
+      <div class="sidebar-bottom">
+        <span id="conn" class="chip">连接中…</span
+        ><span id="target" class="mono"></span>
+        <p style="margin-top: 12px">本地推理 · 同源访问</p>
       </div>
-      <div class="barlab"><span>HIP 显存已用</span><span class="mono" id="m-hip-pct"></span></div>
-      <div class="bar"><i id="m-hip-bar" style="width:0%"></i></div>
-      <div class="barlab"><span id="m-hip-used"></span><span id="m-hip-total"></span></div>
-      <div class="grid" id="mem-grid"></div>
-      <canvas id="spark"></canvas>
-      <div class="legend">
-        <span><i style="background:var(--c-committed)"></i>committed</span>
-        <span><i style="background:var(--c-rss)"></i>进程 RSS</span>
-        <span>最近 10 分钟（每 10 秒一个采样点）</span>
-      </div>
+    </aside>
+    <div class="shell">
+      <header class="topbar">
+        <div class="crumb">
+          控制台 <span aria-hidden="true">/</span
+          ><b id="page-label">运行总览</b>
+        </div>
+        <div class="row">
+          <button class="btn" id="pause" aria-pressed="false">
+            <i data-icon="pause"></i><span>暂停刷新</span></button
+          ><button
+            class="btn"
+            id="copy-api"
+            title="复制 API 地址"
+            aria-label="复制 API 地址"
+          >
+            <i data-icon="copy"></i><span class="btn-label">复制 API 地址</span>
+          </button>
+        </div>
+      </header>
+      <main class="main" id="content" tabindex="-1">
+        <div class="section-title">
+          <div>
+            <h1 id="page-title">运行总览</h1>
+            <p id="page-description">查看服务状态、推理表现与最近请求。</p>
+          </div>
+          <div class="row">
+            <select id="reqs-range" aria-label="统计时间范围">
+              <option value="1">今天（UTC）</option>
+              <option value="7">近 7 天（UTC）</option>
+              <option value="0">全部历史</option></select
+            ><span class="meta" id="refresh-meta">等待数据</span>
+          </div>
+        </div>
+        <div id="health-err" class="errmsg" role="status"></div>
+        <div id="reqs-err" class="errmsg" role="status"></div>
+        <section data-view="overview" id="overview">
+          <div class="status-strip" id="health-data">
+            <div class="row">
+              <span class="chip" id="h-status">连接中…</span
+              ><span class="sep"></span
+              ><strong class="mono" id="h-model">等待模型信息</strong>
+            </div>
+            <small id="health-meta">状态来自 API 进程</small>
+          </div>
+          <div class="stats" id="reqs-grid">
+            <article class="stat">
+              <div class="label">请求总数<i data-icon="list"></i></div>
+              <div class="value">
+                <span id="s-requests">—</span><small>次</small>
+              </div>
+              <div class="foot" id="s-finish">当前统计范围</div>
+            </article>
+            <article class="stat featured">
+              <div class="label">
+                Prefill · 输入处理<i data-icon="pulse"></i>
+              </div>
+              <div class="value">
+                <span id="s-prefill">—</span><small>tok/s</small>
+              </div>
+              <div class="foot" id="s-prefill-note">不含缓存命中 token</div>
+            </article>
+            <article class="stat">
+              <div class="label">
+                Decode · 输出生成<i data-icon="arrow"></i>
+              </div>
+              <div class="value">
+                <span id="s-decode">—</span><small>tok/s</small>
+              </div>
+              <div class="foot" id="s-output">等待输出统计</div>
+            </article>
+            <article class="stat">
+              <div class="label">首字延迟 · P50<i data-icon="clock"></i></div>
+              <div class="value" id="s-ttft">—</div>
+              <div class="foot" id="s-p95">P95 · 等待流式记录</div>
+            </article>
+          </div>
+          <div class="analytics">
+            <section class="panel" id="trend-panel">
+              <div class="panel-head">
+                <div>
+                  <h2>吞吐表现</h2>
+                  <p>最近已记录请求 · 逐次实测</p>
+                </div>
+                <div class="chart-switch" role="group" aria-label="吞吐图指标">
+                  <button data-chart="prefill" aria-pressed="true">
+                    Prefill</button
+                  ><button data-chart="decode" aria-pressed="false">
+                    Decode
+                  </button>
+                </div>
+              </div>
+              <div class="panel-body">
+                <canvas
+                  id="throughput"
+                  role="img"
+                  aria-label="请求吞吐趋势"
+                ></canvas>
+                <div class="chart-note">
+                  <span id="chart-note">等待请求记录</span
+                  ><span>tok/s · 时间 UTC</span>
+                </div>
+              </div>
+            </section>
+            <section class="panel" id="capacity-panel">
+              <div class="panel-head">
+                <h2>并发与队列</h2>
+                <span class="chip" id="queue-status">等待数据</span>
+              </div>
+              <div class="panel-body">
+                <div class="number">
+                  <span id="h-inflight">—</span>
+                  <small>/ <span id="h-slots">—</span> 并发容量</small>
+                </div>
+                <div class="capacity">
+                  <div>
+                    <small>等待队列</small><strong id="h-queued">—</strong>
+                  </div>
+                  <div>
+                    <small>持续忙碌</small><strong id="h-busyfor">—</strong>
+                  </div>
+                </div>
+                <div class="summary-line">
+                  <span>输入 token</span
+                  ><strong class="mono" id="s-input">—</strong>
+                </div>
+                <div class="summary-line">
+                  <span>缓存命中</span
+                  ><strong class="mono" id="s-cache">—</strong>
+                </div>
+                <p class="hint" style="margin-top: 10px">
+                  API 自报状态；不代表引擎存活探测。
+                </p>
+              </div>
+            </section>
+          </div>
+          <div class="bottom-grid">
+            <div id="recent-table"></div>
+            <section class="panel" id="capabilities">
+              <div class="panel-head">
+                <h2>服务能力</h2>
+                <span class="chip">只读概览</span>
+              </div>
+              <div class="panel-body">
+                <div class="summary-line">
+                  <span>上下文上限 / 路</span
+                  ><strong class="mono" id="h-ctx">—</strong>
+                </div>
+                <div class="summary-line">
+                  <span>工具调用</span><strong id="h-tools">—</strong>
+                </div>
+                <div class="summary-line">
+                  <span>图像输入上限</span><strong id="h-vision">—</strong>
+                </div>
+                <div class="summary-line">
+                  <span>参数覆盖</span><a href="#settings" id="h-ovr">—</a>
+                </div>
+                <div id="reqs-acc" class="acceptance"></div>
+              </div>
+            </section>
+          </div>
+        </section>
+        <section data-view="requests" id="requests" hidden>
+          <div class="notice">
+            统计卡片汇总所选日期的全部记录。此列表与趋势图在服务器最近
+            <strong>100 条</strong
+            >记录内按日期筛选；结束原因筛选只影响列表。时间均为 UTC。
+          </div>
+          <div id="all-table"></div>
+        </section>
+        <section data-view="settings" id="settings" hidden>
+          <div class="notice">
+            <strong>服务端参数覆盖</strong> · 保存后立即影响后续请求，适用于
+            Chat Completions、Responses 和
+            Completions。思考参数仅适用于对话模板。这里不修改引擎的计算精度配置。
+          </div>
+          <div class="secondary-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>采样与思考</h2>
+                <span class="chip" id="ovr-count">等待配置</span>
+              </div>
+              <div class="table-wrap" style="margin-top: 16px">
+                <table class="ovr">
+                  <thead>
+                    <tr>
+                      <th>参数</th>
+                      <th>覆盖模式</th>
+                      <th>值</th>
+                      <th>说明</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ovr-body"></tbody>
+                </table>
+              </div>
+              <div class="save-bar">
+                <input
+                  id="ovr-key"
+                  type="password"
+                  autocomplete="off"
+                  aria-label="管理密钥"
+                  placeholder="管理密钥 (GDEC_API_ADMIN_KEY)"
+                  style="display: none"
+                /><button id="ovr-save" class="btn primary" disabled>
+                  保存并立即生效</button
+                ><button id="ovr-reload" class="btn">重新读取</button
+                ><button id="ovr-clear" class="btn" disabled>跟随客户端</button
+                ><small id="ovr-status" role="status">尚未读取</small>
+              </div>
+              <div class="panel-body" style="padding-top: 0">
+                <div class="errmsg" id="ovr-err" role="alert"></div>
+                <div class="hint mono" id="ovr-meta"></div>
+              </div>
+            </section>
+            <aside class="panel help">
+              <div class="panel-body">
+                <h2>覆盖规则</h2>
+                <p><strong>跟随客户端</strong><br />不干预请求中的参数。</p>
+                <p><strong>默认值</strong><br />仅在客户端没有传值时补齐。</p>
+                <p>
+                  <strong>强制覆盖</strong><br />替换客户端传入的值。max_tokens
+                  的强制模式是上限，较小的客户端值仍保留。
+                </p>
+                <p>
+                  响应头 X-Gdec-Overrides
+                  会列出被改写的字段；对话测试中可直接查看。
+                </p>
+                <p>管理密钥只保留在当前页面，不写入浏览器存储。</p>
+              </div>
+            </aside>
+          </div>
+        </section>
+        <section data-view="chat" id="chat" hidden>
+          <div class="secondary-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>对话测试</h2>
+                <span class="chip">流式输出</span>
+              </div>
+              <div class="panel-body">
+                <div class="chat-empty" id="chat-empty">
+                  <i data-icon="chat"></i>
+                  <h2>验证一次真实的使用体验</h2>
+                  <p>
+                    思考过程、回答正文和耗时分别展示。请求使用当前模型，并受服务端参数覆盖规则影响。
+                  </p>
+                </div>
+                <div id="c-log" aria-label="对话记录"></div>
+                <div class="chat-compose">
+                  <label class="hint" for="c-input">测试消息</label
+                  ><textarea
+                    id="c-input"
+                    rows="3"
+                    placeholder="输入消息，Ctrl / ⌘ + Enter 发送"
+                  ></textarea>
+                  <div class="row" style="margin-top: 12px">
+                    <button id="c-send" class="btn primary">发送消息</button
+                    ><button id="c-stop" class="btn" disabled>停止</button
+                    ><button id="c-clear" class="btn">清空对话</button
+                    ><span id="chat-status" role="status"></span>
+                  </div>
+                  <div class="errmsg" id="chat-err" role="alert"></div>
+                </div>
+              </div>
+            </section>
+            <aside class="panel">
+              <div class="panel-head"><h2>本次请求参数</h2></div>
+              <div class="panel-body">
+                <p class="hint" style="margin-bottom: 16px">
+                  留空表示不传，使用服务端默认值。并发已满时请求会排队。
+                </p>
+                <div class="cparams">
+                  <label
+                    >思考开关<select id="c-think">
+                      <option value="">不传</option>
+                      <option value="true">开</option>
+                      <option value="false">关</option>
+                    </select></label
+                  ><label
+                    >思考强度<select id="c-effort">
+                      <option value="">不传</option>
+                      <option>low</option>
+                      <option>medium</option>
+                      <option>xhigh</option>
+                    </select></label
+                  >
+                  <label
+                    >temperature<input
+                      id="c-temp"
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      placeholder="不传" /></label
+                  ><label
+                    >top_p<input
+                      id="c-topp"
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      placeholder="不传" /></label
+                  ><label
+                    >top_k<input
+                      id="c-topk"
+                      type="number"
+                      min="0"
+                      max="2147483647"
+                      step="1"
+                      placeholder="不传" /></label
+                  ><label
+                    >min_p<input
+                      id="c-minp"
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      placeholder="不传" /></label
+                  ><label
+                    >presence_penalty<input
+                      id="c-pres"
+                      type="number"
+                      min="-2"
+                      max="2"
+                      step="0.1"
+                      placeholder="不传" /></label
+                  ><label
+                    >max_tokens<input
+                      id="c-max"
+                      type="number"
+                      min="1"
+                      max="2147483647"
+                      step="1"
+                      placeholder="不传" /></label
+                  ><label
+                    >seed<input
+                      id="c-seed"
+                      type="number"
+                      min="0"
+                      max="2147483647"
+                      step="1"
+                      placeholder="随机"
+                  /></label>
+                </div>
+                <details>
+                  <summary>System 提示词</summary>
+                  <textarea
+                    id="c-system"
+                    rows="5"
+                    aria-label="System 提示词"
+                    placeholder="可选的系统提示词"
+                  ></textarea>
+                </details>
+                <p class="hint" style="margin-top: 17px">
+                  首 token 耗时在浏览器端测量，包含排队和网络时间。
+                </p>
+              </div>
+            </aside>
+          </div>
+        </section>
+        <section data-view="memory" id="memory" hidden>
+          <div class="notice">
+            此页仅在 API 空闲且页面可见时每 10
+            秒尝试采样。查询会使用引擎槽位；推理忙碌时跳过。<strong
+              >记账值不等于物理驻留，UMA 共享内存不能视为独立显存。</strong
+            >
+          </div>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>内存资源</h2>
+              <span class="hint" id="mem-meta">尚未采样</span>
+            </div>
+            <div class="panel-body">
+              <div id="mem-data">
+                <div class="hero">
+                  <span class="num mono" id="m-hero">—</span
+                  ><span class="lab"
+                    >GPU 可访问记账 · committed<br /><span
+                      id="m-accounting"
+                    ></span
+                  ></span>
+                </div>
+                <div class="barlab">
+                  <span>HIP 报告已用</span><span id="m-hip-pct"></span>
+                </div>
+                <div class="bar"><i id="m-hip-bar" style="width: 0%"></i></div>
+                <div class="barlab">
+                  <span id="m-hip-used">等待数据</span
+                  ><span id="m-hip-total"></span>
+                </div>
+                <div class="grid memory-grid" id="mem-grid"></div>
+                <canvas
+                  id="spark"
+                  role="img"
+                  aria-label="内存采样趋势"
+                ></canvas>
+                <div class="legend">
+                  <span
+                    ><i style="background: var(--c-committed)"></i>GPU
+                    committed</span
+                  ><span><i style="background: var(--c-rss)"></i>进程 RSS</span
+                  ><span>最近 60 次采样 · 按采样顺序</span>
+                </div>
+              </div>
+              <div id="mem-err" class="errmsg" role="status"></div>
+              <details>
+                <summary>原始状态数据</summary>
+                <pre id="raw-health">等待健康状态</pre>
+                <pre id="raw-mem">尚未采样</pre>
+              </details>
+            </div>
+          </section>
+        </section>
+        <footer class="page-footer">
+          <span>gfx1151 engine · 本地控制台</span
+          ><span id="poll-state">API 状态每 2 秒 · 请求统计每 10 秒</span>
+        </footer>
+      </main>
     </div>
-    <div class="errmsg" id="mem-err"></div>
-    <details><summary>原始 JSON（/health 与 /memory）</summary>
-      <pre id="raw-health">-</pre>
-      <pre id="raw-mem">-</pre>
-    </details>
-  </section>
-</main>
-<script>
-"use strict";
-const HEALTH_MS = 2000;   // /health 轮询间隔
-const MEM_MS    = 10000;  // /memory 轮询间隔（查询占用推理槽位，勿低于 ~1 秒）
-const TIMEOUT_MS = 5000;
-const HIST_CAP = 60;      // 60 点 * 10s = 10 分钟趋势
+    <dialog class="drawer" id="request-detail" aria-labelledby="detail-title">
+      <div class="between">
+        <span class="eyebrow">REQUEST DETAIL</span
+        ><button id="detail-close" class="btn" aria-label="关闭详情">
+          关闭 <span aria-hidden="true">×</span>
+        </button>
+      </div>
+      <h2 id="detail-title">请求详情</h2>
+      <div id="detail-body"></div>
+    </dialog>
+    <div id="toast" role="status" hidden></div>
 
-let paused = false;
-const hist = { committed: [], rss: [] };
-const $ = id => document.getElementById(id);
+    <script>
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+      const HEALTH_MS = 2000,
+        REQ_MS = 10000,
+        MEM_MS = 10000,
+        TIMEOUT_MS = 5000,
+        HIST_CAP = 60;
+      let paused = false,
+        page = "overview",
+        health = null,
+        healthAt = 0,
+        reqAt = 0,
+        memAt = 0;
+      let records = [],
+        summary = null,
+        chartMetric = "prefill",
+        reasonFilter = "all",
+        toastTimer;
+      const pending = { health: false, reqs: false, memory: false };
+      const hist = { committed: [], rss: [] };
+      const icons = {
+        chip: '<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
+        grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+        list: '<path d="M8 5h13M8 12h13M8 19h13M3 5h.01M3 12h.01M3 19h.01"/>',
+        tune: '<path d="M4 6h7m4 0h5M4 12h2m4 0h10M4 18h10m4 0h2"/><circle cx="13" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/>',
+        chat: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0Z"/><path d="M7 10h8m-8 4h5"/>',
+        pulse: '<path d="M2 12h4l3-8 5 16 3-8h5"/>',
+        arrow: '<path d="M5 16 19 6M8 6h11v11"/>',
+        clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+        pause: '<path d="M9 5v14M15 5v14"/>',
+        copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4"/>',
+      };
+      document.querySelectorAll("[data-icon]").forEach((el) => {
+        el.innerHTML =
+          '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">' +
+          icons[el.dataset.icon] +
+          "</svg>";
+      });
+      function txt(id, value) {
+        $(id).textContent = value;
+      }
+      function node(tag, text, cls) {
+        const n = document.createElement(tag);
+        if (text != null) n.textContent = text;
+        if (cls) n.className = cls;
+        return n;
+      }
+      function finite(x) {
+        return typeof x === "number" && Number.isFinite(x);
+      }
+      function fmtTok(x) {
+        return finite(x) ? x.toLocaleString("en-US") : "—";
+      }
+      function fmtRate(x) {
+        return finite(x)
+          ? x.toLocaleString("en-US", {
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1,
+            })
+          : "—";
+      }
+      function fmtPct(x) {
+        return finite(x) ? (x * 100).toFixed(1) + "%" : "—";
+      }
+      function fmtMs(x) {
+        return finite(x)
+          ? x >= 1000
+            ? (x / 1000).toFixed(2) + " s"
+            : Math.round(x) + " ms"
+          : "—";
+      }
+      function fmtBytes(n) {
+        if (!finite(n)) return "—";
+        const g = 1073741824,
+          m = 1048576,
+          k = 1024;
+        return Math.abs(n) >= g
+          ? (n / g).toFixed(2) + " GiB"
+          : Math.abs(n) >= m
+            ? (n / m).toFixed(1) + " MiB"
+            : Math.abs(n) >= k
+              ? (n / k).toFixed(1) + " KiB"
+              : n + " B";
+      }
+      function hhmmss(at = Date.now()) {
+        return new Date(at).toLocaleTimeString("zh-CN", { hour12: false });
+      }
+      function utc(at) {
+        return finite(at)
+          ? new Date(at).toISOString().replace("T", " ").slice(0, 19)
+          : "—";
+      }
+      function setChip(el, cls, text) {
+        el.className = "chip " + cls;
+        el.textContent = text;
+      }
+      function errText(j, status) {
+        return j?.error?.message || j?.error?.type || "HTTP " + status;
+      }
+      async function grab(url, opts) {
+        const c = new AbortController(),
+          t = setTimeout(() => c.abort(), TIMEOUT_MS);
+        try {
+          const r = await fetch(url, {
+            cache: "no-store",
+            ...opts,
+            signal: c.signal,
+          });
+          let j;
+          try {
+            j = await r.json();
+          } catch {
+            throw new Error("服务返回了无效 JSON（HTTP " + r.status + "）");
+          }
+          if (!r.ok) {
+            const e = new Error(errText(j, r.status));
+            e.status = r.status;
+            throw e;
+          }
+          if (!j || typeof j !== "object") throw new Error("服务返回了空数据");
+          return j;
+        } catch (e) {
+          if (e.name === "AbortError") throw new Error("请求超时");
+          throw e;
+        } finally {
+          clearTimeout(t);
+        }
+      }
+      function showErr(id, e) {
+        const el = $(id);
+        el.textContent = hhmmss() + " · " + e;
+        el.classList.add("show");
+      }
+      function hideErr(id) {
+        $(id).classList.remove("show");
+      }
+      function toast(message) {
+        txt("toast", message);
+        $("toast").hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => ($("toast").hidden = true), 4200);
+      }
+      const titles = {
+        overview: ["运行总览", "查看服务状态、推理表现与最近请求。"],
+        requests: ["请求记录", "从单次请求定位吞吐、延迟与结束原因。"],
+        settings: ["参数设置", "明确客户端参数与服务端覆盖的关系。"],
+        chat: ["对话测试", "在当前模型上验证真实的流式回复。"],
+        memory: ["内存资源", "分别查看记账、驻留与 HIP 内存口径。"],
+      };
+      function activatePage() {
+        const candidate = location.hash.slice(1);
+        page = titles[candidate] ? candidate : "overview";
+        document
+          .querySelectorAll("[data-view]")
+          .forEach((el) => (el.hidden = el.dataset.view !== page));
+        document.querySelectorAll("[data-page]").forEach((el) => {
+          if (el.dataset.page === page) el.setAttribute("aria-current", "page");
+          else el.removeAttribute("aria-current");
+        });
+        txt("page-label", titles[page][0]);
+        txt("page-title", titles[page][0]);
+        txt("page-description", titles[page][1]);
+        document.title = titles[page][0] + " · gfx1151 控制台";
+        $("reqs-range").hidden = !["overview", "requests"].includes(page);
+        $("reqs-err").hidden = !["overview", "requests"].includes(page);
+        updateRefreshMeta();
+        if (page === "overview" || page === "requests") {
+          tickReqs();
+          requestAnimationFrame(drawThroughput);
+        }
+        if (page === "settings" && !ovrLoaded) loadOvr();
+        if (page === "memory") {
+          tickHealth().then(tickMem);
+          requestAnimationFrame(drawSpark);
+        }
+      }
+      function updateRefreshMeta() {
+        const at = ["overview", "requests"].includes(page)
+          ? reqAt
+          : page === "memory"
+            ? memAt
+            : healthAt;
+        txt(
+          "refresh-meta",
+          (paused ? "已暂停 · " : document.hidden ? "后台暂停 · " : "") +
+            (at ? "更新于 " + hhmmss(at) : "等待数据"),
+        );
+        txt(
+          "poll-state",
+          paused
+            ? "自动刷新已暂停 · 显示最后一次数据"
+            : document.hidden
+              ? "页面在后台 · 自动刷新暂停"
+              : "API 状态每 2 秒 · 请求统计每 10 秒",
+        );
+      }
+      function pollingAllowed() {
+        return !paused && !document.hidden;
+      }
+      async function tickHealth() {
+        if (!pollingAllowed() || pending.health) return;
+        pending.health = true;
+        try {
+          health = await grab("/health");
+          healthAt = Date.now();
+          renderHealth(health);
+          hideErr("health-err");
+          ["health-data", "capacity-panel", "capabilities"].forEach((id) =>
+            $(id).classList.remove("stale"),
+          );
+          setChip($("conn"), "ok", "API 已连接");
+        } catch (e) {
+          healthAt = 0;
+          ["health-data", "capacity-panel", "capabilities"].forEach((id) =>
+            $(id).classList.add("stale"),
+          );
+          setChip($("h-status"), "err", "API 无法连接");
+          setChip($("conn"), "err", "无法连接");
+          showErr(
+            "health-err",
+            e.message + " · 保留的数据可能已过期，将自动重试",
+          );
+        } finally {
+          pending.health = false;
+          updateRefreshMeta();
+        }
+      }
+      function renderHealth(j) {
+        setChip(
+          $("h-status"),
+          j.status !== "ok" ? "err" : j.busy ? "warn" : "ok",
+          j.status !== "ok"
+            ? "API " + j.status
+            : j.busy
+              ? "API 忙碌"
+              : "API 已连接",
+        );
+        txt("h-model", j.model ?? "—");
+        txt("h-ctx", fmtTok(j.slot_ctx ?? j.context) + " token");
+        txt("h-inflight", fmtTok(j.in_flight));
+        txt("h-slots", fmtTok(j.slots));
+        txt("h-queued", fmtTok(j.queued));
+        txt(
+          "h-busyfor",
+          finite(j.busy_for_s) ? j.busy_for_s.toFixed(1) + " s" : "—",
+        );
+        setChip(
+          $("queue-status"),
+          j.queued > 0 ? "warn" : "ok",
+          j.queued > 0 ? "有请求排队" : "暂无排队",
+        );
+        txt("health-meta", "API 状态 · " + hhmmss());
+        txt(
+          "h-tools",
+          j.tool_calls?.parsed
+            ? j.tool_calls.streaming
+              ? "支持流式调用"
+              : "支持"
+            : "未报告支持",
+        );
+        txt(
+          "h-vision",
+          j.vision?.accepted
+            ? fmtTok(j.vision.max_images) + " 张"
+            : "未报告支持",
+        );
+        const count = Object.keys(j.server_overrides || {}).length;
+        txt("h-ovr", count ? count + " 项生效 →" : "跟随客户端 →");
+        txt("raw-health", JSON.stringify(j, null, 2));
+      }
+      const FINISH_ZH = {
+        stop: "自然结束",
+        length: "长度上限",
+        cancel: "取消 / 断开",
+        error: "错误",
+        other: "其他",
+      };
+      function finZh(x) {
+        return FINISH_ZH[x] || String(x ?? "其他");
+      }
+      function reasonChip(x) {
+        const e = node("span", finZh(x));
+        setChip(
+          e,
+          x === "stop"
+            ? "ok"
+            : x === "length" || x === "cancel"
+              ? "warn"
+              : x === "error"
+                ? "err"
+                : "",
+          finZh(x),
+        );
+        return e;
+      }
+      function rangeBounds() {
+        const value = $("reqs-range").value;
+        if (value === "0") return { from: 0, to: Infinity, q: "" };
+        const today = new Date().toISOString().slice(0, 10);
+        const to = Date.parse(today) + 86400000;
+        const from = to - Number(value) * 86400000;
+        return {
+          from,
+          to,
+          q:
+            "?from=" +
+            new Date(from).toISOString().slice(0, 10) +
+            "&to=" +
+            today,
+        };
+      }
+      function scopedRecords() {
+        const b = rangeBounds();
+        return records
+          .filter((r) => r.ts_ms >= b.from && r.ts_ms < b.to)
+          .sort((a, b) => b.ts_ms - a.ts_ms || b.req_seq - a.req_seq);
+      }
+      function prefillRate(r) {
+        const n = r.prompt_tokens - r.cached_tokens;
+        return n > 0 && r.prefill_ms > 0 ? (n * 1000) / r.prefill_ms : null;
+      }
+      function decodeRate(r) {
+        return r.output_tokens > 0 && r.decode_ms > 0
+          ? (r.output_tokens * 1000) / r.decode_ms
+          : null;
+      }
+      async function tickReqs() {
+        if (
+          !pollingAllowed() ||
+          pending.reqs ||
+          !["overview", "requests"].includes(page)
+        )
+          return;
+        pending.reqs = true;
+        const q = rangeBounds().q;
+        try {
+          const [s, t] = await Promise.all([
+            grab("/reqstat/summary" + q),
+            grab("/reqstat/tail?n=100"),
+          ]);
+          if (q !== rangeBounds().q) return;
+          if (!Array.isArray(t.records)) throw new Error("请求记录格式无效");
+          summary = s;
+          records = t.records;
+          reqAt = Date.now();
+          renderReqSummary(s);
+          renderTables();
+          drawThroughput();
+          hideErr("reqs-err");
+          [
+            "reqs-grid",
+            "recent-table",
+            "all-table",
+            "trend-panel",
+            "reqs-acc",
+            "s-input",
+            "s-cache",
+          ].forEach((id) => $(id).classList.remove("stale"));
+          if (s.bad_crc || t.bad_crc)
+            showErr("reqs-err", "部分损坏记录已跳过，统计可能不完整");
+        } catch (e) {
+          [
+            "reqs-grid",
+            "recent-table",
+            "all-table",
+            "trend-panel",
+            "reqs-acc",
+            "s-input",
+            "s-cache",
+          ].forEach((id) => $(id).classList.add("stale"));
+          showErr("reqs-err", e.message + " · 统计未更新，保留上次数据");
+        } finally {
+          pending.reqs = false;
+          updateRefreshMeta();
+          if (q !== rangeBounds().q) tickReqs();
+        }
+      }
+      function renderReqSummary(j) {
+        txt("s-requests", fmtTok(j.requests));
+        txt("s-prefill", fmtRate(j.prefill_tok_per_s));
+        txt("s-decode", fmtRate(j.decode_tok_per_s));
+        txt("s-input", fmtTok(j.input_tokens));
+        txt("s-cache", fmtPct(j.cache_hit_rate));
+        txt(
+          "s-finish",
+          Object.entries(j.finish || {})
+            .filter(([, n]) => n > 0)
+            .map(([k, n]) => finZh(k) + " " + fmtTok(n))
+            .join(" · ") || "暂无请求记录",
+        );
+        txt(
+          "s-prefill-note",
+          "处理 " + (j.prefill_seconds || 0).toFixed(1) + " s · 已剔除缓存命中",
+        );
+        txt(
+          "s-output",
+          "输出 " +
+            fmtTok(j.output_tokens) +
+            " token · " +
+            (j.decode_seconds || 0).toFixed(1) +
+            " s",
+        );
+        const ttft = j.ttft?.p50_ms;
+        const tt = $("s-ttft");
+        tt.replaceChildren();
+        if (finite(ttft)) {
+          const ms = ttft < 1000;
+          tt.append(
+            node("span", ms ? Math.round(ttft) : (ttft / 1000).toFixed(2)),
+            node("small", ms ? "ms" : "s"),
+          );
+        } else tt.textContent = "—";
+        txt(
+          "s-p95",
+          j.ttft
+            ? "P95 " +
+                fmtMs(j.ttft.p95_ms) +
+                " · " +
+                fmtTok(j.ttft.count) +
+                " 条流式记录"
+            : "暂无流式延迟记录",
+        );
+        const acc = $("reqs-acc");
+        acc.replaceChildren();
+        const entries = Object.entries(j.drafters || {});
+        if (!entries.length) {
+          acc.append(node("p", "暂无推测解码统计", "hint"));
+          return;
+        }
+        for (const [name, d] of entries) {
+          const line = node("div", null, "between");
+          line.append(
+            node(
+              "span",
+              name.toUpperCase() + (d.proposed > 0 ? " 接受率" : " 解码"),
+            ),
+            node(
+              "strong",
+              d.proposed > 0
+                ? fmtPct(d.acceptance)
+                : fmtRate(d.decode_tok_per_s) + " tok/s",
+              "mono",
+            ),
+          );
+          acc.append(line);
+          if (d.proposed > 0) {
+            const bar = node("div", null, "bar"),
+              fill = node("i");
+            fill.style.width =
+              Math.max(0, Math.min(100, (d.acceptance || 0) * 100)) + "%";
+            bar.append(fill);
+            acc.append(bar);
+          }
+          acc.append(
+            node(
+              "p",
+              (d.proposed > 0
+                ? fmtTok(d.accepted) +
+                  " / " +
+                  fmtTok(d.proposed) +
+                  " 草稿 token · "
+                : "") +
+                fmtTok(d.requests) +
+                " 次请求",
+              "hint",
+            ),
+          );
+        }
+      }
+      function createTable(all) {
+        const panel = node("section", null, "panel"),
+          head = node("div", null, "panel-head request-head"),
+          title = node("div");
+        title.append(
+          node("h2", all ? "请求记录" : "最近请求"),
+          node(
+            "p",
+            all
+              ? "最近 100 条内筛选 · 可展开查看完整指标"
+              : "先看结果，再展开耗时与缓存详情",
+          ),
+        );
+        head.append(title);
+        const toolbar = node("div", null, "row");
+        if (all) {
+          const select = node("select");
+          select.id = "reason-filter";
+          select.setAttribute("aria-label", "筛选结束原因");
+          for (const [v, label] of [
+            ["all", "所有结果"],
+            ...Object.entries(FINISH_ZH),
+          ]) {
+            const o = node("option", label);
+            o.value = v;
+            select.append(o);
+          }
+          select.value = reasonFilter;
+          select.onchange = () => {
+            reasonFilter = select.value;
+            renderTables();
+          };
+          toolbar.append(select);
+        } else {
+          const link = node("a", "查看全部 →", "link-btn");
+          link.href = "#requests";
+          toolbar.append(link);
+        }
+        head.append(toolbar);
+        panel.append(head);
+        const wrap = node("div", null, "table-wrap"),
+          table = node("table", null, "requests");
+        const thead = node("thead"),
+          hr = node("tr");
+        for (const x of [
+          "时间 / 类型（UTC）",
+          "结束原因",
+          "输入 → 输出",
+          "首字延迟",
+          "生成速度",
+          "详情",
+        ])
+          hr.append(node("th", x));
+        thead.append(hr);
+        table.append(thead);
+        const tb = node("tbody");
+        const filtered = scopedRecords().filter(
+            (r) => !all || reasonFilter === "all" || r.finish === reasonFilter,
+          ),
+          list = all ? filtered : filtered.slice(0, 5);
+        if (!list.length) {
+          const tr = node("tr"),
+            td = node(
+              "td",
+              reqAt ? "当前范围没有匹配记录" : "等待请求记录…",
+              "empty",
+            );
+          td.colSpan = 6;
+          tr.append(td);
+          tb.append(tr);
+        }
+        for (const r of list) {
+          const tr = node("tr"),
+            time = node("td");
+          time.append(
+            node("span", utc(r.ts_ms).slice(5), "mono"),
+            node(
+              "span",
+              String(r.drafter || "serial").toUpperCase() +
+                (r.vision ? " · 图像" : ""),
+              "r-id",
+            ),
+          );
+          const reason = node("td");
+          reason.append(reasonChip(r.finish));
+          tr.append(
+            time,
+            reason,
+            node(
+              "td",
+              fmtTok(r.prompt_tokens) + " → " + fmtTok(r.output_tokens),
+              "mono",
+            ),
+            node("td", r.ttft_ms > 0 ? fmtMs(r.ttft_ms) : "—", "mono"),
+            node(
+              "td",
+              fmtRate(decodeRate(r)) + (decodeRate(r) != null ? " tok/s" : ""),
+              "mono",
+            ),
+          );
+          const td = node("td"),
+            btn = node("button", "→", "detail-btn");
+          btn.setAttribute("aria-label", "查看请求 " + r.req_seq + " 详情");
+          btn.dataset.recordKey = r.ts_ms + "-" + r.req_seq;
+          btn.onclick = () => showDetail(r);
+          td.append(btn);
+          tr.append(td);
+          tb.append(tr);
+        }
+        table.append(tb);
+        wrap.append(table);
+        panel.append(wrap);
+        const foot = node("div", null, "table-footer");
+        foot.append(
+          node(
+            "span",
+            "显示 " +
+              list.length +
+              " 条 · 范围内最近记录 " +
+              filtered.length +
+              " 条",
+          ),
+          node("span", "长度上限 ≠ 执行失败"),
+        );
+        panel.append(foot);
+        return panel;
+      }
+      function renderTables() {
+        if ($("request-detail").open) return;
+        const active = document.activeElement,
+          filterFocused = active?.id === "reason-filter",
+          recordKey = active?.dataset.recordKey;
+        for (const [id, all] of [
+          ["recent-table", false],
+          ["all-table", true],
+        ]) {
+          const left = $(id).querySelector(".table-wrap")?.scrollLeft || 0;
+          $(id).replaceChildren(createTable(all));
+          $(id).querySelector(".table-wrap").scrollLeft = left;
+        }
+        if (filterFocused) $("reason-filter")?.focus();
+        if (recordKey) {
+          const container =
+            page === "overview" ? $("recent-table") : $("all-table");
+          Array.from(container.querySelectorAll("[data-record-key]"))
+            .find((b) => b.dataset.recordKey === recordKey)
+            ?.focus();
+        }
+      }
+      function detailLine(label, value) {
+        const line = node("div", null, "summary-line");
+        line.append(node("span", label), node("strong", value, "mono"));
+        return line;
+      }
+      function showDetail(r) {
+        $("request-detail").dataset.returnKey =
+          document.activeElement?.dataset.recordKey || "";
+        $("request-detail").dataset.returnView = page;
+        const body = $("detail-body");
+        body.replaceChildren(reasonChip(r.finish));
+        const rows = [
+          ["时间（UTC）", utc(r.ts_ms)],
+          ["请求序号 / 起草方式", r.req_seq + " / " + r.drafter],
+          [
+            "输入 / 缓存命中",
+            fmtTok(r.prompt_tokens) + " / " + fmtTok(r.cached_tokens),
+          ],
+          ["输出 token", fmtTok(r.output_tokens)],
+          ["首字延迟", r.ttft_ms > 0 ? fmtMs(r.ttft_ms) : "未记录"],
+          [
+            "Prefill",
+            prefillRate(r) == null
+              ? r.prompt_tokens > 0 && r.prompt_tokens === r.cached_tokens
+                ? "全命中缓存"
+                : "未记录"
+              : fmtRate(prefillRate(r)) + " tok/s",
+          ],
+          ["Prefill 耗时", fmtMs(r.prefill_ms)],
+          ["Decode", fmtRate(decodeRate(r)) + " tok/s"],
+          ["Decode 耗时", fmtMs(r.decode_ms)],
+          ["草稿接受率", fmtPct(r.acceptance)],
+          [
+            "草稿接受 / 提议",
+            fmtTok(
+              finite(r.commit) && finite(r.rounds)
+                ? Math.max(0, r.commit - r.rounds)
+                : null,
+            ) +
+              " / " +
+              fmtTok(r.proposed),
+          ],
+          ["总提交 / 轮次", fmtTok(r.commit) + " / " + fmtTok(r.rounds)],
+          ["图像请求", r.vision ? "是" : "否"],
+        ];
+        rows.forEach(([l, v]) => body.append(detailLine(l, v)));
+        body.append(
+          node("p", "记录包含运行指标，不包含提示词和回答正文。", "hint"),
+        );
+        $("request-detail").showModal();
+      }
+      function drawThroughput() {
+        const cv = $("throughput");
+        if (!cv.clientWidth) return;
+        const dpr = devicePixelRatio || 1,
+          W = cv.clientWidth,
+          H = cv.clientHeight;
+        cv.width = W * dpr;
+        cv.height = H * dpr;
+        const g = cv.getContext("2d");
+        g.scale(dpr, dpr);
+        const data = scopedRecords()
+          .slice(0, 50)
+          .reverse()
+          .map((r) => ({
+            t: r.ts_ms,
+            v: chartMetric === "prefill" ? prefillRate(r) : decodeRate(r),
+          }))
+          .filter((p) => finite(p.v));
+        g.font = "11px Consolas, monospace";
+        g.fillStyle = "#a0adba";
+        if (!data.length) {
+          g.textAlign = "center";
+          g.fillText(
+            "暂无可计算的" +
+              (chartMetric === "prefill" ? " Prefill" : " Decode") +
+              " 请求",
+            W / 2,
+            H / 2,
+          );
+          txt("chart-note", "全命中缓存 / 未记录耗时的请求不参与曲线");
+          cv.setAttribute("aria-label", "暂无吞吐数据");
+          return;
+        }
+        const pad = { l: 48, r: 12, t: 13, b: 27 },
+          max = Math.max(1, ...data.map((p) => p.v)) * 1.12,
+          minT = data[0].t,
+          maxT = data[data.length - 1].t;
+        const x = (t) =>
+            maxT === minT
+              ? pad.l + (W - pad.l - pad.r) / 2
+              : pad.l + ((t - minT) / (maxT - minT)) * (W - pad.l - pad.r),
+          y = (v) => H - pad.b - (v / max) * (H - pad.t - pad.b);
+        for (let i = 0; i <= 3; i++) {
+          const value = (max * i) / 3,
+            py = y(value);
+          g.strokeStyle = "#2b333d";
+          g.beginPath();
+          g.moveTo(pad.l, py);
+          g.lineTo(W - pad.r, py);
+          g.stroke();
+          g.fillStyle = "#a0adba";
+          g.textAlign = "right";
+          g.fillText(
+            value >= 1000 ? (value / 1000).toFixed(1) + "k" : Math.round(value),
+            pad.l - 8,
+            py + 4,
+          );
+        }
+        g.strokeStyle = "#89d5c1";
+        g.lineWidth = 2;
+        g.beginPath();
+        data.forEach((p, i) =>
+          i ? g.lineTo(x(p.t), y(p.v)) : g.moveTo(x(p.t), y(p.v)),
+        );
+        g.stroke();
+        for (const p of data) {
+          g.fillStyle = "#89d5c1";
+          g.beginPath();
+          g.arc(x(p.t), y(p.v), 3, 0, Math.PI * 2);
+          g.fill();
+        }
+        g.fillStyle = "#a0adba";
+        g.textAlign = "left";
+        g.fillText(utc(minT).slice(11), pad.l, H - 4);
+        g.textAlign = "right";
+        if (minT !== maxT) g.fillText(utc(maxT).slice(11), W - pad.r, H - 4);
+        txt("chart-note", "最近 " + data.length + " 次有效采样 · 未做平滑");
+        cv.setAttribute(
+          "aria-label",
+          (chartMetric === "prefill" ? "Prefill" : "Decode") +
+            " 最近 " +
+            data.length +
+            " 次请求，每秒 token 范围 " +
+            fmtRate(Math.min(...data.map((p) => p.v))) +
+            " 至 " +
+            fmtRate(Math.max(...data.map((p) => p.v))) +
+            "；详细值见请求记录",
+        );
+      }
+      async function tickMem() {
+        if (!pollingAllowed() || pending.memory || page !== "memory") return;
+        if (
+          !healthAt ||
+          Date.now() - healthAt > 6000 ||
+          health.busy ||
+          health.in_flight > 0 ||
+          health.queued > 0 ||
+          chatAbort
+        ) {
+          txt("mem-meta", "等待 API 空闲后采样");
+          $("mem-data").classList.add("stale");
+          return;
+        }
+        pending.memory = true;
+        try {
+          const j = await grab("/memory");
+          renderMem(j);
+          memAt = Date.now();
+          $("mem-data").classList.remove("stale");
+          hideErr("mem-err");
+          txt("mem-meta", "采样于 " + hhmmss(memAt));
+        } catch (e) {
+          $("mem-data").classList.add("stale");
+          showErr("mem-err", e.message + " · 保留上次采样，将自动重试");
+        } finally {
+          pending.memory = false;
+          updateRefreshMeta();
+        }
+      }
+      const OVR_FIELDS = [
+        {
+          k: "enable_thinking",
+          label: "思考开关",
+          type: "bool",
+          def: true,
+          note: "关 = 模板关闭思考，不输出 reasoning_content；客户端不传时为开",
+        },
+        {
+          k: "reasoning_effort",
+          label: "思考强度",
+          type: "effort",
+          def: "xhigh",
+          note: "low / medium / xhigh（客户端传 high→xhigh，minimal→low）；仅思考开启时有效",
+        },
+        {
+          k: "preserve_thinking",
+          label: "保留历史思考",
+          type: "bool",
+          def: true,
+          note: "多轮时历史 assistant 的思考是否放回提示词；不传时保留",
+        },
+        {
+          k: "temperature",
+          label: "temperature",
+          type: "num",
+          min: 0,
+          max: 2,
+          step: 0.05,
+          def: 1.0,
+          note: "0 = 贪心；客户端不传时为 1.0。强制 0 时会去掉请求里的 logprobs",
+        },
+        {
+          k: "top_p",
+          label: "top_p",
+          type: "num",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          def: 0.95,
+          note: "客户端不传时为 0.95",
+        },
+        {
+          k: "top_k",
+          label: "top_k",
+          type: "int",
+          min: 0,
+          max: 2147483647,
+          step: 1,
+          def: 20,
+          note: "0 = 不限；客户端不传时为 20",
+        },
+        {
+          k: "min_p",
+          label: "min_p",
+          type: "num",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          def: 0,
+          note: "客户端不传时为 0",
+        },
+        {
+          k: "presence_penalty",
+          label: "presence_penalty",
+          type: "num",
+          min: -2,
+          max: 2,
+          step: 0.1,
+          def: 0,
+          note: "-2 ~ 2",
+        },
+        {
+          k: "frequency_penalty",
+          label: "frequency_penalty",
+          type: "num",
+          min: -2,
+          max: 2,
+          step: 0.1,
+          def: 0,
+          note: "-2 ~ 2",
+        },
+        {
+          k: "max_tokens",
+          label: "max_tokens",
+          type: "int",
+          min: 1,
+          max: 2147483647,
+          step: 1,
+          def: 32768,
+          note: "默认值 = 客户端没给输出上限时用它；强制 = 输出上限，客户端给得更大时压到此值",
+        },
+      ];
 
-function fmtBytes(n) {
-  if (n == null || isNaN(n)) return "-";
-  const g = 1073741824, m = 1048576, k = 1024;
-  if (Math.abs(n) >= g) return (n / g).toFixed(2) + " GiB";
-  if (Math.abs(n) >= m) return (n / m).toFixed(1) + " MiB";
-  if (Math.abs(n) >= k) return (n / k).toFixed(1) + " KiB";
-  return n + " B";
-}
-function hhmmss() {
-  const d = new Date(), p = v => String(v).padStart(2, "0");
-  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
-}
-function setChip(el, cls, text) { el.className = "chip " + cls; el.textContent = text; }
+      function ovrValueInput(f) {
+        if (f.type === "bool") {
+          const s = document.createElement("select");
+          s.innerHTML =
+            '<option value="true">开 (true)</option><option value="false">关 (false)</option>';
+          return s;
+        }
+        if (f.type === "effort") {
+          const s = document.createElement("select");
+          s.innerHTML =
+            "<option>low</option><option>medium</option><option>xhigh</option>";
+          return s;
+        }
+        const i = document.createElement("input");
+        i.type = "number";
+        i.min = f.min;
+        i.max = f.max;
+        i.step = f.step;
+        return i;
+      }
 
-// 从 OpenAI 风格错误信封里取消息
-function errText(j, status) {
-  return (j && j.error && (j.error.message || j.error.type)) || ("HTTP " + status);
-}
+      function buildOvrTable() {
+        const tb = $("ovr-body");
+        tb.innerHTML = "";
+        for (const f of OVR_FIELDS) {
+          const tr = document.createElement("tr");
+          tr.id = "ovr-row-" + f.k;
+          const name = document.createElement("td");
+          name.className = "mono";
+          name.textContent = f.label;
+          if (f.label !== f.k) name.title = f.k;
+          const modeTd = document.createElement("td");
+          const mode = document.createElement("select");
+          mode.innerHTML =
+            '<option value="client">跟随客户端</option><option value="default">默认值</option>' +
+            '<option value="force">强制</option>';
+          mode.setAttribute("aria-label", f.label + "覆盖模式");
+          if (f.k === "max_tokens") mode.options[2].textContent = "强制上限";
+          modeTd.appendChild(mode);
+          const valTd = document.createElement("td");
+          const val = ovrValueInput(f);
+          val.setAttribute("aria-label", f.label + "值");
+          valTd.appendChild(val);
+          const note = document.createElement("td");
+          note.className = "note";
+          note.textContent = f.note;
+          tr.append(name, modeTd, valTd, note);
+          tb.appendChild(tr);
+          f.modeEl = mode;
+          f.valEl = val;
+          f.row = tr;
+          mode.addEventListener("change", () => {
+            syncRow(f);
+            markDirty();
+          });
+          val.addEventListener("input", markDirty);
+          val.addEventListener("change", markDirty);
+        }
+      }
 
-// fetch 一个端点：返回解析后的 JSON；HTTP 错误抛 Error（附 status）
-async function grab(url, opts) {
-  const c = new AbortController();
-  const t = setTimeout(() => c.abort(), TIMEOUT_MS);
-  try {
-    const r = await fetch(url, Object.assign({ signal: c.signal }, opts || {}));
-    const text = await r.text();
-    let j = null;
-    try { j = JSON.parse(text); } catch (e) { /* 非 JSON 按状态码报错 */ }
-    if (!r.ok) { const e = new Error(errText(j, r.status)); e.status = r.status; throw e; }
-    return j;
-  } catch (e) {
-    if (e.name === "AbortError") throw new Error("请求超时");
-    throw e;
-  } finally { clearTimeout(t); }
-}
+      function setVal(f, v) {
+        f.valEl.value = String(v);
+      }
+      function getVal(f) {
+        const raw = f.valEl.value;
+        if (f.type === "bool") return raw === "true";
+        if (f.type === "effort") return raw;
+        if (raw.trim() === "") throw new Error(f.k + " 需要填写数值");
+        const n = Number(raw);
+        if (!isFinite(n)) throw new Error(f.k + " 不是有效数字");
+        if (f.type === "int" && !Number.isInteger(n))
+          throw new Error(f.k + " 必须是整数");
+        if (n < f.min || n > f.max)
+          throw new Error(f.k + " 超出范围 " + f.min + " ~ " + f.max);
+        return n;
+      }
+      function syncRow(f) {
+        const m = f.modeEl.value;
+        f.valEl.disabled = m === "client";
+        f.row.className = m === "force" ? "on" : m === "default" ? "def" : "";
+      }
 
-function showErr(panelId, err) {
-  const el = $(panelId);
-  el.textContent = hhmmss() + "  " + err;
-  el.classList.add("show");
-}
-function hideErr(panelId) { $(panelId).classList.remove("show"); }
+      let ovrDirty = false,
+        ovrLoaded = false,
+        ovrPending = false;
+      function lockOvr(b) {
+        ovrPending = b;
+        for (const f of OVR_FIELDS) {
+          f.modeEl.disabled = b || !ovrLoaded;
+          f.valEl.disabled = b || !ovrLoaded || f.modeEl.value === "client";
+        }
+        $("ovr-save").disabled = b || !ovrLoaded;
+        $("ovr-clear").disabled = b || !ovrLoaded;
+        $("ovr-reload").disabled = b;
+      }
+      function markDirty() {
+        ovrDirty = true;
+        $("ovr-status").textContent = "有未保存的修改";
+      }
 
-// ------------------------------------------------------------ 健康状态 --
-function ovrSummary(t) {
-  const keys = Object.keys(t || {});
-  if (!keys.length) return "无（全部跟随客户端）";
-  return keys.map(k => k + (t[k].mode === "force" ? "=" : "≈") + JSON.stringify(t[k].value)).join("  ");
-}
+      function fillOvr(state) {
+        if (
+          !state.overrides ||
+          typeof state.overrides !== "object" ||
+          Array.isArray(state.overrides)
+        )
+          throw new Error("参数覆盖响应格式无效");
+        const t = state.overrides;
+        ovrLoaded = true;
+        txt(
+          "ovr-count",
+          Object.keys(t).length
+            ? Object.keys(t).length + " 项覆盖生效"
+            : "跟随客户端",
+        );
+        for (const f of OVR_FIELDS) {
+          const e = t[f.k];
+          f.modeEl.value = e ? e.mode : "client";
+          setVal(f, e ? e.value : f.def);
+          syncRow(f);
+        }
+        $("ovr-key").style.display = state.admin_key_required ? "" : "none";
+        $("ovr-meta").textContent = state.persist_path
+          ? "持久化文件：" + state.persist_path
+          : "仅内存（未持久化）";
+        ovrDirty = false;
+      }
 
-function renderHealth(j) {
-  const s = $("h-status");
-  if (j.busy) setChip(s, "warn", "busy");
-  else if (j.status === "ok") setChip(s, "ok", "ok");
-  else setChip(s, "err", String(j.status));
-  $("h-model").textContent = j.model ?? "-";
-  $("h-ctx").textContent = j.context ?? "-";
-  $("h-inflight").textContent = j.in_flight ?? "-";
-  const bf = j.busy_for_s;
-  $("h-busyfor").textContent = (bf == null) ? "-" : (bf.toFixed(1) + "s");
-  $("h-queued").textContent = j.queued ?? "-";
-  $("h-ovr").textContent = ovrSummary(j.server_overrides);
-  $("h-ovr").title = "= 强制，≈ 默认值";
-  $("raw-health").textContent = JSON.stringify(j, null, 1);
-}
+      async function loadOvr() {
+        if (ovrPending) return;
+        lockOvr(true);
+        try {
+          fillOvr(await grab("/admin/overrides"));
+          hideErr("ovr-err");
+          $("ovr-status").textContent = "已读取 " + hhmmss();
+        } catch (e) {
+          showErr("ovr-err", "读取失败：" + e.message);
+        } finally {
+          lockOvr(false);
+        }
+      }
 
-// ------------------------------------------------------------ 参数覆盖 --
-// type: bool / effort / num / int；def 是切到"默认值/强制"时预填的值
-const OVR_FIELDS = [
-  { k: "enable_thinking", label: "思考开关", type: "bool", def: true,
-    note: "关 = 模板关闭思考，不输出 reasoning_content；客户端不传时为开" },
-  { k: "reasoning_effort", label: "思考强度", type: "effort", def: "xhigh",
-    note: "low / medium / xhigh（客户端传 high→xhigh，minimal→low）；仅思考开启时有效" },
-  { k: "preserve_thinking", label: "保留历史思考", type: "bool", def: true,
-    note: "多轮时历史 assistant 的思考是否放回提示词；不传时保留" },
-  { k: "temperature", label: "temperature", type: "num", min: 0, max: 2, step: 0.05, def: 1.0,
-    note: "0 = 贪心；客户端不传时为 1.0。强制 0 时会去掉请求里的 logprobs" },
-  { k: "top_p", label: "top_p", type: "num", min: 0, max: 1, step: 0.01, def: 0.95,
-    note: "客户端不传时为 0.95" },
-  { k: "top_k", label: "top_k", type: "int", min: 0, max: 2147483647, step: 1, def: 20,
-    note: "0 = 不限；客户端不传时为 20" },
-  { k: "min_p", label: "min_p", type: "num", min: 0, max: 1, step: 0.01, def: 0,
-    note: "客户端不传时为 0" },
-  { k: "presence_penalty", label: "presence_penalty", type: "num", min: -2, max: 2, step: 0.1, def: 0,
-    note: "-2 ~ 2" },
-  { k: "frequency_penalty", label: "frequency_penalty", type: "num", min: -2, max: 2, step: 0.1, def: 0,
-    note: "-2 ~ 2" },
-  { k: "max_tokens", label: "max_tokens", type: "int", min: 1, max: 2147483647, step: 1, def: 32768,
-    note: "默认值 = 客户端没给输出上限时用它；强制 = 输出上限，客户端给得更大时压到此值" },
-];
+      function collectOvr() {
+        const t = {};
+        for (const f of OVR_FIELDS) {
+          const m = f.modeEl.value;
+          if (m === "client") continue;
+          t[f.k] = { mode: m, value: getVal(f) };
+        }
+        return t;
+      }
 
-function ovrValueInput(f) {
-  if (f.type === "bool") {
-    const s = document.createElement("select");
-    s.innerHTML = '<option value="true">开 (true)</option><option value="false">关 (false)</option>';
-    return s;
-  }
-  if (f.type === "effort") {
-    const s = document.createElement("select");
-    s.innerHTML = "<option>low</option><option>medium</option><option>xhigh</option>";
-    return s;
-  }
-  const i = document.createElement("input");
-  i.type = "number"; i.min = f.min; i.max = f.max; i.step = f.step;
-  return i;
-}
+      async function saveOvr(table) {
+        if (ovrPending || !ovrLoaded) return;
+        lockOvr(true);
+        const headers = { "Content-Type": "application/json" };
+        const key = $("ovr-key").value;
+        if (key) headers["X-Admin-Key"] = key;
+        try {
+          const j = await grab("/admin/overrides", {
+            method: "POST",
+            headers,
+            body: JSON.stringify(table),
+          });
+          fillOvr(j);
+          hideErr("ovr-err");
+          $("ovr-status").textContent =
+            (j.saved ? "已保存并生效 " : "已生效，但未能写入文件 ") + hhmmss();
+          if (!j.saved)
+            showErr(
+              "ovr-err",
+              "持久化失败：" + (j.save_error || "?") + "（重启后会丢失）",
+            );
+          tickHealth();
+        } catch (e) {
+          if (e.status === 401) $("ovr-key").style.display = "";
+          showErr(
+            "ovr-err",
+            "保存未确认：" + e.message + "；请重新读取确认服务端实际值",
+          );
+        } finally {
+          lockOvr(false);
+        }
+      }
 
-function buildOvrTable() {
-  const tb = $("ovr-body");
-  tb.innerHTML = "";
-  for (const f of OVR_FIELDS) {
-    const tr = document.createElement("tr");
-    tr.id = "ovr-row-" + f.k;
-    const name = document.createElement("td");
-    name.className = "mono"; name.textContent = f.label;
-    if (f.label !== f.k) name.title = f.k;
-    const modeTd = document.createElement("td");
-    const mode = document.createElement("select");
-    mode.innerHTML = '<option value="client">跟随客户端</option><option value="default">默认值</option>' +
-                     '<option value="force">强制</option>';
-    modeTd.appendChild(mode);
-    const valTd = document.createElement("td");
-    const val = ovrValueInput(f);
-    valTd.appendChild(val);
-    const note = document.createElement("td");
-    note.className = "note"; note.textContent = f.note;
-    tr.append(name, modeTd, valTd, note);
-    tb.appendChild(tr);
-    f.modeEl = mode; f.valEl = val; f.row = tr;
-    mode.addEventListener("change", () => { syncRow(f); markDirty(); });
-    val.addEventListener("input", markDirty);
-    val.addEventListener("change", markDirty);
-  }
-}
+      $("ovr-save").addEventListener("click", () => {
+        let t;
+        try {
+          t = collectOvr();
+        } catch (e) {
+          showErr("ovr-err", e.message);
+          return;
+        }
+        saveOvr(t);
+      });
+      $("ovr-reload").addEventListener("click", () => {
+        if (ovrDirty && !confirm("丢弃未保存的修改？")) return;
+        loadOvr();
+      });
+      $("ovr-clear").addEventListener("click", () => {
+        if (!confirm("清空服务端覆盖表，所有参数改为跟随客户端？")) return;
+        saveOvr({});
+      });
 
-function setVal(f, v) { f.valEl.value = String(v); }
-function getVal(f) {
-  const raw = f.valEl.value;
-  if (f.type === "bool") return raw === "true";
-  if (f.type === "effort") return raw;
-  if (raw.trim() === "") throw new Error(f.k + " 需要填写数值");
-  const n = Number(raw);
-  if (!isFinite(n)) throw new Error(f.k + " 不是有效数字");
-  if (f.type === "int" && !Number.isInteger(n)) throw new Error(f.k + " 必须是整数");
-  if (n < f.min || n > f.max) throw new Error(f.k + " 超出范围 " + f.min + " ~ " + f.max);
-  return n;
-}
-function syncRow(f) {
-  const m = f.modeEl.value;
-  f.valEl.disabled = m === "client";
-  f.row.className = m === "force" ? "on" : m === "default" ? "def" : "";
-}
+      function memCell(k, v, sub) {
+        return (
+          '<div class="cell"><div class="k">' +
+          k +
+          '</div><div class="v mono">' +
+          v +
+          '</div><div class="s">' +
+          (sub || "") +
+          "</div></div>"
+        );
+      }
 
-let ovrDirty = false;
-function markDirty() { ovrDirty = true; $("ovr-status").textContent = "有未保存的修改"; }
+      function renderMem(j) {
+        const f = (n) => (n == null ? null : Number(n));
+        const committed = f(j.gpu_accessible_committed_bytes);
+        $("m-hero").textContent = fmtBytes(committed);
+        $("m-hero").title =
+          "gpu_accessible_committed_bytes = " +
+          (j.gpu_accessible_committed_bytes ?? "-") +
+          " 字节";
+        $("m-accounting").textContent = j.accounting || "";
 
-function fillOvr(state) {
-  const t = state.overrides || {};
-  for (const f of OVR_FIELDS) {
-    const e = t[f.k];
-    f.modeEl.value = e ? e.mode : "client";
-    setVal(f, e ? e.value : f.def);
-    syncRow(f);
-  }
-  $("ovr-key").style.display = state.admin_key_required ? "" : "none";
-  $("ovr-meta").textContent = state.persist_path ? ("持久化文件：" + state.persist_path) : "仅内存（未持久化）";
-  ovrDirty = false;
-}
+        const total = f(j.hip_total_bytes),
+          free = f(j.hip_free_bytes);
+        if (total != null && free != null) {
+          const used = total - free,
+            pct = total ? (used / total) * 100 : 0;
+          $("m-hip-bar").style.width =
+            Math.min(100, Math.max(0, pct)).toFixed(1) + "%";
+          $("m-hip-pct").textContent = pct.toFixed(1) + "%";
+          $("m-hip-used").textContent = "已用 " + fmtBytes(used);
+          $("m-hip-total").textContent = "共 " + fmtBytes(total);
+        } else {
+          $("m-hip-bar").style.width = "0%";
+          ["m-hip-pct", "m-hip-used", "m-hip-total"].forEach((id) =>
+            txt(id, "未报告"),
+          );
+        }
 
-async function loadOvr() {
-  try {
-    fillOvr(await grab("/admin/overrides"));
-    hideErr("ovr-err");
-    $("ovr-status").textContent = "已读取 " + hhmmss();
-  } catch (e) { showErr("ovr-err", "读取失败：" + e.message); }
-}
+        const peak = (c, p) => "峰值 " + fmtBytes(f(p));
+        $("mem-grid").innerHTML =
+          memCell(
+            "设备分配 (HIP device)",
+            fmtBytes(f(j.device_current_bytes)),
+            peak(0, j.device_peak_bytes),
+          ) +
+          memCell(
+            "注册 mmap（专家权重）",
+            fmtBytes(f(j.registered_mmap_bytes)),
+            "mmap + hipHostRegister",
+          ) +
+          memCell(
+            "Pinned host",
+            fmtBytes(f(j.pinned_host_current_bytes)),
+            peak(0, j.pinned_host_peak_bytes),
+          ) +
+          memCell(
+            "启动以来 HIP 增量",
+            fmtBytes(f(j.hip_used_since_engine_start_bytes)),
+            "引擎自身驱动",
+          ) +
+          memCell(
+            "进程 RSS",
+            fmtBytes(f(j.process_rss_bytes)),
+            "含可回收 mmap 页缓存",
+          ) +
+          memCell("进程已锁定", fmtBytes(f(j.process_locked_bytes)), "");
+        $("raw-mem").textContent = JSON.stringify(j, null, 1);
 
-function collectOvr() {
-  const t = {};
-  for (const f of OVR_FIELDS) {
-    const m = f.modeEl.value;
-    if (m === "client") continue;
-    t[f.k] = { mode: m, value: getVal(f) };
-  }
-  return t;
-}
+        hist.committed.push(committed);
+        hist.rss.push(f(j.process_rss_bytes));
+        if (hist.committed.length > HIST_CAP) {
+          hist.committed.shift();
+          hist.rss.shift();
+        }
+        drawSpark();
+      }
 
-async function saveOvr(table) {
-  const headers = { "Content-Type": "application/json" };
-  const key = $("ovr-key").value;
-  if (key) headers["X-Admin-Key"] = key;
-  try {
-    const j = await grab("/admin/overrides", { method: "POST", headers, body: JSON.stringify(table) });
-    fillOvr(j);
-    hideErr("ovr-err");
-    $("ovr-status").textContent = (j.saved ? "已保存并生效 " : "已生效，但未能写入文件 ") + hhmmss();
-    if (!j.saved) showErr("ovr-err", "持久化失败：" + (j.save_error || "?") + "（重启后会丢失）");
-    tickHealth();
-  } catch (e) {
-    if (e.status === 401) $("ovr-key").style.display = "";
-    showErr("ovr-err", "保存失败：" + e.message);
-  }
-}
+      function drawSpark() {
+        const cv = $("spark");
+        if (!cv.clientWidth) return;
+        const dpr = window.devicePixelRatio || 1;
+        const W = cv.clientWidth * dpr,
+          H = cv.clientHeight * dpr;
+        cv.width = W;
+        cv.height = H;
+        const g = cv.getContext("2d");
+        g.clearRect(0, 0, W, H);
+        const series = [
+          { data: hist.committed, color: "#89d5c1" },
+          { data: hist.rss, color: "#b8a8eb" },
+        ];
+        let max = 0;
+        for (const s of series)
+          for (const v of s.data) if (v != null && v > max) max = v;
+        if (max <= 0) return;
+        const pad = 6 * dpr,
+          n = HIST_CAP;
+        const x = (i) => pad + (W - 2 * pad) * (i / (n - 1));
+        const y = (v) => H - pad - (H - 2 * pad) * (v / max);
+        g.strokeStyle = "#30363d";
+        g.lineWidth = 1;
+        g.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
+        for (const s of series) {
+          g.strokeStyle = s.color;
+          g.lineWidth = 1.5 * dpr;
+          g.beginPath();
+          let started = false;
+          s.data.forEach((v, i) => {
+            if (v == null) {
+              started = false;
+              return;
+            }
+            if (!started) {
+              g.moveTo(x(i), y(v));
+              started = true;
+            } else g.lineTo(x(i), y(v));
+          });
+          g.stroke();
+        }
+        g.fillStyle = "#8b949e";
+        g.font = 10 * dpr + "px Consolas, monospace";
+        g.fillText(fmtBytes(max), pad + 4 * dpr, pad + 12 * dpr);
+      }
 
-$("ovr-save").addEventListener("click", () => {
-  let t;
-  try { t = collectOvr(); } catch (e) { showErr("ovr-err", e.message); return; }
-  saveOvr(t);
-});
-$("ovr-reload").addEventListener("click", () => {
-  if (ovrDirty && !confirm("丢弃未保存的修改？")) return;
-  loadOvr();
-});
-$("ovr-clear").addEventListener("click", () => {
-  if (!confirm("清空服务端覆盖表，所有参数改为跟随客户端？")) return;
-  saveOvr({});
-});
-
-// ------------------------------------------------------------ 对话测试 --
-let convo = [];          // 已完成的轮次：{role, content, reasoning_content?}
-let chatAbort = null;
-
-function msgBox(role) {
-  const d = document.createElement("div");
-  d.className = "msg " + role;
-  const r = document.createElement("div");
-  r.className = "role"; r.textContent = role;
-  d.appendChild(r);
-  $("c-log").appendChild(d);
-  return d;
-}
-function addPart(box, cls, text) {
-  const e = document.createElement("div");
-  e.className = cls; e.textContent = text || "";
-  box.appendChild(e);
-  return e;
-}
-function numParam(id) {
-  const v = $(id).value.trim();
-  return v === "" ? undefined : Number(v);
-}
-
-function buildChatBody() {
-  const msgs = [];
-  const sys = $("c-system").value.trim();
-  if (sys) msgs.push({ role: "system", content: sys });
-  const body = { messages: msgs.concat(convo), stream: true, stream_options: { include_usage: true } };
-  const think = $("c-think").value;
-  if (think) body.enable_thinking = think === "true";
-  const effort = $("c-effort").value;
-  if (effort) body.reasoning_effort = effort;
-  const nums = { temperature: "c-temp", top_p: "c-topp", top_k: "c-topk", min_p: "c-minp",
-                 presence_penalty: "c-pres", max_tokens: "c-max", seed: "c-seed" };
-  for (const [k, id] of Object.entries(nums)) {
-    const v = numParam(id);
-    if (v !== undefined) body[k] = v;
-  }
-  return body;
-}
-
-function setBusy(b) {
-  $("c-send").disabled = b; $("c-stop").disabled = !b; $("c-clear").disabled = b;
-}
-
-async function sendChat() {
-  const text = $("c-input").value;
-  if (!text.trim() || chatAbort) return;
-  hideErr("chat-err");
-  convo.push({ role: "user", content: text });
-  addPart(msgBox("user"), "body", text);
-  $("c-input").value = "";
-  const body = buildChatBody();
-  const box = msgBox("assistant");
-  const note = addPart(box, "ovr-note", "");
-  const think = addPart(box, "think", "");
-  const ans = addPart(box, "body", "");
-  const stat = addPart(box, "stat", "等待中…");
-  think.style.display = "none";
-  let reasoning = "", content = "", usage = null, finish = null;
-  const t0 = performance.now();
-  let tFirst = 0;
-  chatAbort = new AbortController();
-  setBusy(true);
-  $("chat-status").textContent = "生成中…";
-  try {
-    const r = await fetch("/v1/chat/completions", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body), signal: chatAbort.signal });
-    const ov = r.headers.get("X-Gdec-Overrides");
-    note.textContent = ov ? ("服务端覆盖了：" + ov) : "";
-    if (!r.ok) {
-      let j = null; try { j = await r.json(); } catch (e) { /* 忽略 */ }
-      throw new Error(errText(j, r.status));
-    }
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "", done = false;
-    while (!done) {
-      const { value, done: eof } = await reader.read();
-      if (eof) break;
-      buf += dec.decode(value, { stream: true });
-      let cut;
-      while ((cut = buf.indexOf("\n\n")) >= 0) {
-        const frame = buf.slice(0, cut); buf = buf.slice(cut + 2);
-        for (const line of frame.split("\n")) {
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (data === "[DONE]") { done = true; break; }
-          let j; try { j = JSON.parse(data); } catch (e) { continue; }
-          if (j.error) throw new Error(j.error.message || "stream error");
+      // Chat state survives navigation; only complete turns enter the next request.
+      let convo = [],
+        chatAbort = null;
+      function msgBox(role) {
+        $("chat-empty").hidden = true;
+        const box = node("div", null, "msg " + role);
+        box.append(node("div", role === "user" ? "你" : "模型", "role"));
+        $("c-log").append(box);
+        return box;
+      }
+      function addPart(box, cls, text) {
+        const part = node("div", text || "", cls);
+        box.append(part);
+        return part;
+      }
+      function buildChatBody(text) {
+        const messages = [],
+          system = $("c-system").value.trim();
+        if (system) messages.push({ role: "system", content: system });
+        const body = {
+          messages: messages.concat(convo, { role: "user", content: text }),
+          stream: true,
+          stream_options: { include_usage: true },
+        };
+        if ($("c-think").value)
+          body.enable_thinking = $("c-think").value === "true";
+        if ($("c-effort").value) body.reasoning_effort = $("c-effort").value;
+        const nums = {
+          temperature: "c-temp",
+          top_p: "c-topp",
+          top_k: "c-topk",
+          min_p: "c-minp",
+          presence_penalty: "c-pres",
+          max_tokens: "c-max",
+          seed: "c-seed",
+        };
+        for (const [k, id] of Object.entries(nums)) {
+          const el = $(id),
+            v = el.value.trim();
+          if (el.validity.badInput || (v && !el.checkValidity()))
+            throw new Error(k + " 取值无效，请检查范围与步长");
+          if (v) body[k] = Number(v);
+        }
+        return body;
+      }
+      function setBusy(b) {
+        $("c-send").disabled = b;
+        $("c-stop").disabled = !b;
+        $("c-clear").disabled = b;
+      }
+      async function sendChat() {
+        const text = $("c-input").value;
+        if (!text.trim() || chatAbort) return;
+        let body;
+        try {
+          body = buildChatBody(text);
+        } catch (e) {
+          showErr("chat-err", e.message);
+          return;
+        }
+        hideErr("chat-err");
+        addPart(msgBox("user"), "body", text);
+        $("c-input").value = "";
+        const box = msgBox("assistant"),
+          note = addPart(box, "ovr-note", ""),
+          think = addPart(box, "think", ""),
+          ans = addPart(box, "body", ""),
+          stat = addPart(box, "stat", "等待中…");
+        think.hidden = true;
+        let reasoning = "",
+          content = "",
+          usage = null,
+          finish = null,
+          terminal = false,
+          success = false,
+          reader = null;
+        const t0 = performance.now();
+        let tFirst = 0;
+        chatAbort = new AbortController();
+        setBusy(true);
+        txt("chat-status", "生成中…");
+        function frame(raw) {
+          const payload = raw
+            .split(/\r?\n/)
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.slice(5).trimStart())
+            .join("\n")
+            .trim();
+          if (!payload) return;
+          if (payload === "[DONE]") {
+            terminal = true;
+            return;
+          }
+          let j;
+          try {
+            j = JSON.parse(payload);
+          } catch {
+            throw new Error("流式响应包含无效 JSON");
+          }
+          if (j.error) throw new Error(j.error.message || "流式响应错误");
           if (j.usage) usage = j.usage;
-          const ch = j.choices && j.choices[0];
-          if (!ch) continue;
+          const ch = j.choices?.[0];
+          if (!ch) return;
           if (ch.finish_reason) finish = ch.finish_reason;
           const d = ch.delta || {};
+          const nearEnd =
+            $("c-log").scrollHeight -
+              $("c-log").scrollTop -
+              $("c-log").clientHeight <
+            80;
           if (d.reasoning_content) {
             if (!tFirst) tFirst = performance.now();
-            reasoning += d.reasoning_content; think.textContent = reasoning; think.style.display = "";
+            reasoning += d.reasoning_content;
+            think.textContent = reasoning;
+            think.hidden = false;
           }
           if (d.content) {
             if (!tFirst) tFirst = performance.now();
-            content += d.content; ans.textContent = content;
+            content += d.content;
+            ans.textContent = content;
           }
-          if (tFirst) stat.textContent = "生成中… " + ((performance.now() - t0) / 1000).toFixed(1) + " s";
+          if (tFirst)
+            stat.textContent =
+              "生成中… " + ((performance.now() - t0) / 1000).toFixed(1) + " s";
+          if (nearEnd) $("c-log").scrollTop = $("c-log").scrollHeight;
         }
+        try {
+          const response = await fetch("/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: chatAbort.signal,
+          });
+          const ov = response.headers.get("X-Gdec-Overrides");
+          note.textContent = ov ? "服务端覆盖：" + ov : "";
+          if (!response.ok) {
+            let j;
+            try {
+              j = await response.json();
+            } catch {}
+            throw new Error(errText(j, response.status));
+          }
+          reader = response.body.getReader();
+          const dec = new TextDecoder();
+          let buf = "";
+          function consume() {
+            let match;
+            while ((match = /\r?\n\r?\n/.exec(buf))) {
+              const raw = buf.slice(0, match.index);
+              buf = buf.slice(match.index + match[0].length);
+              frame(raw);
+              if (terminal) break;
+            }
+          }
+          while (!terminal) {
+            const { value, done } = await reader.read();
+            if (done) {
+              buf += dec.decode();
+              consume();
+              if (buf.trim() && !terminal) frame(buf);
+              break;
+            }
+            buf += dec.decode(value, { stream: true });
+            consume();
+          }
+          if (!terminal && !finish)
+            throw new Error(
+              "响应流提前结束，未收到结束标记；此轮未加入后续对话上下文",
+            );
+          success = true;
+          txt("chat-status", "完成 " + hhmmss());
+        } catch (e) {
+          if (e.name === "AbortError") {
+            finish = "已停止";
+            txt("chat-status", "已停止");
+          } else {
+            finish = "未完成";
+            showErr("chat-err", e.message);
+            txt("chat-status", "出错 · 可重试");
+          }
+        } finally {
+          if (reader) {
+            try {
+              await reader.cancel();
+            } catch {}
+            reader.releaseLock();
+          }
+          chatAbort = null;
+          setBusy(false);
+          tickHealth();
+          tickReqs();
+        }
+        const parts = ["结束：" + (FINISH_ZH[finish] || finish || "完成")];
+        if (tFirst) parts.push("浏览器首 token " + fmtMs(tFirst - t0));
+        parts.push(
+          "总耗时 " + ((performance.now() - t0) / 1000).toFixed(2) + " s",
+        );
+        if (usage)
+          parts.push(
+            "输入 " +
+              fmtTok(usage.prompt_tokens) +
+              " / 输出 " +
+              fmtTok(usage.completion_tokens) +
+              " token",
+          );
+        if (!success) parts.push("此轮未加入后续上下文");
+        stat.textContent = parts.join(" · ");
+        if (success && (content || reasoning)) {
+          convo.push({ role: "user", content: text });
+          const msg = { role: "assistant", content };
+          if (reasoning) msg.reasoning_content = reasoning;
+          convo.push(msg);
+        }
+        if (!success && !$("c-input").value) $("c-input").value = text;
       }
-    }
-    $("chat-status").textContent = "完成 " + hhmmss();
-  } catch (e) {
-    if (e.name === "AbortError") { finish = "已停止"; $("chat-status").textContent = "已停止"; }
-    else { showErr("chat-err", e.message); $("chat-status").textContent = "出错"; }
-  } finally {
-    chatAbort = null;
-    setBusy(false);
-  }
-  const t1 = performance.now();
-  const parts = [];
-  if (finish) parts.push("结束：" + finish);
-  if (tFirst) parts.push("首 token " + ((tFirst - t0) / 1000).toFixed(2) + " s");
-  if (usage) {
-    parts.push("输出 " + usage.completion_tokens + " tok");
-    if (tFirst && usage.completion_tokens > 1)
-      parts.push((usage.completion_tokens / ((t1 - tFirst) / 1000)).toFixed(1) + " tok/s");
-    const cached = usage.prompt_tokens_details ? usage.prompt_tokens_details.cached_tokens : 0;
-    parts.push("prompt " + usage.prompt_tokens + (cached ? "（命中缓存 " + cached + "）" : ""));
-  }
-  stat.textContent = parts.join("  ·  ");
-  if (content || reasoning) {
-    const m = { role: "assistant", content };
-    if (reasoning) m.reasoning_content = reasoning;
-    convo.push(m);
-  } else {
-    convo.pop();   // 没有任何输出：撤回这条 user，方便改了参数重发
-  }
-}
+      $("c-send").onclick = sendChat;
+      $("c-stop").onclick = () => chatAbort?.abort();
+      $("c-clear").onclick = () => {
+        convo = [];
+        $("c-log").replaceChildren();
+        $("chat-empty").hidden = false;
+        hideErr("chat-err");
+        txt("chat-status", "");
+      };
+      $("c-input").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          sendChat();
+        }
+      });
 
-$("c-send").addEventListener("click", sendChat);
-$("c-stop").addEventListener("click", () => { if (chatAbort) chatAbort.abort(); });
-$("c-clear").addEventListener("click", () => { convo = []; $("c-log").innerHTML = ""; hideErr("chat-err"); });
-$("c-input").addEventListener("keydown", e => {
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendChat(); }
-});
-
-// ------------------------------------------------------------ 内存记账 --
-function memCell(k, v, sub) {
-  return '<div class="cell"><div class="k">' + k + '</div><div class="v mono">' + v +
-         '</div><div class="s">' + (sub || "") + "</div></div>";
-}
-
-function renderMem(j) {
-  const f = n => (n == null ? null : Number(n));
-  const committed = f(j.gpu_accessible_committed_bytes);
-  $("m-hero").textContent = fmtBytes(committed);
-  $("m-hero").title =
-    "gpu_accessible_committed_bytes = " + (j.gpu_accessible_committed_bytes ?? "-") + " 字节";
-  if (j.accounting) $("m-accounting").textContent = j.accounting;
-
-  const total = f(j.hip_total_bytes), free = f(j.hip_free_bytes);
-  if (total != null && free != null) {
-    const used = total - free, pct = total ? used / total * 100 : 0;
-    $("m-hip-bar").style.width = Math.min(100, Math.max(0, pct)).toFixed(1) + "%";
-    $("m-hip-pct").textContent = pct.toFixed(1) + "%";
-    $("m-hip-used").textContent = "已用 " + fmtBytes(used);
-    $("m-hip-total").textContent = "共 " + fmtBytes(total);
-  }
-
-  const peak = (c, p) => "峰值 " + fmtBytes(f(p));
-  $("mem-grid").innerHTML =
-    memCell("设备分配 (HIP device)", fmtBytes(f(j.device_current_bytes)), peak(0, j.device_peak_bytes)) +
-    memCell("注册 mmap（专家权重）", fmtBytes(f(j.registered_mmap_bytes)), "mmap + hipHostRegister") +
-    memCell("Pinned host", fmtBytes(f(j.pinned_host_current_bytes)), peak(0, j.pinned_host_peak_bytes)) +
-    memCell("启动以来 HIP 增量", fmtBytes(f(j.hip_used_since_engine_start_bytes)), "引擎自身驱动") +
-    memCell("进程 RSS", fmtBytes(f(j.process_rss_bytes)), "含可回收 mmap 页缓存") +
-    memCell("进程已锁定", fmtBytes(f(j.process_locked_bytes)), "");
-  $("raw-mem").textContent = JSON.stringify(j, null, 1);
-
-  hist.committed.push(committed); hist.rss.push(f(j.process_rss_bytes));
-  if (hist.committed.length > HIST_CAP) { hist.committed.shift(); hist.rss.shift(); }
-  drawSpark();
-}
-
-function drawSpark() {
-  const cv = $("spark");
-  const dpr = window.devicePixelRatio || 1;
-  const W = cv.clientWidth * dpr, H = cv.clientHeight * dpr;
-  cv.width = W; cv.height = H;
-  const g = cv.getContext("2d");
-  g.clearRect(0, 0, W, H);
-  const series = [
-    { data: hist.committed, color: "#58a6ff" },
-    { data: hist.rss, color: "#bc8cff" },
-  ];
-  let max = 0;
-  for (const s of series) for (const v of s.data) if (v != null && v > max) max = v;
-  if (max <= 0) return;
-  const pad = 6 * dpr, n = HIST_CAP;
-  const x = i => pad + (W - 2 * pad) * (i / (n - 1));
-  const y = v => H - pad - (H - 2 * pad) * (v / max);
-  g.strokeStyle = "#30363d"; g.lineWidth = 1;
-  g.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
-  for (const s of series) {
-    g.strokeStyle = s.color; g.lineWidth = 1.5 * dpr; g.beginPath();
-    let started = false;
-    s.data.forEach((v, i) => {
-      if (v == null) return;
-      if (!started) { g.moveTo(x(i), y(v)); started = true; }
-      else g.lineTo(x(i), y(v));
-    });
-    g.stroke();
-  }
-  g.fillStyle = "#8b949e"; g.font = (10 * dpr) + "px Consolas, monospace";
-  g.fillText(fmtBytes(max), pad + 4 * dpr, pad + 12 * dpr);
-}
-
-async function tickHealth() {
-  if (paused) return;
-  try {
-    const j = await grab("/health");
-    renderHealth(j);
-    setChip($("conn"), "ok", "已连接");
-    hideErr("health-err");
-    $("health-meta").textContent = "更新于 " + hhmmss();
-  } catch (e) {
-    setChip($("conn"), "err", "无法连接");
-    showErr("health-err", e.message);
-  }
-}
-
-async function tickMem() {
-  if (paused) return;
-  const data = $("mem-data");
-  try {
-    const j = await grab("/memory");
-    renderMem(j);
-    data.classList.remove("stale");
-    hideErr("mem-err");
-    $("mem-meta").textContent = "更新于 " + hhmmss() + "（每 10 秒）";
-  } catch (e) {
-    data.classList.add("stale");   // 保留上次数值但变暗，提示非实时
-    showErr("mem-err", e.message + "（engine 未运行或未连接）");
-  }
-}
-
-// ------------------------------------------------------------ 请求统计 --
-const REQ_MS = 10000;  // /reqstat/* 轮询间隔
-
-function fmtPct(x) { return x == null ? "-" : (x * 100).toFixed(1) + "%"; }
-function fmtTok(n) { return n == null ? "-" : Number(n).toLocaleString("en-US"); }
-function fmtMs(x) { return x == null ? "-" : x >= 1000 ? (x / 1000).toFixed(2) + " s" : Math.round(x) + " ms"; }
-
-// 结束原因：JSON 里是英文枚举（稳定接口），页面上显示中文
-const FINISH_ZH = { stop: "自然结束", length: "长度上限", cancel: "取消/断开", error: "错误", other: "其它" };
-function finZh(k) { return FINISH_ZH[k] || k; }
-function finSummary(f) {
-  const parts = [];
-  for (const k of ["stop", "length", "cancel", "error"]) if (f && f[k]) parts.push(finZh(k) + " " + f[k]);
-  for (const k of Object.keys(f || {})) if (!(k in FINISH_ZH)) parts.push(k + " " + f[k]);
-  return parts.join("  ") || "-";
-}
-
-function renderReqSummary(j) {
-  const c = (k, v, s) => '<div class="cell"><div class="k">' + k + '</div><div class="v mono">' + v +
-                         '</div><div class="s">' + (s || "") + "</div></div>";
-  const t = j.ttft;
-  $("reqs-grid").innerHTML =
-    c("请求数", fmtTok(j.requests),
-      (j.files_total || 0) + " 个记录文件" + (j.bad_crc ? "，" + j.bad_crc + " 条坏记录已跳过" : "")) +
-    c("输入 token", fmtTok(j.input_tokens),
-      "缓存命中 " + fmtTok(j.cached_tokens) + "（" + fmtPct(j.cache_hit_rate) + "）") +
-    c("输出 token", fmtTok(j.output_tokens), "") +
-    c("prefill 速度", j.prefill_tok_per_s == null ? "-" : j.prefill_tok_per_s.toFixed(1) + " tok/s",
-      "prefill 共 " + (j.prefill_seconds || 0).toFixed(1) + " s（已扣缓存命中）") +
-    c("decode 速度", j.decode_tok_per_s == null ? "-" : j.decode_tok_per_s.toFixed(1) + " tok/s",
-      "decode 共 " + (j.decode_seconds || 0).toFixed(1) + " s") +
-    c("TTFT p50 / p95", t ? fmtMs(t.p50_ms) + " / " + fmtMs(t.p95_ms) : "-",
-      t ? t.count + " 条流式" : "无流式请求") +
-    c("结束原因", finSummary(j.finish), "");
-  const order = ["chain", "mtp", "ngram", "dflash2", "serial"];
-  const names = { chain: "chain（ngram+MTP）", mtp: "MTP", ngram: "ngram", dflash2: "dflash2", serial: "serial" };
-  const parts = [];
-  for (const k of order) {
-    const d = (j.drafters || {})[k];
-    if (!d) continue;
-    let s = '<div><span style="color:var(--dim)">' + names[k] + '</span> <span class="mono">' +
-            (d.decode_tok_per_s == null ? "-" : d.decode_tok_per_s.toFixed(1) + " tok/s") + "</span>";
-    if (d.proposed > 0)
-      s += ' <span style="color:var(--dim)">接受率</span> <span class="mono">' + fmtPct(d.acceptance) +
-           '</span> <span style="color:var(--dim);font-size:12px">（' +
-           fmtTok(d.accepted) + "/" + fmtTok(d.proposed) + "，" + d.requests + " 请求）</span>";
-    else
-      s += ' <span style="color:var(--dim);font-size:12px">（' + d.requests + " 请求）</span>";
-    parts.push(s + "</div>");
-  }
-  $("reqs-acc").innerHTML = parts.join("") ||
-    '<span style="color:var(--dim);font-size:12px">窗口内没有请求记录</span>';
-}
-
-function renderReqTable(j) {
-  const tb = $("reqs-body");
-  tb.innerHTML = "";
-  const recs = (j.records || []).slice().reverse();  // 最新在上
-  if (!recs.length) {
-    tb.innerHTML = '<tr><td colspan="9" class="note">还没有请求记录</td></tr>';
-    return;
-  }
-  const p = v => String(v).padStart(2, "0");
-  for (const r of recs) {
-    const d = new Date(r.ts_ms);
-    // prefill 只算真正处理的 token（prompt − 缓存命中）；全命中时没有 prefill
-    const proc = r.prompt_tokens - r.cached_tokens;
-    const prefill = proc <= 0 ? "全命中"
-      : r.prefill_ms > 0
-        ? (proc / (r.prefill_ms / 1000)).toFixed(1) + " tok/s（" + fmtMs(r.prefill_ms) + "）"
-        : "-";
-    const cells = [
-      p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()),
-      finZh(r.finish) + (r.vision ? "（图）" : ""),
-      r.drafter,
-      fmtTok(r.prompt_tokens) + (r.cached_tokens ? "（" + fmtTok(r.cached_tokens) + "）" : ""),
-      prefill,
-      fmtTok(r.output_tokens),
-      r.ttft_ms ? Math.round(r.ttft_ms) + " ms" : "-",
-      r.decode_ms > 0 && r.output_tokens > 1
-        ? (r.output_tokens / (r.decode_ms / 1000)).toFixed(1) + " tok/s（" + fmtMs(r.decode_ms) + "）"
-        : fmtMs(r.decode_ms),
-      fmtPct(r.acceptance),
-    ];
-    const tr = document.createElement("tr");
-    for (const x of cells) {
-      const td = document.createElement("td");
-      td.className = "mono"; td.textContent = x;
-      tr.appendChild(td);
-    }
-    tb.appendChild(tr);
-  }
-}
-
-async function tickReqs() {
-  if (paused) return;
-  try {
-    const range = $("reqs-range").value;
-    let q = "";
-    if (range !== "0") {
-      const from = new Date(Date.now() - (Number(range) - 1) * 86400000);
-      q = "?from=" + from.toISOString().slice(0, 10);
-    }
-    const [s, t] = await Promise.all([grab("/reqstat/summary" + q), grab("/reqstat/tail?n=10")]);
-    renderReqSummary(s);
-    renderReqTable(t);
-    hideErr("reqs-err");
-    $("reqs-meta").textContent = "更新于 " + hhmmss() + "（每 10 秒）";
-  } catch (e) { showErr("reqs-err", e.message); }
-}
-$("reqs-range").addEventListener("change", tickReqs);
-
-$("pause").addEventListener("click", () => {
-  paused = !paused;
-  $("pause").textContent = paused ? "▶ 继续刷新" : "⏸ 暂停刷新";
-});
-$("target").textContent = location.host;
-
-buildOvrTable();
-loadOvr();
-tickHealth(); tickMem(); tickReqs();
-setInterval(tickHealth, HEALTH_MS);
-setInterval(tickMem, MEM_MS);
-setInterval(tickReqs, REQ_MS);
-window.addEventListener("resize", drawSpark);
-</script>
-</body>
+      window.addEventListener("hashchange", activatePage);
+      window.addEventListener("resize", () => {
+        drawThroughput();
+        if (page === "memory") drawSpark();
+      });
+      document.querySelectorAll("[data-chart]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            chartMetric = b.dataset.chart;
+            document
+              .querySelectorAll("[data-chart]")
+              .forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+            drawThroughput();
+          }),
+      );
+      $("detail-close").onclick = () => $("request-detail").close();
+      $("request-detail").addEventListener("close", () => {
+        renderTables();
+        const d = $("request-detail"),
+          container =
+            d.dataset.returnView === "overview"
+              ? $("recent-table")
+              : $("all-table");
+        Array.from(container.querySelectorAll("[data-record-key]"))
+          .find((b) => b.dataset.recordKey === d.dataset.returnKey)
+          ?.focus({ preventScroll: true });
+      });
+      $("request-detail").addEventListener("click", (e) => {
+        if (
+          e.target === $("request-detail") &&
+          e.clientX < $("request-detail").getBoundingClientRect().left
+        )
+          $("request-detail").close();
+      });
+      $("reqs-range").onchange = () => {
+        renderTables();
+        drawThroughput();
+        $("reqs-grid").classList.add("stale");
+        tickReqs();
+      };
+      $("pause").onclick = () => {
+        paused = !paused;
+        $("pause").setAttribute("aria-pressed", String(paused));
+        $("pause").querySelector("span").textContent = paused
+          ? "继续刷新"
+          : "暂停刷新";
+        updateRefreshMeta();
+        if (!paused) {
+          tickHealth().then(tickMem);
+          tickReqs();
+        }
+      };
+      $("copy-api").onclick = async () => {
+        const url = location.origin + "/v1";
+        try {
+          await navigator.clipboard.writeText(url);
+          toast("API 地址已复制");
+        } catch {
+          toast("API 地址：" + url);
+        }
+      };
+      document.addEventListener("visibilitychange", () => {
+        updateRefreshMeta();
+        if (!document.hidden && !paused) {
+          tickHealth().then(tickMem);
+          tickReqs();
+        }
+      });
+      window.addEventListener("beforeunload", (e) => {
+        if (ovrDirty || chatAbort) {
+          e.preventDefault();
+          e.returnValue = "";
+        }
+      });
+      txt("target", location.host);
+      buildOvrTable();
+      renderTables();
+      activatePage();
+      tickHealth();
+      tickReqs();
+      setInterval(tickHealth, HEALTH_MS);
+      setInterval(tickReqs, REQ_MS);
+      setInterval(tickMem, MEM_MS);
+    </script>
+  </body>
 </html>
 )HTMLDOC";
