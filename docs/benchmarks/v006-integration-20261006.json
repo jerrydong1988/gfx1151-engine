@@ -2201,7 +2201,7 @@
     "confirm.log": "0a81a9b4e1c572919772b3453963e94270d46e00f2db04672962dbebdff670e2",
     "deploy.py": "f8c520d7a6eda0ce316894ad3df889315ad4f9c6a62551a43d15f908d2de6741",
     "final_suite.py": "b08e3cfd8591afc2ce504f28c0efb9c8a50aa28d5de8f7c1b5b8f1cb1454613c",
-    "finalize_deployment.py": "c55c6cff1cde0272aa3c765b8269b8ce54a44ee8d432abb5d0928e1ae9d64e22",
+    "finalize_deployment.py": "29797cf88d941a23f482d38b912660834d3392b98c0bb1dbecea2753baef6c6f",
     "gpu-fixed.log": "2877aaee8f8e6aba6aa161dee3b01d9f7900c952045be3e2c6ce7f4aaef568ad",
     "gpu-upstream-original.log": "b29eae4291bbb16fca43f29872c311eaf3521ab147b0b15f97796f901bff0757",
     "input-131072.json": "0df2b8bf45dc186f3054ab7c4607aca86fa9dc24954f10c79833f675a0028faa",
@@ -2262,7 +2262,11 @@
     "tasks-candidate.engine.log": "382d7cbad7fa6e3f30dcd8758acf387eaf8019f61593f0ac6395f86768117b10",
     "tasks-candidate.identity.json": "7c7d36c4a405faa4b548aecc76a13ea80e69b2babdbc4aa3d77cda5cded66b9f",
     "tasks.log": "037eeadfd8a9e4108bcc4ac0b45402a96b65f05070aae9123962cb772eb5d42d",
-    "validate_deployment.py": "b85ffa8bed87784a347761802ad4ba213e102e21d87d1fdc3f841f09abec55ad"
+    "validate_deployment.py": "26d79e6c580bad1bc97b82719ea09d9429235f3316430f544cc80d85705c3c9f",
+    "validate-deployment.log": "241edc5fd8cc039b98baf2530654382a6cf0441dd5506a642574bc19391e8dc4",
+    "validation.json": "ff331d4c3b9365abf5537a10f260880773d026e7d40d0fbe602bc4e3ff2ec491",
+    "deployed-processes.json": "19a1b3c97d158a7d729e7252164705ce1edb4595f5ce375cc60808d015ba8e1f",
+    "deployed-runtime-modules.json": "b3db5bc53dd0cfae457ff67a869fa00db6bb85a7be81eea74c55069c4fecfa2b"
   },
   "acceptance": {
     "accepted": true,
@@ -2291,6 +2295,154 @@
       "GDEC_HC_NORHAT": "0",
       "GDEC_HC_FUSE_WRITE": "0"
     },
-    "deployment_validation": "pending"
+    "deployment_validation": "passed",
+    "deployment_verified_utc": "2026-10-06T12:48:06Z"
+  },
+  "deployment": {
+    "directory": "C:\\Users\\Jerry\\llama.cpp\\gfx1151-engine",
+    "state": "running_verified",
+    "verified_utc": "2026-10-06T12:48:06Z",
+    "checks": {
+      "health_two_slots_256k": true,
+      "models": true,
+      "chat": true,
+      "responses_sse": true,
+      "streamed_tool_call": true,
+      "tool_result_round_trip": true,
+      "vision_red": true,
+      "concurrent_two_slots": true,
+      "three_images_growth": true,
+      "image_limit_retained": true,
+      "real_cancel_reuse": true,
+      "healthy_after_tests": true,
+      "literal_pad_v1_chat_completions": true,
+      "literal_pad_v1_completions": true,
+      "literal_pad_v1_responses": true
+    },
+    "health": {
+      "status": "ok",
+      "model": "qwen3.8-flash-next",
+      "endpoints": [
+        "/v1/chat/completions",
+        "/v1/completions",
+        "/v1/models",
+        "/v1/responses",
+        "/dashboard",
+        "/reqstat/summary",
+        "/reqstat/tail"
+      ],
+      "context": 262144,
+      "rope_scaling": null,
+      "busy": false,
+      "in_flight": 0,
+      "busy_for_s": 0,
+      "slots": 2,
+      "slot_ctx": 262144,
+      "queued": 0,
+      "decode": "greedy at explicit temperature 0; Qwen-default sampling (temp 1.0, top_k 20, top_p 0.95) when temperature is omitted; sampled at temperature > 0",
+      "prompt_cache": {
+        "enabled": false,
+        "cap_mb": 0
+      },
+      "tool_calls": {
+        "parsed": true,
+        "template_injection": true,
+        "wire_format": "qwen-xml (<function=>/<parameter=>)",
+        "streaming": true,
+        "tool_choice": [
+          "auto",
+          "none",
+          "required",
+          "named"
+        ],
+        "parallel_tool_calls": true,
+        "constrained_decoding": false
+      },
+      "vision": {
+        "accepted": true,
+        "chat_content_type": "image_url",
+        "responses_content_type": "input_image",
+        "inline_data_url": true,
+        "bare_base64": true,
+        "http_urls": false,
+        "formats": [
+          "png",
+          "jpeg",
+          "webp"
+        ],
+        "max_images": 16,
+        "video": false,
+        "runtime": "native-cpp"
+      },
+      "supported": [
+        "reasoning_effort",
+        "enable_thinking",
+        "preserve_thinking",
+        "stop",
+        "max_tokens",
+        "max_completion_tokens",
+        "max_output_tokens",
+        "stream",
+        "seed",
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "presence_penalty",
+        "frequency_penalty",
+        "logit_bias",
+        "logprobs",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+        "image_url",
+        "input_image",
+        "add_vision_id"
+      ],
+      "token_budget_aliases": [
+        "max_tokens",
+        "max_completion_tokens",
+        "max_output_tokens"
+      ],
+      "max_tokens_default": "unbounded (budget = context minus prompt length)",
+      "error_format": "openai",
+      "accepted_but_ignored": [
+        "n",
+        "drafter"
+      ],
+      "partial": [],
+      "sampling": {
+        "implemented": [
+          "temperature",
+          "top_p",
+          "top_k",
+          "min_p",
+          "seed",
+          "presence_penalty",
+          "frequency_penalty",
+          "logit_bias",
+          "logprobs"
+        ]
+      },
+      "max_tokens_cap": null,
+      "reasoning_effort_values": [
+        "high",
+        "low",
+        "medium",
+        "minimal",
+        "xhigh"
+      ],
+      "server_overrides": {}
+    },
+    "effective_settings_change": {
+      "GDEC_ROUTER_W32": "1"
+    },
+    "all_other_effective_settings_preserved": true,
+    "runtime_files_hash_verified": 262,
+    "validation_evidence_sha256": "ff331d4c3b9365abf5537a10f260880773d026e7d40d0fbe602bc4e3ff2ec491",
+    "validation_evidence": "C:\\Users\\Jerry\\llama.cpp\\gfx1151-engine\\docs\\DEPLOYMENT_VALIDATION_20261006.json",
+    "backup": "C:\\Users\\Jerry\\Projects\\gfx1151-engine\\logs\\v006\\previous-installation",
+    "source_branch": "codex/hybrid-mainline",
+    "publication": "local commits only"
   }
 }
