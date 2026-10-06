@@ -28,7 +28,9 @@ let apiBusy = false,
   memoryCalls = 0,
   reads = 0,
   authRequired = false,
-  persistFails = false;
+  persistFails = false,
+  overrideDelay = 0,
+  overrideFailure = false;
 let healthRequests = 0,
   summaryRequests = 0,
   tailRequests = 0;
@@ -148,6 +150,8 @@ const server = http.createServer(async (req, res) => {
     let raw = "";
     for await (const part of req) raw += part;
     posts.push({ body: JSON.parse(raw), key: req.headers["x-admin-key"] });
+    if (overrideDelay) await new Promise((resolve) => setTimeout(resolve, overrideDelay));
+    if (overrideFailure) return json({ error: { message: "fixture save unavailable" } }, 503);
     if (authRequired && req.headers["x-admin-key"] !== "fixture-key")
       return json({ error: { message: "需要管理密钥" } }, 401);
     saved = JSON.parse(raw);
@@ -264,6 +268,21 @@ async function main() {
       ([id, value]) => document.getElementById(id).textContent.includes(value),
       [id, value],
     );
+  const assertUncovered = async (locator, label) => {
+    const visibility = await locator.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const visible = r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth &&
+        [r.width * 0.2, r.width / 2, r.width * 0.8].every((x) =>
+          [r.height * 0.2, r.height / 2, r.height * 0.8].every((y) => {
+            const hit = document.elementFromPoint(r.left + x, r.top + y);
+            return hit === el || el.contains(hit);
+          }));
+      return { visible, name: el.getAttribute("aria-label") || el.id, rect: r.toJSON(),
+        toolbar: document.querySelector("#settings .save-bar").getBoundingClientRect().toJSON(),
+        hit: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.outerHTML.slice(0, 160) };
+    });
+    assert.equal(visibility.visible, true, label + " must be fully visible: " + JSON.stringify(visibility));
+  };
   await page.goto(base);
   await run(
     "real fixture data, accurate status and recent request scope",
@@ -363,6 +382,136 @@ async function main() {
       await page.click("#ovr-clear");
       await waitText("ovr-count", "跟随客户端");
       assert.deepEqual(saved, {});
+    },
+  );
+  await run(
+    "skip link preserves settings and unsaved input",
+    async () => {
+      await page.locator("#ovr-row-temperature select").selectOption("force");
+      await page.locator("#ovr-row-temperature input").fill("0.73");
+      await page.locator(".skip").focus();
+      await page.keyboard.press("Enter");
+      assert.equal(new URL(page.url()).hash, "#settings");
+      assert.equal(await page.locator("#settings").isVisible(), true);
+      assert.equal(await page.locator("#ovr-row-temperature input").inputValue(), "0.73");
+      assert.equal(await page.evaluate(() => document.activeElement.id), "content");
+    },
+  );
+  await run(
+    "field errors identify all invalid inputs and clear on correction",
+    async () => {
+      const before = posts.length;
+      await page.locator("#ovr-row-temperature input").fill("3");
+      await page.locator("#ovr-row-top_k select").selectOption("force");
+      await page.locator("#ovr-row-top_k input").fill("1.5");
+      await page.click("#ovr-save");
+      await waitText("ovr-err", "2 项需要修正");
+      assert.equal(posts.length, before);
+      assert.equal(await page.evaluate(() => document.activeElement.id), "ovr-value-temperature");
+      for (const key of ["temperature", "top_k"]) {
+        assert.equal(await page.locator("#ovr-value-" + key).getAttribute("aria-invalid"), "true");
+        assert.match(await page.locator("#ovr-value-" + key).getAttribute("aria-describedby"), new RegExp("error-" + key));
+      }
+      await page.waitForTimeout(80);
+      await assertUncovered(page.locator("#ovr-value-temperature"), "first invalid field");
+      await assertUncovered(page.locator("#error-temperature"), "inline error");
+      await page.locator("#ovr-value-temperature").fill("0.73");
+      assert.equal(await page.locator("#ovr-value-temperature").evaluate((el) => el.validity.valid), true);
+      assert.equal(await page.locator("#ovr-value-temperature").getAttribute("aria-invalid"), null);
+      await page.locator("#ovr-row-top_k select").selectOption("client");
+      assert.equal(await page.locator("#ovr-err").isVisible(), false);
+    },
+  );
+  await run(
+    "keyboard save and reload restore focus; auth and server errors receive focus",
+    async () => {
+      await page.locator("#ovr-save").focus();
+      await page.keyboard.press("Enter");
+      await waitText("ovr-status", "已保存并生效");
+      assert.equal(await page.evaluate(() => document.activeElement.id), "ovr-save");
+      assert.equal(saved.temperature.value, 0.73);
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Enter");
+      await waitText("ovr-status", "已读取");
+      assert.equal(await page.evaluate(() => document.activeElement.id), "ovr-reload");
+      await page.fill("#ovr-key", "wrong-key");
+      await page.click("#ovr-save");
+      await waitText("ovr-err", "需要管理密钥");
+      assert.equal(await page.evaluate(() => document.activeElement.id), "ovr-key");
+      assert.equal(await page.locator("#ovr-key").getAttribute("aria-invalid"), "true");
+      assert.equal(await page.locator('label[for="ovr-key"]').isVisible(), true);
+      await page.fill("#ovr-key", "fixture-key");
+      overrideFailure = true;
+      try {
+        await page.click("#ovr-save");
+        await waitText("ovr-err", "fixture save unavailable");
+        assert.equal(await page.evaluate(() => document.activeElement.id), "ovr-err");
+        await page.waitForTimeout(80);
+        await assertUncovered(page.locator("#ovr-err"), "server failure");
+      } finally { overrideFailure = false; }
+      await page.click("#ovr-save");
+      await waitText("ovr-status", "已保存并生效");
+      assert.equal(await page.locator("#ovr-err").isVisible(), false);
+    },
+  );
+  await run(
+    "saving never steals focus after the user switches pages",
+    async () => {
+      overrideDelay = 350;
+      try {
+        await page.click("#ovr-save");
+        await go("requests");
+        await page.locator("#reason-filter").focus();
+        await page.waitForFunction(() => !document.getElementById("ovr-save").disabled);
+        assert.equal(await page.evaluate(() => document.activeElement.id), "reason-filter");
+      } finally { overrideDelay = 0; }
+      await go("settings");
+    },
+  );
+  await run(
+    "forward and reverse keyboard traversal stays above the toolbar at desktop and mobile sizes",
+    async () => {
+      const previous = saved;
+      saved = Object.fromEntries([
+        ["enable_thinking", true], ["reasoning_effort", "xhigh"], ["preserve_thinking", true],
+        ["temperature", 0.73], ["top_p", 0.95], ["top_k", 20], ["min_p", 0],
+        ["presence_penalty", 0], ["frequency_penalty", 0], ["max_tokens", 32768],
+      ].map(([key, value]) => [key, { mode: "force", value }]));
+      try {
+        for (const [width, height] of [[1440, 1000], [1280, 720], [390, 844], [320, 568]]) {
+          const p = await browser.newPage({ viewport: { width, height }, reducedMotion: "reduce" });
+          p.on("pageerror", (e) => errors.push(e.message));
+          try {
+            await p.goto(base + "#settings");
+            await p.waitForFunction(() => !document.getElementById("ovr-save").disabled);
+            await p.locator(".skip").focus();
+            for (const key of ["Tab", "Shift+Tab"]) {
+              let checked = 0;
+              for (let i = 0; i < 40; i++) {
+                await p.keyboard.press(key);
+                await p.waitForTimeout(40);
+                if (await p.evaluate(() => !!document.activeElement.closest("#ovr-body"))) {
+                  checked++;
+                  await assertUncovered(p.locator(":focus"), width + " " + key + " field");
+                }
+                const id = await p.evaluate(() => document.activeElement.id);
+                if (key === "Tab" && id === "ovr-clear") break;
+                if (key === "Shift+Tab" && checked === 20) break;
+              }
+              assert.equal(checked, 20, width + " all enabled controls traversed");
+            }
+            if (width === 390) {
+              await p.locator("#ovr-value-temperature").fill("3");
+              await p.click("#ovr-save");
+              await p.waitForTimeout(80);
+              await assertUncovered(p.locator("#ovr-value-temperature"), "mobile invalid input");
+              await assertUncovered(p.locator("#error-temperature"), "mobile inline error");
+              await p.screenshot({ path: path.join(output, "settings-inline-error-mobile.png") });
+            }
+            assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+          } finally { await p.close(); }
+        }
+      } finally { saved = previous; }
     },
   );
   await run(

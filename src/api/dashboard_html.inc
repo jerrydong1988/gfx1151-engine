@@ -1316,6 +1316,35 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         z-index: 2;
         border-radius: 0 0 10px 10px;
       }
+      #settings .save-bar.is-tall {
+        position: static;
+      }
+      .field-error {
+        display: block;
+        color: var(--err);
+        font-size: var(--text-xs);
+        margin-top: 6px;
+        overflow-wrap: anywhere;
+      }
+      [aria-invalid="true"] {
+        border-color: var(--err);
+      }
+      #ovr-key-field {
+        min-width: 0;
+        width: 100%;
+      }
+      #ovr-key-field label {
+        display: block;
+        font-size: var(--text-sm);
+        margin-bottom: 6px;
+      }
+      #ovr-key {
+        width: min(100%, 340px);
+      }
+      #ovr-err {
+        flex-basis: 100%;
+        margin: 0;
+      }
       #ovr-save {
         min-width: 140px;
       }
@@ -1787,21 +1816,25 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
                 </table>
               </div>
               <div class="save-bar">
-                <input
+                <div id="ovr-key-field" hidden>
+                  <label for="ovr-key">管理密钥</label>
+                  <input
                   id="ovr-key"
                   type="password"
                   autocomplete="off"
-                  aria-label="管理密钥"
-                  placeholder="管理密钥 (GDEC_API_ADMIN_KEY)"
-                  style="display: none"
-                /><button id="ovr-save" class="btn primary" disabled>
+                  placeholder="GDEC_API_ADMIN_KEY"
+                  aria-describedby="ovr-key-error"
+                  />
+                  <span id="ovr-key-error" class="field-error" hidden></span>
+                </div>
+                <button id="ovr-save" class="btn primary" disabled>
                   保存并立即生效</button
                 ><button id="ovr-reload" class="btn">重新读取</button
                 ><button id="ovr-clear" class="btn" disabled>跟随客户端</button
                 ><small id="ovr-status" role="status">尚未读取</small>
+                <div class="errmsg" id="ovr-err" role="alert" tabindex="-1"></div>
               </div>
               <div class="panel-body" style="padding-top: 0">
-                <div class="errmsg" id="ovr-err" role="alert"></div>
                 <div class="hint mono" id="ovr-meta"></div>
               </div>
             </section>
@@ -2213,6 +2246,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           tickHealth().then(tickMem);
           requestAnimationFrame(drawSpark);
         }
+        requestAnimationFrame(updateSettingsViewport);
       }
       function updateRefreshMeta() {
         const at = ["overview", "requests"].includes(page)
@@ -2952,7 +2986,6 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           type: "num",
           min: 0,
           max: 2,
-          step: 0.05,
           def: 1.0,
           note: "0 = 贪心；客户端不传时为 1.0。强制 0 时会去掉请求里的 logprobs",
         },
@@ -2962,7 +2995,6 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           type: "num",
           min: 0,
           max: 1,
-          step: 0.01,
           def: 0.95,
           note: "客户端不传时为 0.95",
         },
@@ -2982,7 +3014,6 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           type: "num",
           min: 0,
           max: 1,
-          step: 0.01,
           def: 0,
           note: "客户端不传时为 0",
         },
@@ -2992,7 +3023,6 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           type: "num",
           min: -2,
           max: 2,
-          step: 0.1,
           def: 0,
           note: "-2 ~ 2",
         },
@@ -3002,7 +3032,6 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           type: "num",
           min: -2,
           max: 2,
-          step: 0.1,
           def: 0,
           note: "-2 ~ 2",
         },
@@ -3035,7 +3064,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         i.type = "number";
         i.min = f.min;
         i.max = f.max;
-        i.step = f.step;
+        i.step = f.type === "int" ? "1" : "any";
         return i;
       }
 
@@ -3061,8 +3090,13 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           const valTd = document.createElement("td");
           valTd.dataset.label = "参数值";
           const val = ovrValueInput(f);
+          val.id = "ovr-value-" + f.k;
           val.setAttribute("aria-label", f.label + "值");
           valTd.appendChild(val);
+          const error = node("span", "", "field-error");
+          error.id = "error-" + f.k;
+          error.hidden = true;
+          valTd.appendChild(error);
           const note = document.createElement("td");
           note.className = "note";
           note.textContent = f.note;
@@ -3073,11 +3107,16 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           f.modeEl = mode;
           f.valEl = val;
           f.row = tr;
+          f.errorEl = error;
           mode.addEventListener("change", () => {
             syncRow(f);
+            revalidateOvrField(f);
             markDirty();
           });
-          val.addEventListener("input", markDirty);
+          val.addEventListener("input", () => {
+            revalidateOvrField(f);
+            markDirty();
+          });
           val.addEventListener("change", markDirty);
         }
       }
@@ -3107,6 +3146,73 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       let ovrDirty = false,
         ovrLoaded = false,
         ovrPending = false;
+      function setOvrFieldError(f, message = "") {
+        f.errorEl.textContent = message;
+        f.errorEl.hidden = !message;
+        if (message) f.valEl.setAttribute("aria-invalid", "true");
+        else f.valEl.removeAttribute("aria-invalid");
+        f.valEl.setAttribute(
+          "aria-describedby",
+          "note-" + f.k + (message ? " " + f.errorEl.id : ""),
+        );
+      }
+      function refreshOvrErrors() {
+        const errors = OVR_FIELDS.filter((f) => !f.errorEl.hidden);
+        if (errors.length) {
+          $("ovr-err").dataset.kind = "validation";
+          showErr("ovr-err", errors[0].errorEl.textContent +
+            (errors.length > 1 ? "；共 " + errors.length + " 项需要修正" : ""));
+        } else if ($("ovr-err").dataset.kind === "validation") {
+          hideErr("ovr-err");
+          delete $("ovr-err").dataset.kind;
+        }
+        return errors;
+      }
+      function revalidateOvrField(f) {
+        if (f.errorEl.hidden) return;
+        let message = "";
+        try { if (f.modeEl.value !== "client") getVal(f); }
+        catch (e) { message = e.message; }
+        setOvrFieldError(f, message);
+        refreshOvrErrors();
+      }
+      function clearOvrErrors() {
+        for (const f of OVR_FIELDS) setOvrFieldError(f);
+        $("ovr-key").removeAttribute("aria-invalid");
+        $("ovr-key-error").hidden = true;
+        $("ovr-key-error").textContent = "";
+        hideErr("ovr-err");
+        delete $("ovr-err").dataset.kind;
+      }
+      function restoreOvrFocus(origin, target = origin) {
+        if (page === "settings" && target &&
+            (document.activeElement === document.body || document.activeElement === origin)) {
+          target.focus();
+          requestAnimationFrame(updateSettingsViewport);
+        }
+      }
+      function updateSettingsViewport() {
+        const bar = $("ovr-save").closest(".save-bar");
+        const sidebar = document.querySelector(".sidebar");
+        const top = getComputedStyle(sidebar).position === "sticky"
+          ? sidebar.getBoundingClientRect().height : 0;
+        // A tall toolbar must scroll normally instead of covering the editor.
+        bar.classList.toggle("is-tall", bar.offsetHeight > (innerHeight - top) / 2);
+        const sticky = page === "settings" && getComputedStyle(bar).position === "sticky";
+        document.documentElement.style.scrollPaddingTop = top + 12 + "px";
+        document.documentElement.style.scrollPaddingBottom = (sticky ? bar.offsetHeight + 12 : 12) + "px";
+        const active = document.activeElement;
+        if (page !== "settings" || !$("settings").contains(active)) return;
+        const box = (active.closest("td") || active).getBoundingClientRect();
+        const bottom = sticky && !bar.contains(active)
+          ? Math.min(innerHeight, bar.getBoundingClientRect().top) - 12
+          : innerHeight - 12;
+        if (box.top < top + 12 || box.bottom > bottom) {
+          const available = bottom - top - 12;
+          const y = top + 12 + Math.max(0, (available - box.height) / 2);
+          window.scrollBy({ top: box.top - y, behavior: "instant" });
+        }
+      }
       function lockOvr(b) {
         ovrPending = b;
         $("ovr-save").textContent = b ? "正在处理…" : "保存并立即生效";
@@ -3146,7 +3252,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           setVal(f, e ? e.value : f.def);
           syncRow(f);
         }
-        $("ovr-key").style.display = state.admin_key_required ? "" : "none";
+        $("ovr-key-field").hidden = !state.admin_key_required;
         $("ovr-meta").textContent = state.persist_path
           ? "持久化文件：" + state.persist_path
           : "仅内存（未持久化）";
@@ -3156,30 +3262,45 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
 
       async function loadOvr() {
         if (ovrPending) return;
+        const origin = document.activeElement;
+        let focusTarget = origin;
         lockOvr(true);
         try {
           fillOvr(await grab("/admin/overrides"));
-          hideErr("ovr-err");
+          clearOvrErrors();
           $("ovr-status").textContent = "已读取 " + hhmmss();
         } catch (e) {
           showErr("ovr-err", "读取失败：" + e.message);
+          focusTarget = $("ovr-err");
         } finally {
           lockOvr(false);
+          restoreOvrFocus(origin, focusTarget);
         }
       }
 
       function collectOvr() {
         const t = {};
+        clearOvrErrors();
         for (const f of OVR_FIELDS) {
           const m = f.modeEl.value;
           if (m === "client") continue;
-          t[f.k] = { mode: m, value: getVal(f) };
+          try { t[f.k] = { mode: m, value: getVal(f) }; }
+          catch (e) { setOvrFieldError(f, e.message); }
+        }
+        const errors = refreshOvrErrors();
+        if (errors.length) {
+          errors[0].valEl.focus();
+          requestAnimationFrame(updateSettingsViewport);
+          return null;
         }
         return t;
       }
 
       async function saveOvr(table) {
         if (ovrPending || !ovrLoaded) return;
+        const origin = document.activeElement;
+        let focusTarget = origin;
+        clearOvrErrors();
         lockOvr(true);
         const headers = { "Content-Type": "application/json" };
         const key = $("ovr-key").value;
@@ -3194,32 +3315,35 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           hideErr("ovr-err");
           $("ovr-status").textContent =
             (j.saved ? "已保存并生效 " : "已生效，但未能写入文件 ") + hhmmss();
-          if (!j.saved)
+          if (!j.saved) {
             showErr(
               "ovr-err",
               "持久化失败：" + (j.save_error || "?") + "（重启后会丢失）",
             );
+            focusTarget = $("ovr-err");
+          }
           tickHealth();
         } catch (e) {
-          if (e.status === 401) $("ovr-key").style.display = "";
-          showErr(
-            "ovr-err",
-            "保存未确认：" + e.message + "；请重新读取确认服务端实际值",
-          );
+          if (e.status === 401) {
+            $("ovr-key-field").hidden = false;
+            $("ovr-key").setAttribute("aria-invalid", "true");
+            $("ovr-key-error").textContent = "请检查管理密钥后重新保存。";
+            $("ovr-key-error").hidden = false;
+            showErr("ovr-err", "保存失败：" + e.message);
+            focusTarget = $("ovr-key");
+          } else {
+            showErr("ovr-err", "保存未确认：" + e.message + "；请重新读取确认服务端实际值");
+            focusTarget = $("ovr-err");
+          }
         } finally {
           lockOvr(false);
+          restoreOvrFocus(origin, focusTarget);
         }
       }
 
       $("ovr-save").addEventListener("click", () => {
-        let t;
-        try {
-          t = collectOvr();
-        } catch (e) {
-          showErr("ovr-err", e.message);
-          return;
-        }
-        saveOvr(t);
+        const t = collectOvr();
+        if (t) saveOvr(t);
       });
       $("ovr-reload").addEventListener("click", () => {
         if (ovrDirty && !confirm("丢弃未保存的修改？")) return;
@@ -3586,6 +3710,15 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         }
       });
 
+      document.querySelector(".skip").addEventListener("click", (e) => {
+        e.preventDefault();
+        $("content").focus();
+        $("content").scrollIntoView({ block: "start" });
+      });
+      $("settings").addEventListener("focusin", () => requestAnimationFrame(updateSettingsViewport));
+      const settingsObserver = new ResizeObserver(() => requestAnimationFrame(updateSettingsViewport));
+      settingsObserver.observe($("ovr-save").closest(".save-bar"));
+      settingsObserver.observe(document.querySelector(".sidebar"));
       window.addEventListener("hashchange", () => {
         activatePage();
         document
@@ -3594,6 +3727,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         $("content").focus({ preventScroll: true });
       });
       window.addEventListener("resize", () => {
+        requestAnimationFrame(updateSettingsViewport);
         drawThroughput();
         if (page === "memory") drawSpark();
       });
