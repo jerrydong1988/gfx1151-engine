@@ -15,21 +15,23 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         --text-sm: 0.8125rem;
         --text-base: 0.875rem;
         --control-height: 40px;
-        --hover: #242b34;
-        --bg: #101419;
-        --sidebar: #14191f;
-        --panel: #191f26;
-        --soft: #141a21;
-        --border: #2b333d;
-        --fg: #eaf0f5;
-        --dim: #a0adba;
-        --accent: #89d5c1;
-        --accent-bg: #253832;
-        --ok: #8bd6b1;
-        --warn: #efc487;
-        --err: #ff9993;
-        --c-committed: #89d5c1;
-        --c-rss: #b8a8eb;
+        --hover: #22283a;
+        --bg: #0b0e16;
+        --sidebar: #0d101a;
+        --panel: #151a27;
+        --soft: #0e1320;
+        --border: #30384d;
+        --fg: #f1f4fc;
+        --dim: #adb8ce;
+        --accent: #d3fa69;
+        --accent-bg: #2b351d;
+        --ok: #b9ec87;
+        --warn: #ffcb85;
+        --err: #ffa9a6;
+        --c-committed: #d3fa69;
+        --c-rss: #b8a4ff;
+        --secondary: #b8a4ff;
+        --display-font: "Bahnschrift", "Segoe UI Variable", "Segoe UI", sans-serif;
       }
       * {
         box-sizing: border-box;
@@ -89,8 +91,9 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin: 0;
       }
       h1 {
-        font-size: 28px;
-        letter-spacing: -0.7px;
+        font-size: 36px;
+        font-weight: 700;
+        letter-spacing: -1px;
         line-height: 1.4;
       }
       h2 {
@@ -137,17 +140,17 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         color: var(--fg);
       }
       .btn:hover:not(:disabled) {
-        background: #263039;
-        border-color: #5a6b78;
+        background: #242d42;
+        border-color: #7789ac;
       }
       .btn.primary {
         background: var(--accent);
         border-color: var(--accent);
-        color: #10281f;
+        color: #19220c;
         font-weight: 600;
       }
       .btn.primary:hover:not(:disabled) {
-        background: #a3e5d4;
+        background: #e2ff96;
       }
       .link-btn {
         border: 0;
@@ -177,19 +180,19 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         color: var(--dim);
       }
       .chip.ok {
-        background: #21362d;
+        background: #243521;
         color: var(--ok);
-        border-color: #314b3e;
+        border-color: #425b34;
       }
       .chip.warn {
-        background: #382f25;
+        background: #382d21;
         color: var(--warn);
-        border-color: #554432;
+        border-color: #65503a;
       }
       .chip.err {
-        background: #3a282a;
+        background: #3d252e;
         color: var(--err);
-        border-color: #664044;
+        border-color: #82505c;
       }
       .dot {
         display: inline-block;
@@ -205,7 +208,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         width: 214px;
         display: flex;
         flex-direction: column;
-        padding: 29px 16px 20px;
+        padding: 30px 16px 20px;
         background: var(--sidebar);
         border-right: 1px solid var(--border);
         z-index: 5;
@@ -217,18 +220,21 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         padding: 0 6px 30px;
       }
       .brand-mark {
-        width: 35px;
-        height: 35px;
-        border: 1px solid #4d7064;
-        background: #233a31;
-        color: var(--accent);
-        border-radius: 10px;
+        width: 38px;
+        height: 38px;
+        border: 1px solid #d3fa69;
+        background: var(--accent);
+        color: #19220c;
+        border-radius: 9px;
         display: grid;
         place-items: center;
       }
       .brand strong {
-        font-size: 18px;
-        letter-spacing: 0.3px;
+        font-family: var(--display-font);
+        font-size: 23px;
+        font-weight: 600;
+        letter-spacing: -0.6px;
+        color: var(--fg);
       }
       .brand small {
         display: block;
@@ -244,7 +250,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .nav {
         display: flex;
         flex-direction: column;
-        gap: 7px;
+        gap: 9px;
       }
       .nav a {
         display: flex;
@@ -257,12 +263,13 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         white-space: nowrap;
       }
       .nav a:hover {
-        background: #202a31;
+        background: #20273a;
         color: var(--fg);
       }
       .nav a[aria-current="page"] {
-        color: #aff0d8;
-        background: var(--accent-bg);
+        color: #19220c;
+        background: var(--accent);
+        font-weight: 600;
       }
       .sidebar-bottom {
         margin-top: auto;
@@ -299,16 +306,16 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin-left: 10px;
       }
       .main {
-        max-width: 1760px;
+        max-width: 1680px;
         margin: auto;
-        padding: 24px 28px;
+        padding: 32px 32px;
       }
       .section-title {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 16px;
-        margin-bottom: 24px;
+        margin-bottom: 28px;
       }
       .section-title p {
         color: var(--dim);
@@ -343,7 +350,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .status-strip {
         border: 1px solid var(--border);
         background: var(--sidebar);
-        border-radius: 9px;
+        border-radius: 8px;
         min-height: 46px;
         padding: 9px 16px;
         display: flex;
@@ -365,24 +372,84 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .sep {
         height: 17px;
         width: 1px;
-        background: #3b4a43;
+        background: #3d465d;
       }
       .stats {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 16px;
-        margin: 0 0 22px;
+        grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin: 0 0 24px;
       }
       .stat {
         background: var(--panel);
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 16px 18px;
+        border-radius: 14px;
+        padding: 20px 22px;
         min-width: 0;
       }
       .stat.featured {
-        background: #1c2826;
-        border-color: #3d564c;
+        grid-row: span 2;
+        background: linear-gradient(130deg, #302951, #1c2038 75%);
+        border-color: #685a95;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 28px;
+        position: relative;
+        overflow: hidden;
+      }
+      .stat.featured .label {
+        color: #d2c6ff;
+        position: relative;
+      }
+      .stat.featured .value {
+        font-size: clamp(40px, 4.3vw, 64px);
+        line-height: 1.1;
+        margin: 24px 0 18px;
+        position: relative;
+      }
+      .stat.featured .foot {
+        color: #c0c7df;
+        position: relative;
+      }
+      .stat.requests-stat {
+        grid-column: 2 / -1;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0 20px;
+        align-items: center;
+        padding-block: 14px;
+        background: var(--soft);
+      }
+      .requests-stat .value {
+        grid-column: 2;
+        grid-row: 1 / 3;
+        margin: 0;
+      }
+      .requests-stat .foot {
+        grid-column: 1;
+      }
+      .metric-code {
+        font: 12px/1.5 var(--display-font);
+        letter-spacing: 1.4px;
+        margin-bottom: 18px;
+        color: #d2c6ff;
+      }
+      .signal-mark {
+        position: absolute;
+        right: -12px;
+        top: -10px;
+        width: 138px;
+        height: 138px;
+        opacity: 0.25;
+        pointer-events: none;
+      }
+      .eyebrow {
+        display: block;
+        color: var(--accent);
+        font: 12px/1.5 var(--display-font);
+        letter-spacing: 1.8px;
+        margin-bottom: 8px;
       }
       .stat .label {
         color: var(--dim);
@@ -392,16 +459,17 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         align-items: center;
       }
       .stat .value {
-        font-family: Consolas, monospace;
+        font-family: var(--display-font);
+        font-variant-numeric: tabular-nums;
         font-weight: 600;
-        font-size: 32px;
+        font-size: 36px;
         letter-spacing: -0.025em;
         margin: 9px 0;
         line-height: 1.25;
         overflow-wrap: anywhere;
       }
       .stat.featured .value {
-        color: #aff0d8;
+        color: #d3fa69;
       }
       .stat .value small {
         font-size: var(--text-sm);
@@ -423,12 +491,12 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .panel {
         background: var(--panel);
         border: 1px solid var(--border);
-        border-radius: 11px;
+        border-radius: 14px;
         min-width: 0;
         overflow: hidden;
       }
       .panel-head {
-        padding: 18px 20px 0;
+        padding: 22px 22px 0;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -441,7 +509,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin-top: 3px;
       }
       .panel-body {
-        padding: 18px 20px;
+        padding: 20px 22px;
       }
       .chart-switch {
         display: flex;
@@ -466,7 +534,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       #throughput {
         display: block;
         width: 100%;
-        height: 176px;
+        height: 200px;
       }
       .chart-note {
         display: flex;
@@ -477,8 +545,9 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin-top: 12px;
       }
       .number {
-        font-family: Consolas, monospace;
-        font-size: 32px;
+        font-family: var(--display-font);
+        font-variant-numeric: tabular-nums;
+        font-size: 42px;
         line-height: 1.3;
       }
       .number small {
@@ -496,8 +565,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .capacity strong {
         font:
-          22px Consolas,
-          monospace;
+          25px var(--display-font);
         display: block;
         margin-top: 3px;
       }
@@ -531,7 +599,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .bar {
         height: 7px;
         border-radius: 5px;
-        background: #2b353d;
+        background: #30384d;
         overflow: hidden;
         margin: 10px 0;
       }
@@ -572,7 +640,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin-top: 14px;
       }
       .requests tbody tr:hover {
-        background: #202a31;
+        background: #20273a;
       }
       .requests .r-id {
         display: block;
@@ -621,8 +689,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .errmsg {
         display: none;
         color: var(--err);
-        background: #302024;
-        border: 1px solid #684047;
+        background: #39232e;
+        border: 1px solid #89505d;
         padding: 11px 15px;
         border-radius: 7px;
         font-size: var(--text-sm);
@@ -755,8 +823,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         min-width: 0;
       }
       .msg.user {
-        border-color: #3e574c;
-        background: #1b2923;
+        border-color: #554774;
+        background: #211f36;
       }
       .msg .role {
         font-size: var(--text-xs);
@@ -770,7 +838,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .msg .think {
         color: var(--dim);
-        border-left: 1px solid #51655c;
+        border-left: 1px solid #655584;
         padding-left: 12px;
         margin: 10px 0;
         font-size: var(--text-sm);
@@ -841,8 +909,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
       .hero .num {
         font:
-          38px Consolas,
-          monospace;
+          48px var(--display-font);
         color: var(--accent);
       }
       .hero .lab {
@@ -909,7 +976,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         transform: translateX(-50%);
         max-width: 90vw;
         padding: 11px 20px;
-        background: #263a31;
+        background: #293620;
         box-shadow: 0 8px 30px #0006;
         border-radius: 8px;
         z-index: 20;
@@ -1007,6 +1074,14 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         .stats {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
+        .stat.featured {
+          grid-column: 1 / -1;
+          grid-row: auto;
+          padding: 24px;
+        }
+        .stat.featured .value { font-size: 48px; margin: 16px 0; }
+        .stat.requests-stat { grid-column: 1 / -1; }
+        .metric-code { margin-bottom: 12px; }
       }
       @media (max-width: 600px) {
         .sidebar {
@@ -1057,15 +1132,22 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           margin-bottom: 20px;
         }
         .section-title h1 {
-          font-size: 25px;
+          font-size: 30px;
         }
+        .eyebrow { font-size: 11px; letter-spacing: 1.2px; }
+        .section-title { display: block; }
+        .stat.featured { padding: 22px; }
+        .stat.featured .value { font-size: 42px; }
+        .stat.requests-stat { padding: 16px; }
         .section-title p {
           font-size: var(--text-sm);
-          max-width: 205px;
+          max-width: none;
         }
         .section-title > .row {
-          flex-direction: column;
-          align-items: flex-end;
+          margin-top: 16px;
+          flex-direction: row;
+          align-items: center;
+          justify-content: space-between;
           gap: 6px;
         }
         .section-title select {
@@ -1175,7 +1257,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       }
 
       ::selection {
-        background: #37594d;
+        background: #58652e;
         color: #fff;
       }
       input,
@@ -1193,18 +1275,19 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .nav a {
         position: relative;
         min-height: 44px;
+        transition: none;
       }
       .nav a:hover:not([aria-current]) {
         background: var(--hover);
       }
       .nav a[aria-current] {
-        box-shadow: inset 1px 0 var(--accent);
+        box-shadow: none;
       }
       .nav a[aria-current] span {
         font-weight: 600;
       }
       .nav a:hover[aria-current] {
-        color: #aff0d8;
+        color: #19220c;
       }
       .stat .value {
         font-variant-numeric: tabular-nums;
@@ -1305,8 +1388,31 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         margin-top: 3px;
       }
       .ovr tr.on {
-        background: #efc48706;
+        background: #ffcb8506;
       }
+      .help { border-top: 2px solid var(--secondary); }
+      .help h2, .msg .role { color: var(--secondary); }
+      .notice {
+        border-left: 2px solid var(--secondary);
+        background: #171a2a;
+      }
+      .chat-empty h2 { font-size: 23px; letter-spacing: -0.4px; }
+      .chat-empty > [data-icon] {
+        display: inline-grid;
+        place-items: center;
+        width: 52px;
+        height: 52px;
+        border: 1px solid #685a95;
+        border-radius: 14px;
+        background: #25223c;
+        color: var(--secondary);
+        margin-bottom: 16px;
+      }
+      #capacity-panel { border-top: 2px solid var(--secondary); }
+      #capabilities { background: var(--soft); }
+      .requests th { background: var(--soft); }
+      #memory .hero { border-bottom: 1px solid var(--border); padding-bottom: 24px; }
+      #ovr-err:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
       #settings .secondary-grid > section {
         overflow: visible;
       }
@@ -1416,9 +1522,11 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         .nav [data-icon] {
           display: none;
         }
-        .nav a[aria-current] {
+        .nav a[aria-current],
+        .nav a:hover[aria-current] {
           box-shadow: inset 0 -2px var(--accent);
           background: transparent;
+          color: var(--accent);
         }
         .topbar {
           padding: 10px 16px;
@@ -1624,6 +1732,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       <main class="main" id="content" tabindex="-1">
         <div class="section-title">
           <div>
+            <span class="eyebrow" id="page-code" aria-hidden="true">01 / OVERVIEW</span>
             <h1 id="page-title">运行总览</h1>
             <p id="page-description">查看服务状态、推理表现与最近请求。</p>
           </div>
@@ -1647,14 +1756,11 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             <small id="health-meta">状态来自 API 进程</small>
           </div>
           <div class="stats" id="reqs-grid">
-            <article class="stat">
-              <div class="label">请求总数<i data-icon="list"></i></div>
-              <div class="value">
-                <span id="s-requests">—</span><small>次</small>
-              </div>
-              <div class="foot" id="s-finish">当前统计范围</div>
-            </article>
             <article class="stat featured">
+              <svg class="signal-mark" viewBox="0 0 140 140" fill="none" aria-hidden="true">
+                <path d="M15 104 66 16h22l-51 88M48 124 99 36h22l-51 88M82 140 133 52h22l-51 88" stroke="#b8a4ff" stroke-width="2" />
+              </svg>
+              <div class="metric-code" aria-hidden="true">INFERENCE / PREFILL</div>
               <div class="label">
                 Prefill · 输入处理<i data-icon="pulse"></i>
               </div>
@@ -1676,6 +1782,13 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
               <div class="label">首字延迟 · P50<i data-icon="clock"></i></div>
               <div class="value" id="s-ttft">—</div>
               <div class="foot" id="s-p95">P95 · 等待流式记录</div>
+            </article>
+            <article class="stat requests-stat">
+              <div class="label">请求总数<i data-icon="list"></i></div>
+              <div class="value">
+                <span id="s-requests">—</span><small>次</small>
+              </div>
+              <div class="foot" id="s-finish">当前统计范围</div>
             </article>
           </div>
           <div class="analytics">
@@ -2230,6 +2343,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           if (el.dataset.page === page) el.setAttribute("aria-current", "page");
           else el.removeAttribute("aria-current");
         });
+        const pageCodes = { overview: "01 / OVERVIEW", requests: "02 / REQUESTS", settings: "03 / PARAMETERS", chat: "04 / PLAYGROUND", memory: "05 / MEMORY" };
+        txt("page-code", pageCodes[page]);
         txt("page-label", titles[page][0]);
         txt("page-title", titles[page][0]);
         txt("page-description", titles[page][1]);
@@ -2772,7 +2887,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           }))
           .filter((p) => finite(p.v));
         g.font = "12px Consolas, monospace";
-        g.fillStyle = "#a0adba";
+        g.fillStyle = "#adb8ce";
         if (!data.length) {
           g.textAlign = "center";
           g.fillText(
@@ -2806,12 +2921,12 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         for (let i = 0; i <= 3; i++) {
           const value = (max * i) / 3,
             py = y(value);
-          g.strokeStyle = "#2b333d";
+          g.strokeStyle = "#30384d";
           g.beginPath();
           g.moveTo(pad.l, py);
           g.lineTo(W - pad.r, py);
           g.stroke();
-          g.fillStyle = "#a0adba";
+          g.fillStyle = "#adb8ce";
           g.textAlign = "right";
           g.fillText(
             value >= 1000 ? (value / 1000).toFixed(1) + "k" : Math.round(value),
@@ -2819,8 +2934,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             py + 4,
           );
         }
-        g.strokeStyle = "#89d5c1";
-        g.lineWidth = 2;
+        g.strokeStyle = "#d3fa69";
+        g.lineWidth = 2.5;
         g.beginPath();
         data.forEach((p, i) =>
           i ? g.lineTo(x(p.t, i), y(p.v)) : g.moveTo(x(p.t, i), y(p.v)),
@@ -2828,12 +2943,12 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         g.stroke();
         chartPoints = data.map((p, i) => ({ ...p, x: x(p.t, i), y: y(p.v) }));
         for (const p of chartPoints) {
-          g.fillStyle = "#89d5c1";
+          g.fillStyle = "#d3fa69";
           g.beginPath();
           g.arc(p.x, p.y, 3, 0, Math.PI * 2);
           g.fill();
         }
-        g.fillStyle = "#a0adba";
+        g.fillStyle = "#adb8ce";
         g.textAlign = "left";
         g.fillText(timeScale ? utc(minT).slice(11) : "第 1 次", pad.l, H - 4);
         g.textAlign = "right";
@@ -2850,14 +2965,14 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         if (chartSelected >= data.length) chartSelected = data.length - 1;
         if (chartSelected >= 0) {
           const p = chartPoints[chartSelected];
-          g.strokeStyle = "#a0adba";
+          g.strokeStyle = "#adb8ce";
           g.setLineDash([3, 4]);
           g.beginPath();
           g.moveTo(p.x, pad.t);
           g.lineTo(p.x, H - pad.b);
           g.stroke();
           g.setLineDash([]);
-          g.fillStyle = "#eaf0f5";
+          g.fillStyle = "#f1f4fc";
           g.beginPath();
           g.arc(p.x, p.y, 5, 0, Math.PI * 2);
           g.fill();
@@ -3443,8 +3558,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         const g = cv.getContext("2d");
         g.clearRect(0, 0, W, H);
         const series = [
-          { data: hist.committed, color: "#89d5c1" },
-          { data: hist.rss, color: "#b8a8eb" },
+          { data: hist.committed, color: "#d3fa69" },
+          { data: hist.rss, color: "#b8a4ff" },
         ];
         let max = 0;
         for (const s of series)
@@ -3454,7 +3569,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           n = HIST_CAP;
         const x = (i) => pad + (W - 2 * pad) * (i / (n - 1));
         const y = (v) => H - pad - (H - 2 * pad) * (v / max);
-        g.strokeStyle = "#30363d";
+        g.strokeStyle = "#30384d";
         g.lineWidth = 1;
         g.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
         for (const s of series) {
@@ -3474,7 +3589,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           });
           g.stroke();
         }
-        g.fillStyle = "#8b949e";
+        g.fillStyle = "#adb8ce";
         g.font = 10 * dpr + "px Consolas, monospace";
         g.fillText(fmtBytes(max), pad + 4 * dpr, pad + 12 * dpr);
       }
