@@ -90,6 +90,11 @@ const records = Array.from({ length: 14 }, (_, i) => ({
 records[0].ts_ms = today - 1000;
 records[1].cached_tokens = records[1].prompt_tokens;
 records[2].ttft_ms = 0;
+// Unequal input sizes and cache states must remain distinguishable on the chart.
+for (const [i, added] of [[2,128],[3,129],[4,512],[5,513],[6,2048],[7,2049],[8,8192],[9,8193],[10,62],[11,85]]) {
+  records[i].prompt_tokens = 16384;
+  records[i].cached_tokens = 16384 - added;
+}
 const memory = {
   gpu_accessible_committed_bytes: 80 * 2 ** 30,
   accounting: "device + registered mmap + pinned",
@@ -655,6 +660,54 @@ async function main() {
       await page.selectOption("#chart-view", "request");
       await page.mouse.move(0, 0);
       await page.locator("#content").focus();
+    },
+  );
+  await run(
+    "chart cohorts, cache-only empty state and keyboard context preserve summary statistics",
+    async () => {
+      await go("overview");
+      for (const [size, count] of [["tiny",3],["small",2],["medium",2],["large",4],["bulk",1]]) {
+        await page.selectOption("#chart-size", size);
+        assert.match(await text("#chart-note"), new RegExp("显示最近 " + count + " / " + count));
+      }
+      await page.selectOption("#chart-size", "tiny");
+      await page.selectOption("#chart-cache", "partial");
+      await page.locator("#throughput").focus();
+      await page.keyboard.press("End");
+      assert.match(await text("#chart-readout"), /新增 85 token.*缓存 99\.5%.*Prefill.*首字/);
+      assert.match(await text("#chart-axis-label"), /非耗时/);
+      assert.equal(await text("#s-prefill"), "1,141.8");
+      await page.selectOption("#chart-cache", "miss");
+      assert.match(await text("#chart-readout"), /没有可计算的匹配请求/);
+      await page.selectOption("#chart-size", "all");
+      await page.selectOption("#chart-cache", "full");
+      assert.match(await text("#chart-readout"), /Prefill 速度不适用/);
+      await page.click('[data-chart="decode"]');
+      assert.match(await text("#chart-note"), /显示最近 1 \/ 1/);
+      await page.locator("#throughput").focus();
+      await page.keyboard.press("Home");
+      assert.match(await text("#chart-readout"), /Decode.*新增 0 token.*缓存 100\.0%/);
+      await page.click('[data-chart="prefill"]');
+      await page.selectOption("#chart-cache", "all");
+      await page.mouse.move(0, 0);
+      await page.locator("#content").focus();
+    },
+  );
+  await run(
+    "chart filters search fetched records before limiting displayed points",
+    async () => {
+      const originalLength = records.length;
+      try {
+        for (let i = 0; i < 55; i++) records.push({ ...records[13], ts_ms: today + 300000 + i * 8000, req_seq: 100 + i });
+        await page.reload();
+        await waitText("chart-note", "69 条记录");
+        await page.selectOption("#chart-size", "tiny");
+        assert.match(await text("#chart-note"), /显示最近 3 \/ 3/);
+      } finally {
+        records.length = originalLength;
+        await page.reload();
+        await waitText("chart-note", "14 条记录");
+      }
     },
   );
   await run(

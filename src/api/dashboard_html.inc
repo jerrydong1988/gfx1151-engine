@@ -1370,6 +1370,29 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         color: var(--fg);
         margin-top: 6px;
       }
+      .chart-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 20px;
+        margin-bottom: 12px;
+      }
+      .chart-filters label {
+        display: grid;
+        gap: 5px;
+        font-size: var(--text-xs);
+        color: var(--dim);
+        flex: 1 1 170px;
+      }
+      .chart-filters select {
+        width: 100%;
+        min-height: 44px;
+      }
+      .chart-context {
+        font-size: var(--text-xs);
+        color: var(--dim);
+        line-height: 1.6;
+        margin: 0 0 12px;
+      }
       #throughput {
         outline-offset: 4px;
       }
@@ -1796,7 +1819,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
               <div class="panel-head">
                 <div>
                   <h2>吞吐表现</h2>
-                  <p>最近已记录请求 · 逐次实测</p>
+                  <p>每点代表一次请求 · 可按输入规模和缓存状态比较</p>
                 </div>
                 <div class="chart-controls">
                   <select id="chart-view" aria-label="吞吐图横轴">
@@ -1817,11 +1840,34 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
                 </div>
               </div>
               <div class="panel-body">
+                <div class="chart-filters">
+                  <label for="chart-size">实际新增 token
+                    <select id="chart-size">
+                      <option value="all">全部规模</option>
+                      <option value="tiny">1–128</option>
+                      <option value="small">129–512</option>
+                      <option value="medium">513–2,048</option>
+                      <option value="large">2,049–8,192</option>
+                      <option value="bulk">超过 8,192</option>
+                    </select>
+                  </label>
+                  <label for="chart-cache">前缀缓存
+                    <select id="chart-cache">
+                      <option value="all">全部状态</option>
+                      <option value="miss">未命中 · 完整预填充</option>
+                      <option value="partial">部分命中 · 增量预填充</option>
+                      <option value="full">全部命中 · 无新增输入</option>
+                    </select>
+                  </label>
+                </div>
+                <p class="chart-context" id="chart-context">
+                  实际新增 = 输入减去缓存命中。短输入的 tok/s 较低，不一定出首字更慢。
+                </p>
                 <canvas
                   id="throughput"
                   role="img"
                   tabindex="0"
-                  aria-describedby="chart-readout"
+                  aria-describedby="chart-context chart-readout chart-note"
                   aria-label="请求吞吐趋势"
                 ></canvas>
                 <div
@@ -2513,6 +2559,20 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           ? (r.output_tokens * 1000) / r.decode_ms
           : null;
       }
+      function chartMatches(r) {
+        const n = r.prompt_tokens - r.cached_tokens,
+          size = $("chart-size").value,
+          cache = $("chart-cache").value,
+          bounds = { tiny: [1, 128], small: [129, 512], medium: [513, 2048],
+            large: [2049, 8192], bulk: [8193, Infinity] };
+        return (
+          (size === "all" || (n >= bounds[size][0] && n <= bounds[size][1])) &&
+          (cache === "all" ||
+            (cache === "miss" && r.cached_tokens === 0) ||
+            (cache === "partial" && r.cached_tokens > 0 && n > 0) ||
+            (cache === "full" && r.prompt_tokens > 0 && n === 0))
+        );
+      }
       let queuedManualRefresh = false;
       async function tickReqs(manual = false) {
         if (manual) queuedManualRefresh = true;
@@ -2878,37 +2938,48 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         cv.height = H * dpr;
         const g = cv.getContext("2d");
         g.scale(dpr, dpr);
-        const data = scopedRecords()
+        const matched = scopedRecords().filter(chartMatches),
+          measurable = matched.filter((r) => finite(
+            chartMetric === "prefill" ? prefillRate(r) : decodeRate(r))),
+          data = measurable
           .slice(0, 50)
           .reverse()
           .map((r) => ({
             t: r.ts_ms,
             v: chartMetric === "prefill" ? prefillRate(r) : decodeRate(r),
-          }))
-          .filter((p) => finite(p.v));
+            r,
+          }));
+        const filtered = $("chart-size").value !== "all" || $("chart-cache").value !== "all",
+          timeScale = $("chart-view").value === "time";
+        txt("chart-context", chartMetric === "prefill"
+          ? "实际新增 = 输入减去缓存命中。短输入的 tok/s 较低，不一定出首字更慢。"
+          : "当前仍按新增输入和前缀缓存筛选；Decode = 输出 token ÷ 生成耗时。");
+        txt("chart-axis-label", timeScale ? "tok/s · 时间 UTC" : "tok/s · 请求等距，非耗时");
         g.font = "12px Consolas, monospace";
         g.fillStyle = "#adb8ce";
         if (!data.length) {
           g.textAlign = "center";
           g.fillText(
-            "暂无可计算的" +
-              (chartMetric === "prefill" ? " Prefill" : " Decode") +
-              " 请求",
+            filtered ? "当前筛选无有效采样" : "暂无有效吞吐采样",
             W / 2,
             H / 2,
           );
           chartPoints = [];
           chartSelected = -1;
-          txt("chart-readout", "可在“对话测试”发送请求后查看吞吐数据。");
-          txt("chart-note", "全命中缓存 / 未记录耗时的请求不参与曲线");
-          cv.setAttribute("aria-label", "暂无吞吐数据");
+          const fullCache = chartMetric === "prefill" && matched.some((r) =>
+            r.prompt_tokens > 0 && r.prompt_tokens === r.cached_tokens);
+          txt("chart-readout", fullCache
+            ? "全部命中缓存时没有新增输入，Prefill 速度不适用；可切换 Decode 查看。"
+            : filtered ? "当前日期与最近记录中没有可计算的匹配请求，请调整筛选。"
+            : "没有记录到可计算的 token 数与耗时；完成请求后可查看。");
+          txt("chart-note", "范围：最近 " + records.length + " 条记录内的所选日期 · 匹配 " + matched.length + " 次");
+          cv.setAttribute("aria-label", $("chart-readout").textContent);
           return;
         }
         const pad = { l: 48, r: 12, t: 13, b: 27 },
           max = Math.max(1, ...data.map((p) => p.v)) * 1.12,
           minT = data[0].t,
           maxT = data[data.length - 1].t;
-        const timeScale = $("chart-view").value === "time";
         const x = (t, i) =>
             !timeScale
               ? pad.l +
@@ -2958,10 +3029,6 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             W - pad.r,
             H - 4,
           );
-        txt(
-          "chart-axis-label",
-          timeScale ? "tok/s · 时间 UTC" : "tok/s · 请求顺序（等距）",
-        );
         if (chartSelected >= data.length) chartSelected = data.length - 1;
         if (chartSelected >= 0) {
           const p = chartPoints[chartSelected];
@@ -2981,12 +3048,14 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             utc(p.t) +
               " UTC · " +
               (chartMetric === "prefill" ? "Prefill " : "Decode ") +
-              fmtRate(p.v) +
-              " tok/s",
+              fmtRate(p.v) + " tok/s · 新增 " + fmtTok(p.r.prompt_tokens - p.r.cached_tokens) +
+              " token · 缓存 " + (p.r.prompt_tokens > 0 ? (p.r.cached_tokens * 100 / p.r.prompt_tokens).toFixed(1) : "0.0") +
+              "% · Prefill " + fmtMs(p.r.prefill_ms) + " · 首字 " + fmtMs(p.r.ttft_ms),
           );
         } else
           txt("chart-readout", "将鼠标移到采样点，或聚焦图表后按方向键查看。");
-        txt("chart-note", "最近 " + data.length + " 次有效采样 · 未做平滑");
+        txt("chart-note", "最近 " + records.length + " 条记录内筛选 · 显示最近 " + data.length +
+          " / " + measurable.length + " 次有效采样 · 未做平滑");
         cv.setAttribute(
           "aria-label",
           (chartMetric === "prefill" ? "Prefill" : "Decode") +
@@ -2999,7 +3068,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             "；详细值见请求记录",
         );
       }
-      $("chart-view").onchange = () => {
+      for (const id of ["chart-view", "chart-size", "chart-cache"]) $(id).onchange = () => {
         chartSelected = -1;
         drawThroughput();
       };
