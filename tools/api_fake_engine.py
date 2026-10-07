@@ -157,7 +157,7 @@ def handle(conn):
 
             seed = int(fields[fields.index("SAMPLE") + 5]) if "SAMPLE" in fields else 0
             # api_tool_failure_test uses the byte-only synthetic tokenizer.
-            if 717100 <= seed <= 717113:
+            if 717100 <= seed <= 717116:
                 valid = "<tool_call>\n<function=read_file>\n<parameter=path>\na\n</parameter>\n</function>\n</tool_call>"
                 unknown = valid.replace("read_file", "unknown_file")
                 unfinished = valid.split("</parameter>")[0]
@@ -168,6 +168,14 @@ def handle(conn):
                 variants += [extra('count', 'oops'), extra('action', 'erase'), extra('path', 'other'),
                              extra('payload', '{"n":"secret-value"}'), extra('payload', '{"n":4}'),
                              extra('undeclared', 'x'), extra('count', '7')]
+                present = ('<tool_call>\n<function=present>\n<parameter=files>\n'
+                           '[{"path":"secret-value-a.docx"},{"path":"secret-value-b.html"},'
+                           '{"path":"secret-value-c.xlsx","status":"completed"}]'
+                           '\n</parameter>\n</function>\n</tool_call>')
+                search = ('<tool_call>\n<function=web_search>\n<parameter=queries>\n'
+                          '["valid query",{"query":"secret-value"}]'
+                          '\n</parameter>\n</function>\n</tool_call>')
+                variants += [valid + present, search, present.replace(',"status":"completed"', '')]
                 tokens = [1024 + b for b in variants[seed - 717100].encode()]
                 for token in tokens:
                     send_line(conn, f"T {req} {token} -0.1")

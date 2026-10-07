@@ -212,6 +212,11 @@ Prefill。办公任务生成了未知工具 `query_ledser`（应为 `query_ledge
 R17 已修复这项错误分类，返回明确的 `invalid_tool_call`；模型工具名/SQL 错误与
 任务成功率仍须独立评估，不能把接口修复视为模型能力修复。
 
+工具校验错误现在同时提供工具名、从 0 开始的调用/数组位置及违反的规则；
+例如明确指出 `present` 的 `files[2].status` 是未声明字段。Chat Completions 与
+Responses 的流式/非流式错误中均附带 `error.details`，诊断不回显参数值。
+字段约定、兼容边界和测试命令见 [工具错误诊断](docs/TOOL_ERROR_DIAGNOSTICS.md)。
+
 上述是每种固定场景各两次测试，不是完整 Octop UI 测试或广泛 Agent 排名；
 实际最长 prompt 为办公 45496、代码 4114 token，不能称为 256K Agent 测试。
 [研究记录与计时定义](docs/WINDOWS_V2_RESEARCH_CHECKPOINT.md)

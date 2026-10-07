@@ -212,8 +212,9 @@ class SseStream : public Stream {
 
 }  // namespace
 
-void fail(int status, std::string message, std::string type, std::string code) {
-    throw Error{status, std::move(message), std::move(type), std::move(code)};
+void fail(int status, std::string message, std::string type, std::string code,
+          nlohmann::ordered_json details) {
+    throw Error{status, std::move(message), std::move(type), std::move(code), std::move(details)};
 }
 
 std::string to_lower(std::string s) {
@@ -229,13 +230,14 @@ bool Request::keep_alive() const {
 }
 
 std::string error_json(const std::string& message, const std::string& type,
-                       const std::string& code) {
+                       const std::string& code, const nlohmann::ordered_json& details) {
     nlohmann::ordered_json e;
     e["error"] = {{"message", message},
                   {"type", type},
                   {"param", nullptr},
                   {"code", code == "null" ? nlohmann::ordered_json(nullptr)
                                           : nlohmann::ordered_json(code)}};
+    if (!details.is_null()) e["error"]["details"] = details;
     return e.dump();
 }
 
@@ -537,14 +539,15 @@ void Server::serve_connection(sock_t fd, const std::string& remote) {
         // it is an ordinary JSON response with a real status code.
         auto finish_with_error = [&](int status, const std::string& message,
                                      const std::string& type,
-                                     const std::string& code) -> bool {
+                                     const std::string& code,
+                                     const nlohmann::ordered_json& details = nullptr) -> bool {
             if (st.started()) {
-                st.send_event(error_json(message, type, code));
+                st.send_event(error_json(message, type, code, details));
                 return st.finish();
             }
             res.sse = false;
             res.status = status;
-            res.body = error_json(message, type, code);
+            res.body = error_json(message, type, code, details);
             return write_response(fd, req, res);
         };
 
@@ -564,7 +567,7 @@ void Server::serve_connection(sock_t fd, const std::string& remote) {
             if (res.sse) ok = st.finish();
             else ok = write_response(fd, req, res);
         } catch (const Error& e) {
-            ok = finish_with_error(e.status, e.message, e.type, e.code);
+            ok = finish_with_error(e.status, e.message, e.type, e.code, e.details);
         } catch (const std::exception& e) {
             ok = finish_with_error(500, std::string("internal error: ") + e.what(),
                                    "server_error", "server_error");

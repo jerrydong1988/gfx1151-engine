@@ -261,12 +261,97 @@ int main() {
              "{\"n\":\"bad\"}", false, "reject unmatched oneOf");
     validate({{"type","object"},{"oneOf",json::array({json{{"$ref","#/$defs/a"}},json{{"$ref","#/$defs/b"}}})}},
              "{}", true, "unresolved refs do not produce false oneOf rejection");
+
+    // Recorded Harness failure: a valid call followed by present.files[2].status.
+    json present = json::parse(R"({"type":"function","function":{"name":"present",
+        "parameters":{"type":"object","properties":{"files":{"type":"array",
+            "items":{"type":"object","additionalProperties":false,
+                "properties":{"path":{"type":"string"},"description":{"type":"string"}},
+                "required":["path"]}}},"required":["files"]}}})");
+    json diagnostic_tools = tools();
+    diagnostic_tools.push_back(present);
+    const std::string good_call = "<tool_call>\n<function=read_file>\n</function>\n</tool_call>";
+    auto present_call = [](const json& files) {
+        return "<tool_call>\n<function=present>\n<parameter=files>\n" + files.dump() +
+               "\n</parameter>\n</function>\n</tool_call>";
+    };
+    json files = json::array({json{{"path", "secret-value-a"}},
+                              json{{"path", "secret-value-b"}},
+                              json{{"path", "secret-value-c"}, {"status", "secret-value"}}});
+    for (bool bytes : {false, true}) {
+        toolparse::StreamParser parser(diagnostic_tools, make_id);
+        const std::string input = good_call + present_call(files);
+        if (bytes) for (char c : input) parser.feed(std::string(1, c));
+        else parser.feed(input);
+        parser.finish();
+        const json& d = parser.error_details();
+        check(parser.has_partial_call() && parser.calls().size() == 1 &&
+              d["tool"] == "present" && d["call_index"] == 1 &&
+              d["path"] == "$.files[2].status" && d["keyword"] == "additionalProperties" &&
+              d["unexpected_property"] == "status" &&
+              d["allowed_properties"] == json::array({"path", "description"}),
+              "present diagnostic identifies second call and third array item");
+        check(parser.error().find("present") != std::string::npos &&
+              parser.error().find("undeclared property") != std::string::npos &&
+              parser.error().find("description") != std::string::npos &&
+              parser.error().find("secret-value") == std::string::npos &&
+              d.dump().find("secret-value") == std::string::npos,
+              "readable schema diagnostic omits argument values");
+    }
+    files[2].erase("status");
+    toolparse::StreamParser corrected(diagnostic_tools, make_id);
+    corrected.feed(present_call(files)); corrected.finish();
+    check(!corrected.has_partial_call() && corrected.calls().size() == 1 &&
+          corrected.error().empty() && corrected.error_details().is_null() &&
+          json::parse(corrected.calls()[0].arguments)["files"] == files,
+          "corrected present call remains valid and unmodified");
+
+    auto diagnose = [&](const json& schema, const std::string& input) {
+        json defs = tools();
+        defs[0]["function"]["parameters"]["properties"]["items"] = schema;
+        toolparse::StreamParser parser(defs, make_id);
+        parser.feed("<tool_call>\n<function=write_file>\n<parameter=items>\n" + input +
+                    "\n</parameter>\n</function>\n</tool_call>");
+        parser.finish();
+        check(parser.has_partial_call() && parser.calls().empty(), "diagnostic does not accept bad call");
+        return parser.error_details();
+    };
+    json type_error = diagnose({{"type", "array"}, {"items", {{"type", "string"}}}},
+                               "[\"ok\",{\"private\":\"secret-value\"}]");
+    check(type_error["path"] == "$.items[1]" && type_error["keyword"] == "type" &&
+          type_error["expected_types"] == json::array({"string"}) &&
+          type_error["actual_type"] == "object" &&
+          type_error.dump().find("secret-value") == std::string::npos,
+          "array type mismatch reports expected and actual type only");
+    json required_error = diagnose({{"type", "object"}, {"required", json::array({"a.b"})}}, "{}");
+    check(required_error["path"] == "$.items[\"a.b\"]" &&
+          required_error["keyword"] == "required" && required_error["missing_property"] == "a.b",
+          "missing property path escapes punctuation without implying nesting");
+    json false_error = diagnose({{"type", "object"}, {"properties", {{"blocked", false}}}},
+                                "{\"blocked\":\"secret-value\"}");
+    check(false_error["path"] == "$.items.blocked" && false_error["keyword"] == "falseSchema",
+          "false property schema is distinct from an undeclared property");
+    json allowed_error = diagnose({{"type", "object"}, {"additionalProperties", false},
+        {"properties", {{"blocked", false}, {"path", {{"type", "string"}}}}}}, "{\"extra\":1}");
+    check(allowed_error["allowed_properties"] == json::array({"path"}),
+          "allowed property hint excludes explicitly forbidden properties");
+    json many_properties = json::object();
+    for (int i = 0; i < 20; ++i)
+        many_properties[std::to_string(i) + std::string(200, 'x')] = {{"type", "string"}};
+    json bounded = diagnose({{"type", "object"}, {"properties", many_properties},
+                             {"additionalProperties", false}}, "{\"extra\":\"secret-value\"}");
+    check(bounded["allowed_properties"].size() == 8 &&
+          bounded["allowed_properties_truncated"] == true && bounded.dump().size() < 2000,
+          "large schema diagnostics have bounded property names and count");
     toolparse::StreamParser duplicate(tools(), make_id);
     duplicate.feed("<tool_call>\n<function=write_file>\n<parameter=path>\na\n</parameter>\n"
                    "<parameter=path>\nb\n</parameter>\n</function>\n</tool_call>");
     duplicate.finish();
     check(duplicate.calls().empty() && duplicate.has_partial_call() &&
-          duplicate.error().find("Duplicate") != std::string::npos,
+          duplicate.error().find("Duplicate") != std::string::npos &&
+          duplicate.error_details()["tool"] == "write_file" &&
+          duplicate.error_details()["keyword"] == "duplicateParameter" &&
+          duplicate.error_details()["path"] == "$.path",
           "duplicate XML parameters are rejected instead of last-key-wins");
 
     toolparse::StreamParser unicode_name(tools(), make_id);

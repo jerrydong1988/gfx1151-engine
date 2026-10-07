@@ -136,6 +136,32 @@ std::string diagnostic_name(const std::string& name) {
            (end < name.size() ? "..." : "");
 }
 
+std::string bounded_text(const std::string& text, size_t limit = 128) {
+    size_t end = std::min(text.size(), limit);
+    while (end > 0 && end < text.size() &&
+           (static_cast<unsigned char>(text[end]) & 0xc0) == 0x80) --end;
+    // Replace invalid UTF-8 as well as keeping truncation on a codepoint boundary.
+    return json::parse(json(text.substr(0, end)).dump(-1, ' ', false,
+                       json::error_handler_t::replace)).get<std::string>() +
+           (end < text.size() ? "..." : "");
+}
+
+std::string property_path(const std::string& path, const std::string& key) {
+    const auto identifier_char = [](unsigned char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    };
+    bool identifier = !key.empty() && identifier_char(key[0]);
+    for (unsigned char c : key)
+        identifier = identifier && (identifier_char(c) || (c >= '0' && c <= '9'));
+    const std::string name = bounded_text(key);
+    return bounded_text(path + (identifier ? "." + name : "[" + quote_json(name) + "]"), 512);
+}
+
+std::string value_type(const json& value) {
+    if (value.is_number_integer()) return "integer";
+    return value.type_name();
+}
+
 // Output validation for common tool schemas, not constrained decoding or a full
 // JSON Schema implementation. Unknown keywords remain unsupported. Bound depth
 // and diagnostic size; never echo model argument values in an error response.
@@ -175,13 +201,18 @@ bool supported_schema(const json& schema, int depth = 0) {
 }
 
 bool check_value(const json& value, const json& schema, const std::string& path,
-                 std::string* error, int depth = 0) {
-    auto fail = [&](const std::string& reason) {
-        *error = "Invalid tool arguments at " + diagnostic_name(path) + ": " + reason;
+                 std::string* error, json* details, int depth = 0) {
+    auto fail = [&](const std::string& reason, const std::string& keyword,
+                    json extra = json::object(), const std::string& location = "") {
+        const std::string at = bounded_text(location.empty() ? path : location, 512);
+        *error = "Invalid tool arguments at " + quote_json(at) + ": " + reason;
+        *details = {{"path", at}, {"keyword", keyword}};
+        details->update(extra);
         return false;
     };
-    if (depth > 64) return fail("validation depth limit exceeded");
-    if (schema.is_boolean()) return schema.get<bool>() || fail("value is forbidden");
+    if (depth > 64) return fail("validation depth limit exceeded", "validationDepth");
+    if (schema.is_boolean())
+        return schema.get<bool>() || fail("value is forbidden by a false schema", "falseSchema");
     if (!schema.is_object()) return true;
     if (schema.contains("type")) {
         const auto& t = schema["type"];
@@ -190,15 +221,29 @@ bool check_value(const json& value, const json& schema, const std::string& path,
         if (t.is_array()) for (const auto& item : t)
             if (item.is_string() && matches_type(value, item.get<std::string>())) ok = true;
         if (value.is_null() && schema.value("nullable", json(false)) == true) ok = true;
-        if (!ok) return fail("type does not match the tool schema");
+        if (!ok) {
+            json expected = json::array();
+            if (t.is_string()) expected.push_back(bounded_text(t.get<std::string>(), 32));
+            if (t.is_array()) for (const auto& item : t) {
+                if (expected.size() == 8) break;
+                if (item.is_string()) expected.push_back(bounded_text(item.get<std::string>(), 32));
+            }
+            if (schema.value("nullable", json(false)) == true &&
+                std::find(expected.begin(), expected.end(), json("null")) == expected.end())
+                expected.push_back("null");
+            json extra = {{"expected_types", expected}, {"actual_type", value_type(value)}};
+            if (t.is_array() && t.size() > 8) extra["expected_types_truncated"] = true;
+            return fail("expected type " + expected.dump() + "; received " + value_type(value),
+                        "type", std::move(extra));
+        }
     }
     if (schema.contains("enum") && schema["enum"].is_array()) {
         bool found = false;
         for (const auto& item : schema["enum"]) if (value == item) found = true;
-        if (!found) return fail("value is not in the declared enum");
+        if (!found) return fail("value is not in the declared enum", "enum");
     }
     if (schema.contains("const") && value != schema["const"])
-        return fail("value does not match the declared const");
+        return fail("value does not match the declared const", "const");
     for (const char* kind : {"allOf", "anyOf", "oneOf"}) {
         if (!schema.contains(kind) || !schema[kind].is_array()) continue;
         // In particular, an unresolved $ref cannot be counted as a matching
@@ -210,35 +255,61 @@ bool check_value(const json& value, const json& schema, const std::string& path,
         size_t matched = 0;
         for (const auto& branch : schema[kind]) {
             std::string ignored;
-            if (check_value(value, branch, path, &ignored, depth + 1)) ++matched;
+            json ignored_details;
+            if (check_value(value, branch, path, &ignored, &ignored_details, depth + 1)) ++matched;
         }
         if ((std::string(kind) == "allOf" && matched != schema[kind].size()) ||
             (std::string(kind) == "anyOf" && matched == 0) ||
             (std::string(kind) == "oneOf" && matched != 1))
-            return fail(std::string("does not satisfy ") + kind);
+            return fail(std::string("does not satisfy ") + kind, kind);
     }
     if (value.is_object()) {
         if (schema.contains("required") && schema["required"].is_array())
             for (const auto& key : schema["required"])
                 if (key.is_string() && !value.contains(key.get_ref<const std::string&>()))
-                    return fail("missing required property " + diagnostic_name(key.get<std::string>()));
+                    return fail("missing required property " + diagnostic_name(key.get<std::string>()),
+                                "required", {{"missing_property", bounded_text(key.get<std::string>())}},
+                                property_path(path, key.get<std::string>()));
         const auto properties = schema.find("properties");
         for (auto it = value.begin(); it != value.end(); ++it) {
-            const std::string child = path.size() < 160 ? path + "." + it.key() : path;
+            const std::string child = property_path(path, it.key());
             if (properties != schema.end() && properties->is_object() && properties->contains(it.key())) {
-                if (!check_value(it.value(), (*properties)[it.key()], child, error, depth + 1)) return false;
+                if (!check_value(it.value(), (*properties)[it.key()], child, error, details, depth + 1)) return false;
             } else if (schema.contains("additionalProperties")) {
                 // patternProperties requires a regex dialect not implemented here;
                 // do not falsely reject a possibly pattern-matched property.
-                if (!schema.contains("patternProperties") &&
-                    !check_value(it.value(), schema["additionalProperties"], child, error, depth + 1)) return false;
+                if (!schema.contains("patternProperties")) {
+                    if (schema["additionalProperties"] == false) {
+                        json allowed = json::array();
+                        bool truncated = false;
+                        if (properties != schema.end() && properties->is_object()) {
+                            for (auto p = properties->begin(); p != properties->end(); ++p) {
+                                if (p.value() == false) continue;
+                                if (allowed.size() == 8) { truncated = true; break; }
+                                allowed.push_back(bounded_text(p.key(), 64));
+                                truncated = truncated || p.key().size() > 64;
+                            }
+                        }
+                        json extra = {{"unexpected_property", bounded_text(it.key())},
+                                      {"allowed_properties", allowed}};
+                        if (truncated) extra["allowed_properties_truncated"] = true;
+                        return fail("undeclared property " + diagnostic_name(it.key()) +
+                                    "; allowed properties: " + allowed.dump() +
+                                    (truncated ? " (truncated)" : "") + " (additionalProperties=false)",
+                                    "additionalProperties", std::move(extra), child);
+                    }
+                    if (!check_value(it.value(), schema["additionalProperties"], child,
+                                     error, details, depth + 1)) return false;
+                }
             }
         }
     }
     if (value.is_array() && !schema.contains("prefixItems") && schema.contains("items") &&
         (schema["items"].is_object() || schema["items"].is_boolean()))
-        for (const auto& item : value)
-            if (!check_value(item, schema["items"], path + "[]", error, depth + 1)) return false;
+        for (size_t i = 0; i < value.size(); ++i)
+            if (!check_value(value[i], schema["items"],
+                             bounded_text(path + "[" + std::to_string(i) + "]", 512),
+                             error, details, depth + 1)) return false;
     return true;
 }
 
@@ -490,6 +561,14 @@ std::vector<Event> StreamParser::feed(std::string_view piece) {
 
 std::vector<Event> StreamParser::finish() { return pump(true); }
 
+void StreamParser::set_error(std::string message, const std::string& keyword,
+                             const std::string& path) {
+    error_ = std::move(message);
+    error_details_ = {{"path", bounded_text(path, 512)}, {"keyword", keyword},
+                      {"call_index", current_.name.empty() ? next_index_ : current_.index}};
+    if (!current_.name.empty()) error_details_["tool"] = bounded_text(current_.name);
+}
+
 void StreamParser::emit_content(std::string text, std::vector<Event>* events) {
     if (text.empty()) return;
     content_ += text;
@@ -517,7 +596,8 @@ void StreamParser::start_call(std::string name, std::vector<Event>* events) {
 
 bool StreamParser::start_parameter(std::string key, std::vector<Event>* events) {
     if (std::find(parameter_keys_.begin(), parameter_keys_.end(), key) != parameter_keys_.end()) {
-        error_ = "Duplicate tool parameter: " + diagnostic_name(key);
+        set_error("Duplicate tool parameter " + diagnostic_name(key) + " for tool " +
+                  diagnostic_name(current_.name), "duplicateParameter", property_path("$", key));
         return false;
     }
     parameter_keys_.push_back(key);
@@ -563,7 +643,8 @@ bool StreamParser::valid_call() {
     json args = json::parse(current_.arguments + (argument_count_ == 0 ? "{}" : "}"),
                             nullptr, false);
     if (!args.is_object()) {
-        error_ = "Tool arguments are not a valid JSON object.";
+        set_error("Tool arguments for " + diagnostic_name(current_.name) +
+                  " are not a valid JSON object.", "argumentsObject");
         return false;
     }
     for (const auto& tool : tools_) {
@@ -572,7 +653,13 @@ bool StreamParser::valid_call() {
         if (!function.contains("parameters") || !function["parameters"].is_object())
             return true;
         const json& schema = function["parameters"];
-        return check_value(args, schema, "$", &error_);
+        if (check_value(args, schema, "$", &error_, &error_details_)) return true;
+        error_details_["tool"] = bounded_text(current_.name);
+        error_details_["call_index"] = current_.index;
+        error_.insert(std::string("Invalid tool arguments").size(),
+                      " for tool " + diagnostic_name(current_.name) +
+                      " (call index " + std::to_string(current_.index) + ")");
+        return false;
     }
     return false;
 }
@@ -670,7 +757,9 @@ std::vector<Event> StreamParser::pump(bool final) {
                 continue;
             }
             if (!function_exists(tools_, buffer_.substr(at, close - at))) {
-                error_ = "Unknown tool function: " + diagnostic_name(buffer_.substr(at, close - at));
+                const std::string name = buffer_.substr(at, close - at);
+                set_error("Unknown tool function: " + diagnostic_name(name), "unknownTool");
+                error_details_["tool"] = bounded_text(name);
                 state_ = State::Broken;
                 continue;
             }
@@ -780,7 +869,10 @@ std::vector<Event> StreamParser::pump(bool final) {
         }
     }
     if (state_ == State::Broken || (final && state_ != State::Text)) partial_ = true;
-    if (partial_ && error_.empty()) error_ = "Invalid or unfinished tool-call framing.";
+    if (partial_ && error_.empty())
+        set_error("Invalid or unfinished tool-call framing" +
+                  (current_.name.empty() ? std::string() : " for tool " + diagnostic_name(current_.name)) +
+                  ".", "framing");
     return events;
 }
 

@@ -17,25 +17,50 @@ def checks(base):
         "action": {"type": "string", "enum": ["read", "write"]},
         "payload": {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}},
         "required": ["path"], "additionalProperties": False}}
+    present = {"name": "present", "parameters": {"type": "object", "properties": {
+        "files": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+            "properties": {"path": {"type": "string"}, "description": {"type": "string"}},
+            "required": ["path"]}}}, "required": ["files"]}}
+    search = {"name": "web_search", "parameters": {"type": "object", "properties": {
+        "queries": {"type": "array", "items": {"type": "string"}}}, "required": ["queries"]}}
     for responses in [False, True]:
         path = "/v1/responses" if responses else "/v1/chat/completions"
         for stream in [False, True]:
-            for case in range(14):
+            for case in range(17):
+                definitions = [fn, present] if case == 14 else [search] if case == 15 else [present] if case == 16 else [fn]
                 body = {"stream": stream, "enable_thinking": False, "seed": 717100 + case,
                         "temperature": 0.7, "max_output_tokens": 2048,
-                        "tools": [{"type": "function", **fn}] if responses else
-                                 [{"type": "function", "function": fn}]}
+                        "tools": [{"type": "function", **f} for f in definitions] if responses else
+                                 [{"type": "function", "function": f} for f in definitions]}
                 body.update({"input": "test"} if responses else
                             {"messages": [{"role": "user", "content": "test"}]})
                 status, _, raw = request(base, path, body)
-                if case in (7, 8, 9, 10, 12):
-                    frames = [json.loads(line[6:]) for line in raw.decode().splitlines()
-                              if line.startswith('data: {')] if stream else [json.loads(raw)]
-                    errors = [e.get('error') or e.get('response', {}).get('error') for e in frames]
-                    check(all('secret-value' not in json.dumps(e) for e in errors if e),
-                          'argument values are not repeated in diagnostics', raw)
-                invalid = case in [1, 2, 3, 6, 7, 8, 9, 10, 12]
+                frames = [json.loads(line[6:]) for line in raw.decode().splitlines()
+                          if line.startswith('data: {')] if stream and status == 200 else [json.loads(raw)]
+                errors = [e.get('error') or e.get('response', {}).get('error') for e in frames]
+                errors = [e for e in errors if e]
+                check(all('secret-value' not in json.dumps(e) for e in errors),
+                      'argument values are not repeated in diagnostics', raw)
+                invalid = case in [1, 2, 3, 6, 7, 8, 9, 10, 12, 14, 15]
                 name = f"{'responses' if responses else 'chat'}-{'sse' if stream else 'json'}-{case}"
+                if invalid:
+                    check(len(errors) == 1 and isinstance(errors[0].get('details'), dict),
+                          name + '-one-structured-diagnostic', raw)
+                    d = errors[0]['details']
+                    check(isinstance(d.get('call_index'), int) and isinstance(d.get('path'), str)
+                          and isinstance(d.get('keyword'), str), name + '-diagnostic-fields', raw)
+                if case == 14:
+                    check(d == {'path': '$.files[2].status', 'keyword': 'additionalProperties',
+                                'unexpected_property': 'status', 'allowed_properties': ['path', 'description'],
+                                'tool': 'present', 'call_index': 1}, name + '-present-diagnostic', raw)
+                    check('undeclared property' in errors[0]['message'] and
+                          'present' in errors[0]['message'] and '$.files[2].status' in errors[0]['message'],
+                          name + '-readable-present-error', raw)
+                if case == 15:
+                    check(d['tool'] == 'web_search' and d['call_index'] == 0 and
+                          d['path'] == '$.queries[1]' and d['keyword'] == 'type' and
+                          d['expected_types'] == ['string'] and d['actual_type'] == 'object',
+                          name + '-search-diagnostic', raw)
                 if not responses:
                     if invalid:
                         if status == 502:
@@ -53,7 +78,7 @@ def checks(base):
                         values = parse_sse(raw) if stream else [json.loads(raw)]
                         finishes = [c["finish_reason"] for e in values if isinstance(e, dict)
                                     for c in e.get("choices", []) if c.get("finish_reason")]
-                        check(finishes == ["tool_calls" if case in [0, 11, 13] else "length" if case == 4 else "stop"],
+                        check(finishes == ["tool_calls" if case in [0, 11, 13, 16] else "length" if case == 4 else "stop"],
                               name, raw)
                 else:
                     check(status == 200, name + "-status", raw)
@@ -104,6 +129,9 @@ def main():
                     check("terminal=invalid_tool_call " + suffix in recorded,
                           "terminal parser failure is observable: " + suffix)
                 check("secret-value" not in recorded, "terminal logs omit argument values")
+                check('"tool":"present"' in recorded and '"path":"$.files[2].status"' in recorded and
+                      '"keyword":"additionalProperties"' in recorded,
+                      "terminal logs include structured schema diagnostic")
             except BaseException:
                 log.flush(); log.seek(0); print(log.read(), file=sys.stderr); raise
             finally:

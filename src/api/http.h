@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "sockt.h"
 
 namespace http {
@@ -30,11 +32,13 @@ struct Error {
     std::string message;
     std::string type;  // "invalid_request_error" | "server_error" | ...
     std::string code;  // "null" => JSON null
+    nlohmann::ordered_json details = nullptr;
 };
 
 [[noreturn]] void fail(int status, std::string message,
                        std::string type = "invalid_request_error",
-                       std::string code = "null");
+                       std::string code = "null",
+                       nlohmann::ordered_json details = nullptr);
 
 struct Request {
     std::string method;
@@ -113,6 +117,7 @@ class Server {
 // {"error":{"message":...,"type":...,"param":null,"code":null}}
 std::string error_json(const std::string& message,
                        const std::string& type = "invalid_request_error",
-                       const std::string& code = "null");
+                       const std::string& code = "null",
+                       const nlohmann::ordered_json& details = nullptr);
 
 }  // namespace http

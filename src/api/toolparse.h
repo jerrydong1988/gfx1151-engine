@@ -72,6 +72,8 @@ class StreamParser {
     bool has_partial_call() const { return partial_; }
     // Bounded diagnostic only: never includes argument values or guesses a tool.
     const std::string& error() const { return error_; }
+    // Bounded names, zero-based locations and rule identifiers; no argument values.
+    const json& error_details() const { return error_details_; }
 
   private:
     enum class State { Text, Between, Parameter, ToolTail, Broken };
@@ -84,6 +86,8 @@ class StreamParser {
     void finish_parameter(std::string raw, std::vector<Event>* events);
     bool finish_call(std::vector<Event>* events);
     bool valid_call();
+    void set_error(std::string message, const std::string& keyword,
+                   const std::string& path = "$");
     std::vector<std::string> schema_types(const std::string& function,
                                           const std::string& parameter) const;
 
@@ -103,6 +107,7 @@ class StreamParser {
     bool value_started_ = false;
     bool partial_ = false;
     std::string error_;
+    json error_details_ = nullptr;
     std::vector<std::string> parameter_keys_;
 };
 
