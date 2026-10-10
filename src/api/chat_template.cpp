@@ -422,15 +422,19 @@ class Renderer {
         // --- generation prompt tail ----------------------------------------
         if (truthy(opts_.add_generation_prompt)) {
             out += "<|im_start|>assistant\n";
-            if (opts_.enable_thinking != nullptr &&
-                opts_.enable_thinking->is_boolean() &&
-                !opts_.enable_thinking->get<bool>()) {
+            if (!thinking_enabled()) {
                 out += "<think>\n\n</think>\n\n";
             } else {
                 out += "<think>\n";
             }
         }
         return out;
+    }
+
+    bool thinking_enabled() const {
+        return !(opts_.enable_thinking != nullptr &&
+                 opts_.enable_thinking->is_boolean() &&
+                 !opts_.enable_thinking->get<bool>());
     }
 
   private:
@@ -491,7 +495,9 @@ class Renderer {
 RenderResult render_chat_template(const json* messages, const Options& opts) {
     RenderResult result;
     try {
-        result.text = Renderer(opts).run(messages);
+        Renderer renderer(opts);
+        result.text = renderer.run(messages);
+        result.thinking_enabled = renderer.thinking_enabled();
         result.ok = true;
     } catch (const TemplateError& e) {
         result.error = e.message;

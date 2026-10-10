@@ -25,6 +25,9 @@
 // 并提示。快速编辑模式运行期间关闭。
 // 两个子进程放在一个 Job 里：启动器无论怎样退出（包括被任务管理器结束），
 // 引擎和 API 都会随之结束，不会留下占着显存的孤儿进程。
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include "engine_net.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -35,6 +38,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "rope.h"
 
 #include "launch_win_icon.inc"  // kIconIco：托盘图标（tools/win_icon.py 生成）
 
@@ -1015,6 +1019,29 @@ int main(int argc, char** argv) {
         const std::string value=cfg_optional(key, "");
         if (!value.empty()) SetEnvironmentVariableA((std::string("GDEC_")+key).c_str(),value.c_str());
     }
+    // Validate exactly what the children inherit, including direct GDEC_*
+    // overrides. getenv() still sees the CRT snapshot from before the writes.
+    RopeConfig rope;
+    for (const auto& entry : {std::pair<const char*, const char*>{"GDEC_ROPE_FACTOR", "factor"},
+                             {"GDEC_ROPE_ORIGINAL_CTX", "original_ctx"},
+                             {"GDEC_ROPE_BETA_FAST", "beta_fast"},
+                             {"GDEC_ROPE_BETA_SLOW", "beta_slow"},
+                             {"GDEC_ROPE_ATTN_SCALE", "attention_factor"}}) {
+        const DWORD size = GetEnvironmentVariableA(entry.first, nullptr, 0);
+        if (!size) continue;
+        std::vector<char> value(size);
+        if (!GetEnvironmentVariableA(entry.first, value.data(), size) ||
+            !rope_set(rope, entry.second, value.data()))
+            fail(std::string("无效的 ") + entry.first + "（需要有效有限数值）");
+    }
+    if (!rope_config_valid(rope))
+        fail("RoPE 参数要求 factor>=1、original_ctx>0、beta_fast>=beta_slow>0、attention_scale>=0");
+    const double rope_cap = rope.factor * rope.original_max_position_embeddings;
+    if (rope.factor > 1.0 && max_context > rope_cap)
+        fail("MAX_CONTEXT 超出 YaRN 上限 ROPE_FACTOR×ROPE_ORIGINAL_CTX；"
+             "调小 MAX_CONTEXT 或调大 ROPE_FACTOR（并发容量用 KV_POOL_TOKENS 扩）");
+    if (rope.factor == 1.0 && max_context > rope.original_max_position_embeddings)
+        fprintf(stderr, "警告：MAX_CONTEXT 超出原生上下文且未启用 YaRN，超出部分的位置编码未验证\n");
     // PREFILL_CHUNK>0 才设置；0 = 不碰外部环境变量（用户可直接 set GDEC_PREFILL_CHUNK）。
     if (prefill_chunk)
         SetEnvironmentVariableA("GDEC_PREFILL_CHUNK",

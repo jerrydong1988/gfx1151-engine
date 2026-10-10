@@ -44,6 +44,7 @@ constexpr int kMerge = 2;
 constexpr int kFactor = kPatch * kMerge;
 constexpr int kMinPixels = 256 * 256;
 constexpr int kMaxPixels = 2560 * 1440;
+constexpr int kMaxAspect = 200;
 constexpr int kImageToken = 248056;
 constexpr int kVideoToken = 248057;
 constexpr const char* kPadSpan =
@@ -202,6 +203,32 @@ bool decode_image(const std::vector<uint8_t>& bytes, Image* out, std::string* er
 }
 #endif
 
+// Keep extreme-aspect content intact by padding only the short side. Ordinary
+// images take the original path, with no allocation or pixel changes.
+bool letterbox_aspect(Image* image, std::string* error) {
+    const int long_side = std::max(image->width, image->height);
+    const int short_side = std::min(image->width, image->height);
+    if (static_cast<double>(long_side) / short_side <= kMaxAspect) return true;
+    const int padded_short = long_side / kMaxAspect + (long_side % kMaxAspect != 0);
+    const int new_w = image->width < image->height ? padded_short : image->width;
+    const int new_h = image->width < image->height ? image->height : padded_short;
+    size_t bytes = 0;
+    if (!checked_rgb_size(new_w, new_h, &bytes, error)) return false;
+    std::vector<uint8_t> rgb(bytes, 127u);
+    const int offset_w = (new_w - image->width) / 2;
+    const int offset_h = (new_h - image->height) / 2;
+    for (int row = 0; row < image->height; ++row) {
+        std::memcpy(rgb.data() +
+                        (static_cast<size_t>(row + offset_h) * new_w + offset_w) * 3u,
+                    image->rgb.data() + static_cast<size_t>(row) * image->width * 3u,
+                    static_cast<size_t>(image->width) * 3u);
+    }
+    image->width = new_w;
+    image->height = new_h;
+    image->rgb = std::move(rgb);
+    return true;
+}
+
 int round_half_even(int value, int factor) {
     const int whole = value / factor;
     const int remainder = value % factor;
@@ -213,8 +240,9 @@ int round_half_even(int value, int factor) {
 bool smart_resize(int height, int width, int* out_h, int* out_w, std::string* error) {
     const double ratio = static_cast<double>(std::max(height, width)) /
                          static_cast<double>(std::min(height, width));
-    if (ratio > 200.0) {
-        *error = "absolute image aspect ratio must be smaller than 200";
+    if (ratio > kMaxAspect) {
+        *error = "absolute image aspect ratio must be smaller than 200 (got " +
+                 std::to_string(width) + "x" + std::to_string(height) + ")";
         return false;
     }
     int h = std::max(kFactor, round_half_even(height, kFactor) * kFactor);
@@ -503,6 +531,7 @@ static bool preprocess_bounded(const std::vector<uint8_t>& bytes, Frame* frame,
                                std::string* error, uint64_t* used_patches) {
     Image decoded;
     if (!decode_image(bytes, &decoded, error)) return false;
+    if (!letterbox_aspect(&decoded, error)) return false;
     int height = 0, width = 0;
     if (!smart_resize(decoded.height, decoded.width, &height, &width, error)) return false;
     const uint64_t patches = static_cast<uint64_t>(height / kPatch) * (width / kPatch);

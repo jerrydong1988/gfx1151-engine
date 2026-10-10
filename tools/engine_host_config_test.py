@@ -53,7 +53,8 @@ def main():
         for shard in range(1, 5):
             (root / "models" / f"Qwen3.8-Flash-Next-UD-Q4_K_XL-{shard:05d}-of-00004.gguf").touch()
         (root / "models" / "tokenizer" / "tokenizer.json").write_text("{}")
-        for name, body in {"ss": "exit 0", "pgrep": "exit 1", "awk": "echo 2000",
+        for name, body in {"ss": "exit 0", "pgrep": "exit 1",
+                           "awk": 'if [[ "$1" == BEGIN* ]]; then exec /usr/bin/awk "$@"; fi\necho 2000',
                            "netstat": "exit 0", "flock": "exit 0", "systemctl": "exit 0",
                            "setsid": "exit 0"}.items():
             (root / "bin" / name).write_text("#!/usr/bin/env bash\n" + body + "\n", newline="\n")
@@ -108,6 +109,43 @@ def main():
                 else:
                     assert result.returncode != 0 and "ENGINE_HOST" in output, f"{name} {case}: {output}"
                 print(f"PASS {name} {case}")
+        # Exercise the same YaRN range policy through all real entrypoints.
+        (root / "service.conf").write_text(original_conf, encoding="utf-8", newline="\n")
+        rope_cases = [
+            ("yarn-exact-cap", {"ROPE_FACTOR":"2", "ROPE_ORIGINAL_CTX":"1024", "MAX_CONTEXT":"2048"}, True),
+            ("yarn-over-cap", {"ROPE_FACTOR":"2", "ROPE_ORIGINAL_CTX":"1024", "MAX_CONTEXT":"2049"}, False),
+            ("native-over-cap-warning", {"ROPE_FACTOR":"1", "ROPE_ORIGINAL_CTX":"1024", "MAX_CONTEXT":"2048"}, True),
+            ("factor-too-small", {"ROPE_FACTOR":"0.5"}, False),
+            ("nonfinite-factor", {"ROPE_FACTOR":"nan"}, False),
+            ("nonfinite-scale", {"ROPE_ATTN_SCALE":"inf"}, False),
+            ("zero-original", {"ROPE_ORIGINAL_CTX":"0"}, False),
+            ("fractional-original", {"ROPE_ORIGINAL_CTX":"1024.5"}, False),
+            ("zero-beta", {"ROPE_BETA_SLOW":"0"}, False),
+            ("reversed-beta", {"ROPE_BETA_FAST":"1", "ROPE_BETA_SLOW":"32"}, False),
+        ]
+        for case, overrides, valid in rope_cases:
+            for name, command in commands:
+                case_env=dict(env, **overrides)
+                result=subprocess.run(command,cwd=root,env=case_env,capture_output=True,
+                    text=True,encoding="utf-8",errors="replace",timeout=15,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0)
+                output=result.stdout+result.stderr
+                assert (result.returncode==0)==valid, f"{name} {case}: {output}"
+                if case=="native-over-cap-warning":
+                    assert "警告" in output, f"{name} {case}: {output}"
+                print(f"PASS {name} {case}")
+        if args.launcher:
+            # Direct low-level settings must also be checked after conf/default
+            # application. An empty high-level key preserves the inherited one.
+            for value, valid in [("2",True),("nan",False),("0.5",False)]:
+                case_env=dict(env,ROPE_FACTOR="",GDEC_ROPE_FACTOR=value)
+                result=subprocess.run(commands[-1][1],cwd=root,env=case_env,capture_output=True,
+                    text=True,encoding="utf-8",errors="replace",timeout=15,
+                    creationflags=subprocess.CREATE_NO_WINDOW)
+                output=result.stdout+result.stderr
+                assert (result.returncode==0)==valid, output
+                if valid: assert "runtime GDEC_ROPE_FACTOR=2" in output, output
+                print(f"PASS native effective GDEC_ROPE_FACTOR={value}")
     print("RESULT PASS")
 
 

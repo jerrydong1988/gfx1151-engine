@@ -1928,6 +1928,10 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
                   ><strong class="mono" id="h-ctx">—</strong>
                 </div>
                 <div class="summary-line">
+                  <span>KV 总容量</span><strong class="mono" id="h-kv-pool">—</strong>
+                </div>
+                <p class="hint" id="h-kv-hint">多路请求共享容量；单路仍受上下文上限约束。</p>
+                <div class="summary-line">
                   <span>工具调用</span><strong id="h-tools">—</strong>
                 </div>
                 <div class="summary-line">
@@ -2472,6 +2476,10 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         );
         txt("h-model", j.model ?? "—");
         txt("h-ctx", fmtTok(j.slot_ctx ?? j.context) + " token");
+        txt("h-kv-pool", j.kv_pool > 0 ? fmtTok(j.kv_pool) + " token" : "未上报");
+        txt("h-kv-hint", j.kv_pool > 0
+          ? "多路请求合计使用此容量；单路仍受上下文上限约束。"
+          : "此引擎未上报 KV 总容量，不能按并发路数推算。");
         txt("h-inflight", fmtTok(j.in_flight));
         txt("h-slots", fmtTok(j.slots));
         txt("h-queued", fmtTok(j.queued));

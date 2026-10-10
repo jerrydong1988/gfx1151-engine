@@ -73,6 +73,7 @@ struct Options {
 
 struct RenderResult {
     bool ok = false;
+    bool thinking_enabled = true;  // matches the rendered generation prompt
     std::string text;   // when ok
     std::string error;  // when !ok: the exact raise_exception / jinja2
                         // runtime error message the template would produce

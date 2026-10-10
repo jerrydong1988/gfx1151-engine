@@ -82,6 +82,7 @@ std::atomic<long long> g_req_seq{0};
 // the rest wait in this front-end queue until a slot is released.  Control
 // queries (MEM/CSTAT) use g_ctl and never wait for a generation slot.
 int g_slots = 1;
+int g_kv_pool = 0;  // shared KV pool tokens from INFO (0 = old engine, unknown)
 std::vector<std::unique_ptr<gdec::EngineClient>> g_pool;  // g_slots clients
 std::vector<gdec::EngineClient*> g_pool_free;             // under g_slot_mtx
 gdec::EngineClient g_ctl;
@@ -1867,6 +1868,7 @@ void handle_health(const http::Request&, http::Response* r, http::Stream*) {
     }
     j["slots"] = g_slots;
     j["slot_ctx"] = g_cfg.context;
+    j["kv_pool"] = g_kv_pool;
     {
         std::lock_guard<std::mutex> lk(g_slot_mtx);
         j["queued"] = g_queued;
@@ -2197,7 +2199,6 @@ void handle_chat(const http::Request& q, http::Response* r, http::Stream* st) {
     require_optional_boolean(body, "enable_thinking");
     require_optional_boolean(body, "preserve_thinking");
     require_optional_boolean(body, "add_vision_id");
-    const bool thinking_enabled = bool_field(body, "enable_thinking", true);
     if (body.contains("enable_thinking") && !body["enable_thinking"].is_null())
         opts.enable_thinking = &body["enable_thinking"];
     if (body.contains("preserve_thinking") && !body["preserve_thinking"].is_null())
@@ -2206,6 +2207,7 @@ void handle_chat(const http::Request& q, http::Response* r, http::Stream* st) {
 
     chat_template::RenderResult rr = chat_template::render_chat_template(&messages, opts);
     if (!rr.ok) http::fail(400, rr.error);
+    const bool thinking_enabled = rr.thinking_enabled;
     rr.text += tool_setup.choice.prompt_suffix(thinking_enabled);
 
     GenSpec spec;
@@ -2388,7 +2390,6 @@ void handle_responses(const http::Request& q, http::Response* r, http::Stream* s
     const bool parallel_tool_calls = bool_field(body, "parallel_tool_calls", true);
     require_optional_boolean(body, "enable_thinking");
     require_optional_boolean(body, "preserve_thinking");
-    const bool thinking_enabled = bool_field(body, "enable_thinking", true);
 
     ToolSetup tool_setup = parse_tool_setup(body);
     chat_template::Options opts;
@@ -2416,6 +2417,7 @@ void handle_responses(const http::Request& q, http::Response* r, http::Stream* s
 
     chat_template::RenderResult rr = chat_template::render_chat_template(&messages, opts);
     if (!rr.ok) http::fail(400, rr.error);
+    const bool thinking_enabled = rr.thinking_enabled;
     rr.text += tool_setup.choice.prompt_suffix(thinking_enabled);
 
     GenSpec spec;
@@ -2738,6 +2740,7 @@ void probe_engine() {
     } else if (g_ctl.info(&line, &err)) {
         // I mtp draft_head ctx spec_rows default drafter_weights dflash2
         //   cache_mb cache_align kv_slots slot_ctx cache_mode sampling
+        //   kv_pool_tokens
         std::vector<long long> f;
         std::istringstream ss(line);
         std::string tok;
@@ -2748,6 +2751,7 @@ void probe_engine() {
             g_cfg.context = (int)f[2];
         }
         if (f.size() >= 10 && f[9] >= 1 && f[9] <= 64) g_slots = (int)f[9];
+        if (f.size() >= 14 && f[13] > 0) g_kv_pool = (int)f[13];
         fprintf(stderr, "gdec-api: engine INFO: %s\n", line.c_str());
     } else {
         fprintf(stderr, "gdec-api: engine INFO unavailable (%s); continuing with "
@@ -2757,8 +2761,10 @@ void probe_engine() {
         g_pool.push_back(std::make_unique<gdec::EngineClient>());
         g_pool_free.push_back(g_pool.back().get());
     }
-    fprintf(stderr, "gdec-api: %d concurrent generation slot%s (shared context %d)\n",
-            g_slots, g_slots > 1 ? "s" : "", g_cfg.context);
+    fprintf(stderr, "gdec-api: %d concurrent generation slot%s (per-slot context %d,"
+            " shared KV pool %d)\n",
+            g_slots, g_slots > 1 ? "s" : "", g_cfg.context,
+            g_kv_pool > 0 ? g_kv_pool : g_cfg.context);
 }
 
 }  // namespace
