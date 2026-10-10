@@ -1,0 +1,296 @@
+{
+  "accepted": true,
+  "source_base_commit": "80ba609d77e22592ef1a8cf640b809439f0859e7",
+  "source_dirty": true,
+  "binaries": {
+    "gdec-win.exe": "a80bca6044ed26c574963edcf836696ab6667efbcd81e2043a510ab3907425f7",
+    "gdec-api-win.exe": "a8b8d40c2ee032ebc7568dd071d6153fca95d4c44fdf9ef2c03335f7515cd7bb"
+  },
+  "source_files": {
+    "src/vision_limits.h": "d48f370705c37704fb59a6ca461b5e2052a3fff68f5134ca089bcf38cb0a9df8",
+    "src/api/vision.cpp": "6f15666c087c669c0d22f34731bc738f24f092f01f30cfec7892829ec50e919a",
+    "src/api/vision.h": "eb12b1014877facd03d53c8ac9e2026423595d4723ce0810723e34b3300240fd",
+    "src/api/main.cpp": "7b352bbb7ebbe9d22a8e513027537bc66b09d62a1b3d300345b1535dd14bacc5",
+    "src/gpu/gdec.cpp": "f7386e5c63d08f3f8bed0dce362e3a09b764aa7175cae0b3ad38fb619c425e86",
+    "src/gpu/parts/51_host_cfg.inc": "37005af3efc6680008ba6ec1f381b64849c1bdafe0423a212ecd43412689bc78"
+  },
+  "limits": {
+    "max_images": 32,
+    "max_total_patches": 262144,
+    "max_visual_tokens": 65536,
+    "max_request_body_bytes": 67108864,
+    "default_api_cap": 8,
+    "local_config_cap": 32
+  },
+  "unit_assertions": 99,
+  "api_assertions": 90,
+  "performance": {
+    "order": [
+      "baseline",
+      "candidate",
+      "candidate",
+      "baseline"
+    ],
+    "requests": 40,
+    "table": [
+      {
+        "kind": "text",
+        "size": 256,
+        "samples_per_arm": 4,
+        "medians": {
+          "baseline": {
+            "prefill_ms": 443.65,
+            "ttft_ms": 445.5063499917742,
+            "wall_ms": 3548.2873499859124,
+            "decode_tps": 41.254499302106666
+          },
+          "candidate": {
+            "prefill_ms": 444.1,
+            "ttft_ms": 445.72585000423715,
+            "wall_ms": 3554.5580000034533,
+            "decode_tps": 41.17419939229185
+          }
+        },
+        "change_percent": {
+          "prefill_ms": 0.10143130846389514,
+          "ttft_ms": 0.04926978312811414,
+          "wall_ms": 0.17672328644875446,
+          "decode_tps": -0.1946452173053448
+        }
+      },
+      {
+        "kind": "text",
+        "size": 8192,
+        "samples_per_arm": 4,
+        "medians": {
+          "baseline": {
+            "prefill_ms": 5951.25,
+            "ttft_ms": 5963.378499989631,
+            "wall_ms": 9152.140949998284,
+            "decode_tps": 40.2016944565834
+          },
+          "candidate": {
+            "prefill_ms": 5965.85,
+            "ttft_ms": 5978.491899993969,
+            "wall_ms": 9156.390850024763,
+            "decode_tps": 40.183487473600664
+          }
+        },
+        "change_percent": {
+          "prefill_ms": 0.2453266120562958,
+          "ttft_ms": 0.2534368731477388,
+          "wall_ms": 0.04643612953185716,
+          "decode_tps": -0.0452890934793726
+        }
+      },
+      {
+        "kind": "image",
+        "size": 1,
+        "samples_per_arm": 4,
+        "medians": {
+          "baseline": {
+            "prefill_ms": 475.05,
+            "ttft_ms": 854.085,
+            "wall_ms": 1089.6596000238787,
+            "decode_tps": 41.80246120430869
+          },
+          "candidate": {
+            "prefill_ms": 478.20000000000005,
+            "ttft_ms": 846.6855,
+            "wall_ms": 1089.0899000223726,
+            "decode_tps": 44.07044562028712
+          }
+        },
+        "change_percent": {
+          "prefill_ms": 0.6630880959898944,
+          "ttft_ms": -0.8663657598482533,
+          "wall_ms": -0.0522823826352381,
+          "decode_tps": 5.425480583293152
+        }
+      },
+      {
+        "kind": "image",
+        "size": 4,
+        "samples_per_arm": 4,
+        "medians": {
+          "baseline": {
+            "prefill_ms": 1027.1495,
+            "ttft_ms": 1407.7725,
+            "wall_ms": 1708.595200034324,
+            "decode_tps": 54.80464756226444
+          },
+          "candidate": {
+            "prefill_ms": 1028.0,
+            "ttft_ms": 1404.616,
+            "wall_ms": 1697.428100014804,
+            "decode_tps": 55.47364591511
+          }
+        },
+        "change_percent": {
+          "prefill_ms": 0.08280196797059158,
+          "ttft_ms": -0.22421946727898545,
+          "wall_ms": -0.6535837171552261,
+          "decode_tps": 1.2206963872644083
+        }
+      },
+      {
+        "kind": "image",
+        "size": 16,
+        "samples_per_arm": 4,
+        "medians": {
+          "baseline": {
+            "prefill_ms": 3139.7,
+            "ttft_ms": 4653.620000000001,
+            "wall_ms": 5163.298550003674,
+            "decode_tps": 45.07729659149297
+          },
+          "candidate": {
+            "prefill_ms": 3150.05,
+            "ttft_ms": 4653.026,
+            "wall_ms": 5159.888900001533,
+            "decode_tps": 45.3117156551259
+          }
+        },
+        "change_percent": {
+          "prefill_ms": 0.3296493295537939,
+          "ttft_ms": -0.012764256643238436,
+          "wall_ms": -0.06603627446911675,
+          "decode_tps": 0.5200379822182466
+        }
+      }
+    ],
+    "text_token_sequences_match": {
+      "256": true,
+      "8192": true
+    },
+    "gpu_code": {
+      "baseline": {
+        "size": 4948992,
+        "sha256": "d3617c9cf16e40791c5f3bd7eaf84aef5c58125a05afa3824103d9f174eb3485"
+      },
+      "candidate": {
+        "size": 4948992,
+        "sha256": "d3617c9cf16e40791c5f3bd7eaf84aef5c58125a05afa3824103d9f174eb3485"
+      },
+      "identical": true
+    },
+    "notes": [
+      "No clocks/power/temperature locking. Medians are bounded regression evidence, not a claim of zero overhead.",
+      "The initial preflight was stopped because its prompt allowed split-digit output; formal ABBA rounds use the same corrected prompt for both variants.",
+      "Image decode throughput is descriptive only; outputs are short and formatting can vary."
+    ],
+    "no_material_regression_observed": true
+  },
+  "capacity": [
+    {
+      "name": "all_codes_16",
+      "passed": true,
+      "wall_s": 7.664027699967846
+    },
+    {
+      "name": "all_codes_17",
+      "passed": true,
+      "wall_s": 6.589405199978501
+    },
+    {
+      "name": "all_codes_20",
+      "passed": true,
+      "wall_s": 8.557337099977303
+    },
+    {
+      "name": "all_codes_32",
+      "passed": true,
+      "wall_s": 13.446834300004411
+    },
+    {
+      "name": "history_16_plus_4",
+      "passed": true,
+      "wall_s": 2.1629155999980867
+    },
+    {
+      "name": "reject_33",
+      "passed": true,
+      "wall_s": 0.025211400003172457
+    },
+    {
+      "name": "recovery_after_reject",
+      "passed": true,
+      "wall_s": 0.30587659997399896
+    }
+  ],
+  "full_hd32": {
+    "resolution": [
+      1920,
+      1080
+    ],
+    "status": 200,
+    "expected": [
+      278,
+      337,
+      167
+    ],
+    "actual": [
+      278,
+      337,
+      167
+    ],
+    "wall_s": 110.06024970003637,
+    "stats": {
+      "ts_ms": 1791382844382,
+      "req_seq": 11,
+      "finish": "stop",
+      "drafter": "mtp",
+      "vision": true,
+      "prompt_tokens": 65411,
+      "cached_tokens": 0,
+      "output_tokens": 15,
+      "ttft_ms": 107290.631,
+      "prefill_ms": 44321.9,
+      "decode_ms": 360.4,
+      "proposed": 12,
+      "commit": 14,
+      "rounds": 6,
+      "acceptance": 0.6666666666666666
+    }
+  },
+  "responses32": "passed",
+  "parallel_17_images_per_slot": {
+    "passed": true,
+    "observed_in_flight": 2
+  },
+  "protocol": [
+    {
+      "name": "33_frames_drain_and_reuse",
+      "reply": "D 932 error 1 0 0 0",
+      "pong": "PONG"
+    },
+    {
+      "name": "aggregate_budget_drain_and_reuse",
+      "reply": "D 933 error 1 0 0 0",
+      "pong": "PONG",
+      "wall_s": 8.59938259999035
+    }
+  ],
+  "unchanged_memory_for_same_workload": {
+    "device_current_bytes": 102152575040,
+    "device_peak_bytes": 102152575040,
+    "pinned_host_current_bytes": 84224020,
+    "pinned_host_peak_bytes": 268500992
+  },
+  "precision_environment_changes": [
+    "GDEC_API_MAX_IMAGES:16->32"
+  ],
+  "test_port": 18871,
+  "deployment": {
+    "verified_utc": "2026-10-07T14:26:49Z",
+    "live_checks": [
+      "32-image SSE with ordered codes and terminal event",
+      "33-image rejection",
+      "successful following text request",
+      "idle two-slot 256K service"
+    ],
+    "max_images": 32,
+    "source_dirty": true,
+    "config_change_only": "MAX_IMAGES=16 -> 32"
+  }
+}

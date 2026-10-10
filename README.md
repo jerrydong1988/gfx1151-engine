@@ -27,6 +27,7 @@ R19 完成上游基础设施整合与同权重的三方 v2 对照，新增可切
 `start_win.exe`，从 `service.conf` 读取完整计算参数；不再需要多个 PowerShell
 快捷方式切换方案。配置样例为 [windows_hybrid.conf.example](tools/windows_hybrid.conf.example)，
 部署方式和限制见 [Windows 融合版部署](docs/WINDOWS_HYBRID_DEPLOYMENT.md)。
+本地多图输入支持与性能验证见 [32 张图片扩容说明](docs/VISION_CAPACITY_20261007.md)；上限按整次请求累计，包含历史图片。
 R24 重建引擎以增加宿主计时和默认关闭的页读取候选；计算内核与权重不变，API 沿用此前二进制。
 exact 路径与历史实验继续保留在源码，未作为另外的本机服务部署。
 R23 的独立交付校验仍属于测试客户端，没有随引擎安装进 Octop。

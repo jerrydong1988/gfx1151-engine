@@ -25,7 +25,7 @@ bool decode_image_url(const std::string& value, std::vector<uint8_t>* bytes,
                       std::string* error);
 
 // Per-request image cap: GDEC_API_MAX_IMAGES, default 8. Values above the
-// engine's GEN-protocol frame cap (16) clamp to it with a warning.
+// engine's GEN-protocol frame cap (32) clamp to it with a warning.
 int max_images();
 
 // Decode PNG/JPEG/WebP, smart-resize it, normalize it, and build Qwen patches.

@@ -1,6 +1,7 @@
 // Qwen image preprocessing derived from the public Apache-2.0 Transformers
 // Qwen2-VL processor. Pillow-compatible bicubic resize is implemented locally.
 #include "vision.h"
+#include "../vision_limits.h"
 
 #include <algorithm>
 #include <cmath>
@@ -37,7 +38,7 @@ constexpr int kDefaultMaxImages = 8;
 // The engine's GEN protocol accepts at most this many VIMG frames per
 // request (kVimgMax in src/gpu/parts/51_host_cfg.inc); a larger API-side
 // cap only produces requests the engine always rejects.
-constexpr int kMaxImagesCap = 16;
+constexpr int kMaxImagesCap = gdec_vision_limits::kMaxImages;
 constexpr int kPatch = 16;
 constexpr int kMerge = 2;
 constexpr int kFactor = kPatch * kMerge;
@@ -498,16 +499,30 @@ bool decode_image_url(const std::string& value, std::vector<uint8_t>* bytes,
     return true;
 }
 
-bool preprocess(const std::vector<uint8_t>& bytes, Frame* frame, std::string* error) {
+static bool preprocess_bounded(const std::vector<uint8_t>& bytes, Frame* frame,
+                               std::string* error, uint64_t* used_patches) {
     Image decoded;
     if (!decode_image(bytes, &decoded, error)) return false;
     int height = 0, width = 0;
     if (!smart_resize(decoded.height, decoded.width, &height, &width, error)) return false;
+    const uint64_t patches = static_cast<uint64_t>(height / kPatch) * (width / kPatch);
+    if (!gdec_vision_limits::admit_patches(patches, used_patches)) {
+        *error = "request images exceed the total vision budget of " +
+                 std::to_string(gdec_vision_limits::kMaxPatches) +
+                 " patches (65536 visual tokens); reduce image dimensions or "
+                 "remove unneeded images from conversation history";
+        return false;
+    }
     Image resized = (height == decoded.height && width == decoded.width)
                         ? std::move(decoded)
                         : resize_bicubic(decoded, width, height);
     patchify(resized, frame);
     return true;
+}
+
+bool preprocess(const std::vector<uint8_t>& bytes, Frame* frame, std::string* error) {
+    uint64_t used_patches = 0;
+    return preprocess_bounded(bytes, frame, error, &used_patches);
 }
 
 bool prepare_messages(const json& messages, std::vector<Frame>* frames,
@@ -530,17 +545,18 @@ bool prepare_messages(const json& messages, std::vector<Frame>* frames,
             urls.push_back(std::move(url));
             if (urls.size() > static_cast<size_t>(max_images())) {
                 *error = "a request may contain at most " + std::to_string(max_images()) +
-                         " images";
+                         " images across all messages, including conversation history";
                 return false;
             }
         }
     }
     frames->reserve(urls.size());
+    uint64_t used_patches = 0;
     for (const std::string& url : urls) {
         std::vector<uint8_t> bytes;
         if (!decode_image_url(url, &bytes, error)) return false;
         Frame frame;
-        if (!preprocess(bytes, &frame, error)) return false;
+        if (!preprocess_bounded(bytes, &frame, error, &used_patches)) return false;
         frames->push_back(std::move(frame));
     }
     return true;

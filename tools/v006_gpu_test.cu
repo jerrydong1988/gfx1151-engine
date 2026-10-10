@@ -6,6 +6,13 @@
 
 int main() {
   int failed = 0, cases = 0;
+  for (int count : {1, 16, 17, 20, 32, 33}) {
+    std::istringstream request("1 1 0 1 1 0 VIMG " + std::to_string(count));
+    auto parsed = serve::parse_gen(request);
+    const bool ok = parsed.vimg == count && parsed.reject == (count > 32);
+    ++cases; failed += !ok;
+    printf("%s VIMG count=%d reject=%d\n", ok ? "PASS" : "FAIL", count, parsed.reject);
+  }
   std::mt19937 rng(61006);
   for (int P : {1, 2, 7, 8, 9, 33, 257}) {
     for (int pattern = 0; pattern < 6; ++pattern) {

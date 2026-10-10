@@ -35,6 +35,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include "../vision_limits.h"
 
 #ifdef _WIN32
 #include "../gpu/os_win32.h"  // wsa_init()
@@ -1889,6 +1890,8 @@ void handle_health(const http::Request&, http::Response* r, http::Stream*) {
                    {"http_urls", false},
                    {"formats", json::array({"png", "jpeg", "webp"})},
                    {"max_images", vision::max_images()},
+                   {"max_total_patches", gdec_vision_limits::kMaxPatches},
+                   {"max_visual_tokens", gdec_vision_limits::kMaxPatches / 4},
                    {"video", false},
                    {"runtime", "native-cpp"}};
     j["supported"] = json::array(

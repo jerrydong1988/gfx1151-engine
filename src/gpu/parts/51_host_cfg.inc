@@ -1372,7 +1372,7 @@ static bool send_all(sockfd_t fd, const std::string& s) {
 // drain that many binary frames before replying — a reject that skips the
 // drain leaves frame bytes to be misread as protocol lines and silently
 // wedges the connection. src/api/vision.cpp clamps its image cap to this.
-constexpr int kVimgMax = 16;
+constexpr int kVimgMax = gdec_vision_limits::kMaxImages;
 
 struct GenReq {
   int64_t req = 0;
@@ -2994,7 +2994,7 @@ static void conn_main(GpuModel& m, sockfd_t cfd, const kvsnap::Cfg& kvs) {
       }
     } else if (verb == "GEN") {
       GenReq g = parse_gen(ss);
-      const bool rejected =
+      bool rejected =
           g.reject || (int)g.ids.size() + g.max_tokens > m.maxctx;
       if (rejected) {
         const char* why = !g.reject ? "prompt + max_tokens exceeds maxctx"
@@ -3018,6 +3018,7 @@ static void conn_main(GpuModel& m, sockfd_t cfd, const kvsnap::Cfg& kvs) {
       std::vector<std::vector<float>> vpatches;
       if (g.vimg > 0) {
         bool ok = true;
+        uint64_t used_patches = 0;
         sock_rcvtimeo(cfd, 120);
         if (!rejected) vpatches.resize(g.vimg);
         for (int i = 0; i < g.vimg && ok; i++) {
@@ -3029,6 +3030,16 @@ static void conn_main(GpuModel& m, sockfd_t cfd, const kvsnap::Cfg& kvs) {
                fh.P > 0 && fh.P <= 65536 &&
                fh.nbytes == (uint64_t)fh.P * 1536 * 4;
           if (!ok) break;
+          if (!rejected && !gdec_vision_limits::admit_patches(fh.P, &used_patches)) {
+            rejected = true;
+            fprintf(stderr, "%s vision: req %lld rejected: total patch budget "
+                    "exceeded (maximum %llu patches)\n", log_ts(),
+                    (long long)g.req,
+                    (unsigned long long)gdec_vision_limits::kMaxPatches);
+            // Free accepted frames, then drain this and all remaining frames
+            // before replying so the connection remains reusable.
+            std::vector<std::vector<float>>().swap(vpatches);
+          }
           if (rejected) {
             char scratch[65536];
             uint64_t left = fh.nbytes;

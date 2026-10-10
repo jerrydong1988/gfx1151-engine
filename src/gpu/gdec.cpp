@@ -174,6 +174,7 @@
 #include "parts/40_model.inc"
 #include "parts/48_kld.inc"
 #include "parts/49_rckpt.inc"
+#include "../vision_limits.h"
 #include "parts/50_serve.inc"
 #include "parts/51_host_cfg.inc"
 #include "parts/52_main.inc"
