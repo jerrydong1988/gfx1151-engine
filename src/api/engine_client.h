@@ -83,7 +83,9 @@ class EngineClient {
     EngineClient& operator=(const EngineClient&) = delete;
 
     // host_port is "host:port" (IPv4 or hostname). Returns false with *err set.
-    bool connect(const std::string& host_port, std::string* err);
+    // Positive timeout bounds socket connection attempts (DNS resolution is
+    // outside this budget); zero retains the blocking behavior.
+    bool connect(const std::string& host_port, std::string* err, double timeout_s = 0);
     void close();
     bool connected() const { return fd_.load(std::memory_order_acquire) >= 0; }
 

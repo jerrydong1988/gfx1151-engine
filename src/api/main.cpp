@@ -31,6 +31,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -83,6 +84,8 @@ std::atomic<long long> g_req_seq{0};
 // queries (MEM/CSTAT) use g_ctl and never wait for a generation slot.
 int g_slots = 1;
 int g_kv_pool = 0;  // shared KV pool tokens from INFO (0 = old engine, unknown)
+int g_engine_context = 262144;  // runtime INFO; g_cfg remains immutable after startup
+bool g_engine_info_ready = false;
 std::vector<std::unique_ptr<gdec::EngineClient>> g_pool;  // g_slots clients
 std::vector<gdec::EngineClient*> g_pool_free;             // under g_slot_mtx
 gdec::EngineClient g_ctl;
@@ -91,6 +94,12 @@ std::condition_variable g_slot_cv;
 int g_in_flight = 0;
 int g_queued = 0;
 std::chrono::steady_clock::time_point g_busy_since;  // idle -> busy edge
+
+struct EngineCapacity { int context, slots, kv_pool; };
+EngineCapacity engine_capacity() {
+    std::lock_guard<std::mutex> lk(g_slot_mtx);
+    return {g_engine_context, g_slots, g_kv_pool};
+}
 
 // generation_config.json of this checkpoint.
 const std::vector<int> g_eos = {248046, 248044};
@@ -178,7 +187,7 @@ class SlotGuard {
 bool engine_ready(gdec::EngineClient& eng, std::string* err) {
     std::lock_guard<std::mutex> lk(g_conn_mtx);
     if (eng.connected()) return true;
-    return eng.connect(g_cfg.engine_addr, err);
+    return eng.connect(g_cfg.engine_addr, err, 1.0);
 }
 
 // ------------------------------------------------------- incremental text --
@@ -688,7 +697,7 @@ GenOutcome run_generation(GenSpec& spec,
     gdec::GenParams p;
     p.req = req_id;
     p.ids = spec.ids;
-    const long long budget = static_cast<long long>(g_cfg.context) -
+    const long long budget = static_cast<long long>(engine_capacity().context) -
                              static_cast<long long>(spec.ids.size());
     if (budget <= 0) http::fail(400, kEngineRejected);
     const long long requested = spec.max_tokens > 0 ? spec.max_tokens : budget;
@@ -815,7 +824,7 @@ GenOutcome run_generation(GenSpec& spec,
                             "context full)\n", req_id, emitted);
             http::fail(503, kEngineAborted, "server_error", "server_error");
         }
-        http::fail(400, g_slots > 1 ? kEngineRejectedPar : kEngineRejected);
+        http::fail(400, engine_capacity().slots > 1 ? kEngineRejectedPar : kEngineRejected);
     }
     if (out.hit_stop || r.reason == "done") out.reason = "stop";
     else if (r.reason == "length") out.reason = "length";
@@ -1844,7 +1853,6 @@ void handle_health(const http::Request&, http::Response* r, http::Stream*) {
     j["endpoints"] = json::array(
         {"/v1/chat/completions", "/v1/completions", "/v1/models", "/v1/responses",
          "/dashboard", "/reqstat/summary", "/reqstat/tail"});
-    j["context"] = g_cfg.context;
     if (g_cfg.rope.factor > 1.0) {
         j["rope_scaling"] = {{"type", "yarn"},
                               {"factor", g_cfg.rope.factor},
@@ -1858,6 +1866,12 @@ void handle_health(const http::Request&, http::Response* r, http::Stream*) {
     }
     {
         std::lock_guard<std::mutex> lk(g_slot_mtx);
+        j["context"] = g_engine_context;
+        j["slot_ctx"] = g_engine_context;
+        j["slots"] = g_slots;
+        j["kv_pool"] = g_kv_pool;
+        j["engine_info_ready"] = g_engine_info_ready;
+        j["queued"] = g_queued;
         j["busy"] = g_in_flight > 0;
         j["in_flight"] = g_in_flight;
         j["busy_for_s"] = g_in_flight > 0
@@ -1865,13 +1879,6 @@ void handle_health(const http::Request&, http::Response* r, http::Stream*) {
                                     std::chrono::steady_clock::now() - g_busy_since)
                                     .count()
                               : 0;
-    }
-    j["slots"] = g_slots;
-    j["slot_ctx"] = g_cfg.context;
-    j["kv_pool"] = g_kv_pool;
-    {
-        std::lock_guard<std::mutex> lk(g_slot_mtx);
-        j["queued"] = g_queued;
     }
     j["decode"] = std::string(
         "greedy at explicit temperature 0; Qwen-default sampling (temp 1.0, top_k 20, "
@@ -2728,44 +2735,99 @@ void handle_responses(const http::Request& q, http::Response* r, http::Stream* s
 
 // -------------------------------------------------------------------- main --
 
-void probe_engine() {
-    std::string err, line;
-    // Startup must not stall for the generation budget: an unreachable or
-    // wedged engine falls back to the configured defaults (and one slot)
-    // instead of blocking the listen socket for minutes. The control
-    // connection keeps the short timeouts: MEM/CSTAT answer at once.
-    g_ctl.set_timeouts(5.0, 5.0);
-    if (!g_ctl.connect(g_cfg.engine_addr, &err)) {
-        fprintf(stderr, "gdec-api: engine connect failed: %s\n", err.c_str());
-    } else if (g_ctl.info(&line, &err)) {
-        // I mtp draft_head ctx spec_rows default drafter_weights dflash2
-        //   cache_mb cache_align kv_slots slot_ctx cache_mode sampling
-        //   kv_pool_tokens
-        std::vector<long long> f;
-        std::istringstream ss(line);
-        std::string tok;
-        ss >> tok;  // "I"
-        long long v;
-        while (ss >> v) f.push_back(v);
-        if (f.size() >= 3) {
-            g_cfg.context = (int)f[2];
-        }
-        if (f.size() >= 10 && f[9] >= 1 && f[9] <= 64) g_slots = (int)f[9];
-        if (f.size() >= 14 && f[13] > 0) g_kv_pool = (int)f[13];
-        fprintf(stderr, "gdec-api: engine INFO: %s\n", line.c_str());
-    } else {
-        fprintf(stderr, "gdec-api: engine INFO unavailable (%s); continuing with "
-                        "ctx=%d\n", err.c_str(), g_cfg.context);
+bool parse_engine_info(const std::string& line, EngineCapacity* capacity) {
+    // Optional trailing INFO fields keep old engines compatible. Reject bad
+    // widths/overflow rather than permanently stopping recovery on garbage.
+    std::istringstream input(line);
+    std::string word;
+    if (!(input >> word) || word != "I") return false;
+    std::vector<long long> fields;
+    while (input >> word) {
+        long long value = 0;
+        const auto parsed = std::from_chars(word.data(), word.data() + word.size(), value);
+        if (parsed.ec != std::errc() || parsed.ptr != word.data() + word.size()) return false;
+        fields.push_back(value);
     }
-    for (int i = 0; i < g_slots; ++i) {
-        g_pool.push_back(std::make_unique<gdec::EngineClient>());
-        g_pool_free.push_back(g_pool.back().get());
+    const long long max_int = std::numeric_limits<int>::max();
+    if (fields.size() < 3 || fields[2] <= 0 || fields[2] > max_int) return false;
+    EngineCapacity result{(int)fields[2], 1, 0};
+    if (fields.size() >= 10) {
+        if (fields[9] < 1 || fields[9] > 64) return false;
+        result.slots = (int)fields[9];
     }
-    fprintf(stderr, "gdec-api: %d concurrent generation slot%s (per-slot context %d,"
-            " shared KV pool %d)\n",
-            g_slots, g_slots > 1 ? "s" : "", g_cfg.context,
-            g_kv_pool > 0 ? g_kv_pool : g_cfg.context);
+    if (fields.size() >= 14) {
+        if (fields[13] < 0 || fields[13] > max_int) return false;
+        result.kv_pool = (int)fields[13];
+    }
+    *capacity = result;
+    return true;
 }
+
+void apply_engine_info(const EngineCapacity& capacity, bool ready) {
+    {
+        std::lock_guard<std::mutex> lk(g_slot_mtx);
+        g_engine_context = capacity.context;
+        g_kv_pool = capacity.kv_pool;
+        // Existing requests retain stable EngineClient pointers. Expansion is
+        // safe; changing a running engine to fewer slots requires an API restart.
+        const int target = std::max(g_slots, capacity.slots);
+        for (int i = (int)g_pool.size(); i < target; ++i) {
+            g_pool.push_back(std::make_unique<gdec::EngineClient>());
+            g_pool_free.push_back(g_pool.back().get());
+        }
+        g_slots = target;
+        g_engine_info_ready = ready;
+    }
+    g_slot_cv.notify_all();
+}
+
+bool probe_engine(bool initial) {
+    // Dedicated connection: background INFO never races MEM/CSTAT or GEN.
+    gdec::EngineClient probe;
+    probe.set_timeouts(1.0, 1.0);
+    std::string err, line;
+    EngineCapacity capacity{};
+    if (probe.connect(g_cfg.engine_addr, &err, 0.3) &&
+        probe.info(&line, &err) && parse_engine_info(line, &capacity)) {
+        apply_engine_info(capacity, true);
+        fprintf(stderr, "gdec-api: engine INFO%s: %s\n",
+                initial ? "" : " (recovered)", line.c_str());
+        return true;
+    }
+    if (initial)
+        fprintf(stderr, "gdec-api: engine INFO unavailable (%s); using ctx=%d, "
+                        "one slot and retrying in background\n",
+                err.empty() ? "invalid INFO" : err.c_str(), g_cfg.context);
+    return false;
+}
+
+class EngineReprobe {
+  public:
+    explicit EngineReprobe(bool needed) {
+        if (!needed) return;
+        worker_ = std::thread([this] {
+            std::unique_lock<std::mutex> lock(mutex_);
+            for (int attempt = 0; ; ++attempt) {
+                if (cv_.wait_for(lock, std::chrono::seconds(attempt < 150 ? 2 : 15),
+                                 [this] { return stop_; })) return;
+                lock.unlock();
+                const bool ready = probe_engine(false);
+                lock.lock();
+                if (ready) return;
+            }
+        });
+    }
+    ~EngineReprobe() {
+        { std::lock_guard<std::mutex> lock(mutex_); stop_ = true; }
+        cv_.notify_all();
+        if (worker_.joinable()) worker_.join();
+    }
+  private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool stop_ = false;
+    std::thread worker_;
+};
 
 }  // namespace
 
@@ -2826,7 +2888,11 @@ int main(int argc, char** argv) {
     }
     g_tcache.load_file();
     g_ckpt_ids = default_ckpt_tokens();
-    probe_engine();
+    g_ctl.set_timeouts(5.0, 5.0);
+    // Pool must exist even when the engine has not started. Requests then
+    // fail normally with 502 instead of accessing an empty free list.
+    apply_engine_info({g_cfg.context, 1, 0}, false);
+    const bool engine_probed = probe_engine(true);
 
     http::Server srv;
     if (!srv.listen(g_cfg.listen, &err)) {
@@ -2834,7 +2900,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     fprintf(stderr, "gdec-api: listening on :%d model=%s ctx=%d slots=%d\n", srv.port(),
-            g_cfg.model.c_str(), g_cfg.context, g_slots);
+            g_cfg.model.c_str(), engine_capacity().context, engine_capacity().slots);
 
     srv.on("GET", "/", handle_dashboard);
     srv.on("GET", "/dashboard", handle_dashboard);
@@ -2850,6 +2916,7 @@ int main(int argc, char** argv) {
     srv.on("POST", "/v1/chat/completions", handle_chat);
     srv.on("POST", "/v1/responses", handle_responses);
 
+    EngineReprobe recovery(!engine_probed);
     srv.run();
     return 0;
 }

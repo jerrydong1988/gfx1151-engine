@@ -6,6 +6,7 @@
 #   bash build_win.sh bench      # 性能测试工具 → build/gdec-bench.exe
 #   bash build_win.sh api        # OpenAI HTTP 前端 → build/gdec-api-win.exe
 #   bash build_win.sh launcher   # 免脚本启动器 → ./start_win.exe（双击即用，托盘程序）
+#   bash build_win.sh eng-cli    # 引擎协议诊断客户端 → build/eng-cli-win.exe
 #   bash build_win.sh test       # 编 build/ktest-win.exe 并运行 kernel 单测
 #
 # 前置：TheRock 多架构包（默认 C:\therock-dist-windows-multiarch-10.0.0\...，
@@ -24,7 +25,6 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 TR="${THEROCK:-/c/therock-dist-windows-multiarch-10.0.0/therock-dist-windows-multiarch-10.0.0}"
 HIPCC="$TR/bin/hipcc.exe"
-[[ -x "$HIPCC" ]] || { echo "找不到 TheRock hipcc: $HIPCC（设 THEROCK=...）" >&2; exit 1; }
 # hipcc 会读 HIP_PATH 定位 clang（实测指向坏路径直接编译失败；指向 HIP SDK 7.2
 # 时靠布局差异侥幸回退自定位，不该依赖）。强制 HIP_PATH 指向 TheRock，屏蔽机器
 # 上其他 HIP/ROCm 安装（SDK 6.4/7.1/7.2 会设 HIP_PATH/HIP_PATH_64/HIP_PATH_72）。
@@ -35,8 +35,19 @@ export HIP_PATH="$TR_WIN"
 unset ROCM_PATH HIP_PATH_64 HIP_PATH_71 HIP_PATH_72
 GPU_ARCH="${GPU_ARCH:-gfx1151}"
 TARGET="${1:-all}"
-[[ "$TARGET" == all || "$TARGET" == engine || "$TARGET" == bench || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == test || "$TARGET" == v2-test || "$TARGET" == v006-test ]] || { sed -n '2,11p' "$0" >&2; exit 2; }
+[[ "$TARGET" == all || "$TARGET" == engine || "$TARGET" == bench || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == eng-cli || "$TARGET" == test || "$TARGET" == v2-test || "$TARGET" == v006-test ]] || { sed -n '2,11p' "$0" >&2; exit 2; }
 
+# Host-only targets still use TheRock clang, but need neither HIP nor GPU
+# runtime/database staging. Preserve the existing GPU toolchain for other targets.
+NEED_HIP=1
+[[ "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == eng-cli ]] && NEED_HIP=0
+[[ "$NEED_HIP" == 0 || -x "$HIPCC" ]] || { echo "找不到 TheRock hipcc: $HIPCC（设 THEROCK=...）" >&2; exit 1; }
+mkdir -p build
+for d in msvcp140.dll vcruntime140.dll vcruntime140_1.dll; do
+  [[ -f "build/$d" ]] || cp "/c/windows/System32/$d" build/
+done
+
+if [[ "$NEED_HIP" == 1 ]]; then
 mkdir -p build build/winlibs
 [[ -f build/winlibs/rocblas.lib ]]   || cp "$TR/lib/rocblas.lib" build/winlibs/
 [[ -f build/winlibs/amdhip64.lib ]]  || cp "$TR/lib/amdhip64.lib" build/winlibs/
@@ -44,10 +55,6 @@ mkdir -p build build/winlibs
 
 for d in amdhip64_7.dll rocm_kpack.dll amd_comgr.dll rocblas.dll libhipblaslt.dll origami.dll; do
   [[ -f "build/$d" ]] || cp "$TR/bin/$d" build/
-done
-# MSVC 运行时（微软官方可再分发），覆盖没装 VC++ Redistributable 的裸机
-for d in msvcp140.dll vcruntime140.dll vcruntime140_1.dll; do
-  [[ -f "build/$d" ]] || cp "/c/windows/System32/$d" build/
 done
 
 # kernel db 拷真身而非 junction：rocBLAS 按 <exe目录>/rocblas/library 找 db
@@ -69,6 +76,7 @@ for f in "$TR/bin/rocblas/library/"*"$GPU_ARCH"*; do
   b="$(basename "$f")"
   [[ -f "build/rocblas/library/$b" ]] || cp "$f" build/rocblas/library/
 done
+fi
 
 # _CRT_NONSTDC_NO_DEPRECATE：屏蔽 MSVC 头文件对 strdup 等 POSIX 名的
 # deprecated 标记（_CRT_NONSTDC_DEPRECATE → __declspec(deprecated)）。
@@ -136,6 +144,15 @@ build_launcher() {
     fi
 }
 
+build_eng_cli() {
+    CXX="$TR/lib/llvm/bin/clang++.exe"
+    [[ -x "$CXX" ]] || { echo "找不到 TheRock clang++: $CXX" >&2; exit 1; }
+    echo "[编译] build/eng-cli-win.exe"
+    "$CXX" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS -Isrc/api -Ithird_party \
+      src/api/engine_client.cpp src/api/tokenizer.cpp src/api/eng_cli.cpp \
+      -lws2_32 -o build/eng-cli-win.exe
+}
+
 build_test() {
     python tools/kv_admission_test.py --cxx "$TR/lib/llvm/bin/clang++.exe"
     echo "[编译] build/ktest-win.exe"
@@ -180,6 +197,7 @@ case "$TARGET" in
   bench) build_bench ;;
   api) build_api ;;
   launcher) build_launcher ;;
+  eng-cli) build_eng_cli ;;
   test) build_test ;;
 esac
 echo '[完成] 编译输出位于 build/；启动服务用 ./start_win.exe（或 bash start_win.sh）'

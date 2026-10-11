@@ -315,9 +315,16 @@ cd gfx1151-engine
 bash build_win.sh
 bash build_win.sh api
 bash build_win.sh launcher
+bash build_win.sh eng-cli
 bash build_win.sh v2-test
 bash build_win.sh test
 ```
+
+`api`、`launcher`、`eng-cli` 是主机端构建：仍需 TheRock clang 与 Visual Studio
+开发环境，但不要求 HIP 编译器，不复制 GPU 运行库或 kernel 数据库。
+`eng-cli` 生成 `build/eng-cli-win.exe`，用于直接检查引擎协议；其余 GPU 目标仍需完整工具链。
+API 在引擎尚未就绪时以单槽启动，后台重试 INFO，取得有效容量后恢复实际并发数。
+`/health.engine_info_ready` 只表示初始容量协商已完成，不是持续存活探针。
 
 1. 按 [v2 隔离配置](docs/HGN_V2.md) 修改 `service.conf`：主权重、匹配的 PLE sidecar、
    tokenizer，先用短上下文和单槽位。仓库默认配置仍指向旧 w4b，克隆不会自动切换 v2。

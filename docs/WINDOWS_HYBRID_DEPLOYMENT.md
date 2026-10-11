@@ -1,5 +1,18 @@
 # Windows hybrid mainline deployment
 
+## API 恢复与诊断更新 — 2026-10-11
+
+API 在首次连接引擎失败后会后台重试容量协商，恢复双槽及实际上下文上报；
+请求连接有等待上限，失败信息保留真实 socket 错误。新增 Windows 协议诊断客户端
+`build/eng-cli-win.exe`，三个主机端构建目标不再依赖 HIP 暂存。
+
+GDN shuffle 候选完成独立数值和 ABBA 性能对照后未纳入：现有双路 aligned、
+gamma=2 配置没有稳定的端到端收益。部署保留正式 v2 引擎二进制、启动器、
+权重、运行库、`service.conf` 与原有 84 项有效参数，仅替换 API 并新增诊断 CLI。
+取舍和证据见 [API 恢复与 GDN 独立评估](UPSTREAM_RECOVERY_20261011.md)。
+当前部署身份、真实请求验收和备份位置以应用目录 `deployment.json` 为准；
+下方各节为历史记录。
+
 ## 上游兼容性整合 — 2026-10-10
 
 纳入窄长图片补边、共享 KV 总容量上报、YaRN 启动前校验和有限的工具参数格式兼容。

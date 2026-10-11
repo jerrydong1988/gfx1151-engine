@@ -6,6 +6,7 @@
 #define poll WSAPoll
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -28,7 +29,8 @@ namespace {
 #ifdef _WIN32
 int sock_close_fd(sock_t fd) { return closesocket((SOCKET)fd); }
 bool sock_intr() { return WSAGetLastError() == WSAEINTR; }
-std::string sock_errstr() { return sock_strerror(WSAGetLastError()); }
+std::string sock_errstr(int error) { return sock_strerror(error); }
+std::string sock_errstr() { return sock_errstr(WSAGetLastError()); }
 ssize_t platform_send(sock_t fd, const void* p, size_t n) {
     return sock_send(fd, p, n);
 }
@@ -38,7 +40,8 @@ ssize_t platform_recv(sock_t fd, void* p, size_t n) {
 #else
 int sock_close_fd(sock_t fd) { return ::close(fd); }
 bool sock_intr() { return errno == EINTR; }
-std::string sock_errstr() { return std::strerror(errno); }
+std::string sock_errstr(int error) { return std::strerror(error); }
+std::string sock_errstr() { return sock_errstr(errno); }
 ssize_t platform_send(sock_t fd, const void* p, size_t n) {
     return ::send(fd, p, n, MSG_NOSIGNAL);
 }
@@ -103,7 +106,7 @@ void EngineClient::invalidate(sock_t bad_fd) {
     sock_close_fd(bad_fd);
 }
 
-bool EngineClient::connect(const std::string& host_port, std::string* err) {
+bool EngineClient::connect(const std::string& host_port, std::string* err, double timeout_s) {
     auto fail = [&](const std::string& m) {
         if (err) *err = m;
         return false;
@@ -120,16 +123,85 @@ bool EngineClient::connect(const std::string& host_port, std::string* err) {
     if (int rc = getaddrinfo(host.c_str(), port.c_str(), &hints, &res); rc != 0)
         return fail("getaddrinfo(" + host_port + "): " + gai_strerror(rc));
 
+    const double deadline = now_s() + timeout_s;
+    std::string connect_error = "no usable network address";
+    auto socket_failure = [&] {
+        connect_error = sock_errstr();
+        return false;
+    };
+    auto connect_timed = [&](sock_t fd, const addrinfo* ai) {
+#ifdef _WIN32
+        u_long mode = 1;
+        if (ioctlsocket((SOCKET)fd, FIONBIO, &mode) != 0) return socket_failure();
+#else
+        const int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) return socket_failure();
+#endif
+        bool ok = ::connect(fd, ai->ai_addr, (int)ai->ai_addrlen) == 0;
+#ifdef _WIN32
+        const bool pending = !ok && WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+        const bool pending = !ok && (errno == EINPROGRESS || errno == EINTR);
+#endif
+        if (!ok) connect_error = sock_errstr();
+        if (pending) {
+            connect_error = "connection timed out";
+            while (now_s() < deadline) {
+                const int ms = (int)std::min(2147483647.0,
+                                           std::max(1.0, (deadline - now_s()) * 1000.0));
+#ifdef _WIN32
+                // Winsock reports a failed nonblocking connect in exceptfds.
+                // Observe both sets so refusal is not mislabeled as a timeout.
+                fd_set writable, failed;
+                FD_ZERO(&writable); FD_ZERO(&failed);
+                FD_SET((SOCKET)fd, &writable); FD_SET((SOCKET)fd, &failed);
+                timeval timeout{ms / 1000, (ms % 1000) * 1000};
+                const int rc = ::select(0, nullptr, &writable, &failed, &timeout);
+                const bool invalid = false;
+#else
+                pollfd pfd{};
+                pfd.fd = fd;
+                pfd.events = POLLOUT;
+                const int rc = ::poll(&pfd, 1, ms);
+                const bool invalid = pfd.revents & POLLNVAL;
+#endif
+                if (rc < 0 && sock_intr()) continue;
+                if (rc > 0) {
+                    int error = 0;
+                    socklen_t length = sizeof error;
+                    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char*)&error, &length) != 0)
+                        socket_failure();
+                    else if (error != 0) connect_error = sock_errstr(error);
+                    else if (invalid) connect_error = "invalid socket";
+                    else ok = true;
+                } else if (rc < 0) {
+                    socket_failure();
+                }
+                break;
+            }
+        }
+        // generate/read_line expect blocking sockets after connection.
+#ifdef _WIN32
+        mode = 0;
+        if (ioctlsocket((SOCKET)fd, FIONBIO, &mode) != 0 && ok) ok = socket_failure();
+#else
+        if (fcntl(fd, F_SETFL, flags) != 0 && ok) ok = socket_failure();
+#endif
+        return ok;
+    };
     sock_t fd = -1;
     for (addrinfo* ai = res; ai != nullptr; ai = ai->ai_next) {
         fd = (sock_t)::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (fd < 0) continue;
-        if (::connect(fd, ai->ai_addr, (int)ai->ai_addrlen) == 0) break;
+        if (fd < 0) { socket_failure(); continue; }
+        if (timeout_s > 0 ? connect_timed(fd, ai)
+                          : ::connect(fd, ai->ai_addr, (int)ai->ai_addrlen) == 0) break;
+        if (timeout_s <= 0) socket_failure();
         sock_close_fd(fd);
         fd = -1;
+        if (timeout_s > 0 && now_s() >= deadline) break;
     }
     freeaddrinfo(res);
-    if (fd < 0) return fail("connect(" + host_port + ") failed: " + sock_errstr());
+    if (fd < 0) return fail("connect(" + host_port + ") failed: " + connect_error);
 
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
