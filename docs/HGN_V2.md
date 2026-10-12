@@ -176,6 +176,86 @@ and are not guaranteed to preserve model outputs or greedy MTP token parity.
 All matrix-core modes use the optimized FP32 small-batch expert GEMV.
 `GDEC_V2_REFERENCE=1` remains a diagnostic alias for `reference`.
 
+### Reproducing the reference arithmetic on Windows
+
+Use the explicit profile when investigating a task that changes with the
+arithmetic backend. It selects the original expert loop, decoded BF16 dense
+weights, both fork backends, and serial generation:
+
+```powershell
+.\tools\start_windows_profile.ps1 -Profile v2-reference -ModelDirectory 'C:\path\to\model' -Check
+# After checking the resolved files and runtime flags, omit -Check to start.
+```
+
+Pass `-Root` when the deployed engine is outside this checkout. The helper
+uses the existing Windows preset capacity settings (one slot by default);
+capacity, vision and cache settings must also match for a controlled comparison.
+It does not rewrite model files or `service.conf`. Restart the engine to apply
+the profile. The default drafter for this profile is `serial`.
+
+Setting only `GDEC_V2_MOE=reference` is insufficient when
+`GDEC_V2_EXPERT_BACKEND=upstream-prefill` is selected: batches above 16 rows
+still dispatch to the upstream expert backend. Likewise,
+`GDEC_V2_PAIRS_F16=0` controls the down-projection output buffer, not the FP16
+inputs and hidden activations used by the upstream Prefill WMMA path.
+`GDEC_SPEC_PRECISION=aligned` concerns speculative/serial alignment within
+an arithmetic policy; it does not make hybrid equal to reference.
+
+The 2026-10-12 fixed greedy amount-parser regression reproduced a 3,995-zero
+reasoning loop with hybrid, with or without MTP. Full reference serial passed
+536/536 hidden inputs. With the same weights and MTP off, replacing only
+the dense path, or only the expert path, also passed 536/536. These are
+controlled replays of one task, not a broad accuracy estimate or proof that
+one particular optimized kernel is incorrect. Reference means the original
+computation on the same quantized weights, not an unquantized model oracle.
+
+The narrower `v2-hybrid-exact-dequant` profile keeps the upstream dense and
+expert backends but enables `GDEC_V2_HT_DEQ_EXACT=1`, also with serial generation
+by default. This switch restores the reference HT weight-transform/scaling
+order and the indexer's direct FP32 decoding, avoiding a BF16 intermediate
+there. It does not restore reference dense Decode or expert arithmetic.
+On two independent engine starts it passed 536/536, with identical model text,
+tool arguments and final source. The first prompt's 7,872,000 sampled
+intermediate values matched the dense-reference arm bit-for-bit. This is a
+targeted, opt-in mitigation, not a general equivalence or accuracy guarantee.
+Keep `v2-reference` for strict reference comparisons. Existing profiles and
+deployment defaults are unchanged.
+
+MTP can also remain enabled with the narrower mitigation:
+
+```powershell
+.\tools\start_windows_profile.ps1 -Profile v2-hybrid-exact-dequant -Drafter mtp -ModelDirectory 'C:\path\to\model' -Check
+# Pass -Root for a separate deployment; omit -Check to start after inspecting it.
+```
+
+This selects exact **weight dequantization**, not serial token generation.
+Keep `GDEC_SPEC_PRECISION=aligned`, fixed gamma 2 and adaptive depth disabled,
+as supplied by this profile. The native launcher reads gamma from `MTP_GAMMA`;
+direct engine launches use `GDEC_SPEC_GAMMA`. A restart is required to decode
+the weights with the new policy.
+
+Two independent MTP starts on the same 2026-10-12 greedy regression both passed
+536/536, producing the same 7,920 output tokens by count and identical normalized
+model text, tool arguments and final source as serial exact-dequantization.
+Actual MTP proposals were observed on every turn; each run accepted 4,778 of
+6,270 proposals (76.2%). Decode throughput was 42.23 and 43.68 token/s, measured
+as total output tokens divided by total engine Decode time. A contemporary
+serial control passed with the same complete output at 30.43 token/s; pooled
+MTP throughput was 42.94 token/s (41.1% higher). Task time excluding loading
+fell from 266.7 seconds to a mean of 190.9 seconds. One serial startup was
+aborted during slow model loading before any inference and excluded; its
+unchanged retry is the reported control. These runs retained
+the original two-slot, 262144-context benchmark settings, which differ from the
+helper's one-slot capacity default. Finite task parity does not establish
+universal MTP/serial equivalence or guarantee sampled-task correctness.
+
+The two original daily-sampling failures were also replayed once each with
+MTP retained and exact dequantization enabled. At their original seeds and
+sampling parameters, `money_sign` improved from 426/536 to 536/536 and
+`money_float` from 424/536 to 536/536. Their measured Decode rates were
+42.66 and 43.60 token/s. These selected regressions are not an estimate of
+general accuracy, and their outputs need not match serial sampling.
+
 For speed experiments on Windows PowerShell:
 
 ```powershell

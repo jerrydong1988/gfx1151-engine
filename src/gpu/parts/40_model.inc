@@ -657,6 +657,13 @@ struct GpuModel {
   int64_t prog_req = -1;      // request id stamped on progress lines
   std::chrono::steady_clock::time_point prog_t0, prog_last;
   hipEvent_t prog_ev[64] = {};  // per-layer completion probes (DisableTiming)
+  // A GEN worker retains its own sink across slot yields. Do not put a
+  // connection callback in the shared model or persistent sequence state.
+  using PrefillProgressSink = std::function<void(int64_t, int64_t)>;
+  static PrefillProgressSink& prefill_progress_sink() {
+    static thread_local PrefillProgressSink sink;
+    return sink;
+  }
   int live_spec_rounds = 0;
   int live_spec_commits = 0;
   int live_spec_proposed = 0;
@@ -5374,6 +5381,7 @@ struct GpuModel {
     // done+1 of g_cfg.layers layers finished (L0 counts as one layer).
     double frac = double(done + 1) / g_cfg.layers;
     int64_t est = prog_base + (int64_t)(P * frac);
+    if (prefill_progress_sink()) prefill_progress_sink()(prog_base, est);
     double el = std::chrono::duration<double>(now - prog_t0).count();
     fprintf(stderr,
             "%s req %lld | prompt processing | n_tokens = %lld/%d (%.0f%%) "
@@ -6234,7 +6242,10 @@ struct GpuModel {
     if (!quiet && prog_total <= 0)
       fprintf(stderr, "\n%s prefill: %d tokens in %.2f s = %.1f tok/s\n", log_ts(),
               P, sec, P / sec);
-    if (prog_total > 0) prog_base += P;  // live progress: chunk complete
+    if (prog_total > 0) {
+      prog_base += P;  // live progress: chunk complete, after the existing sync
+      if (prefill_progress_sink()) prefill_progress_sink()(prog_base, prog_base);
+    }
     if (prof)
       fprintf(stderr,
               "prof: gemm_host=%.0fms topk_wait=%.0fms bucket+h2d=%.0fms "

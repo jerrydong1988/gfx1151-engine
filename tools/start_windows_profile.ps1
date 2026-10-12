@@ -1,7 +1,7 @@
 # Start a tested arithmetic profile without rewriting service.conf or user environment.
 [CmdletBinding()]
 param(
-    [ValidateSet('v2-exact', 'v2-fork', 'v2-hybrid', 'w4b')]
+    [ValidateSet('v2-reference', 'v2-exact', 'v2-fork', 'v2-hybrid', 'v2-hybrid-exact-dequant', 'w4b')]
     [string]$Profile = 'v2-exact',
     [ValidateSet('serial', 'mtp', 'chain')]
     [string]$Drafter,

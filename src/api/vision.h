@@ -13,6 +13,9 @@ namespace vision {
 
 using json = nlohmann::ordered_json;
 
+// Capabilities of the compiled decoders, shared by health and decoder tests.
+json capabilities();
+
 struct Frame {
     std::array<int, 3> grid{1, 0, 0};
     std::vector<float> patches;

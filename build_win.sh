@@ -8,9 +8,11 @@
 #   bash build_win.sh launcher   # 免脚本启动器 → ./start_win.exe（双击即用，托盘程序）
 #   bash build_win.sh eng-cli    # 引擎协议诊断客户端 → build/eng-cli-win.exe
 #   bash build_win.sh test       # 编 build/ktest-win.exe 并运行 kernel 单测
+#   bash build_win.sh webp-test  # CPU WebP/工具图片回归（测试需要 Pillow）
 #
 # 前置：TheRock 多架构包（默认 C:\therock-dist-windows-multiarch-10.0.0\...，
 # 可用 THEROCK=/path 覆盖）；GPU_ARCH 默认 gfx1151。
+# API 另需 Python 3.12+、CMake、Ninja；首次构建下载校验固定版本 WebP 源码。
 #
 # 脚本同时准备好运行环境（只需做一次，之后重复运行为幂等跳过）：
 # - winlibs 暂存：hipcc 的 -l<name> 解析找 <name>.lib；TheRock 的 hipBLASLt
@@ -35,12 +37,12 @@ export HIP_PATH="$TR_WIN"
 unset ROCM_PATH HIP_PATH_64 HIP_PATH_71 HIP_PATH_72
 GPU_ARCH="${GPU_ARCH:-gfx1151}"
 TARGET="${1:-all}"
-[[ "$TARGET" == all || "$TARGET" == engine || "$TARGET" == bench || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == eng-cli || "$TARGET" == test || "$TARGET" == v2-test || "$TARGET" == v006-test ]] || { sed -n '2,11p' "$0" >&2; exit 2; }
+[[ "$TARGET" == all || "$TARGET" == engine || "$TARGET" == bench || "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == eng-cli || "$TARGET" == test || "$TARGET" == v2-test || "$TARGET" == v006-test || "$TARGET" == webp-test ]] || { sed -n '2,11p' "$0" >&2; exit 2; }
 
 # Host-only targets still use TheRock clang, but need neither HIP nor GPU
 # runtime/database staging. Preserve the existing GPU toolchain for other targets.
 NEED_HIP=1
-[[ "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == eng-cli ]] && NEED_HIP=0
+[[ "$TARGET" == api || "$TARGET" == launcher || "$TARGET" == eng-cli || "$TARGET" == webp-test ]] && NEED_HIP=0
 [[ "$NEED_HIP" == 0 || -x "$HIPCC" ]] || { echo "找不到 TheRock hipcc: $HIPCC（设 THEROCK=...）" >&2; exit 1; }
 mkdir -p build
 for d in msvcp140.dll vcruntime140.dll vcruntime140_1.dll; do
@@ -100,16 +102,22 @@ build_bench() {
 
 build_api() {
     # OpenAI HTTP 前端：纯主机 C++，用 TheRock 自带 clang++（不拖 HIP 依赖）。
-    # vision.cpp 的图片解码在 Windows 上走 stb_image（vendor 单头文件，
-    # 编译进 exe，零新增 DLL），支持 PNG/JPEG；WebP 明确报错。
+    # PNG/JPEG 使用 stb_image，WebP 使用固定版本静态解码库；均无新增 DLL。
     CXX="$TR/lib/llvm/bin/clang++.exe"
     [[ -x "$CXX" ]] || { echo "找不到 TheRock clang++: $CXX" >&2; exit 1; }
+    build_webp
     echo "[编译] build/gdec-api-win.exe"
-    "$CXX" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS -Isrc/api -Ithird_party -I"$TR/include" \
+    "$CXX" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS -Isrc/api -Ithird_party -I"$TR/include" "${WEBP_FLAGS[@]}" \
       src/api/http.cpp src/api/engine_client.cpp src/api/tokenizer.cpp \
       src/api/chat_template.cpp src/api/json_py.cpp src/api/toolparse.cpp \
       src/api/vision.cpp src/api/reqstat.cpp src/api/reqstat_read.cpp \
-      src/api/main.cpp -lws2_32 -o build/gdec-api-win.exe
+      src/api/main.cpp -lws2_32 -o build/gdec-api-win.exe.tmp \
+      && mv -f build/gdec-api-win.exe.tmp build/gdec-api-win.exe
+}
+
+build_webp() {
+    python tools/build_webp_win.py --cc "$(cygpath -w "$TR/lib/llvm/bin/clang.exe")"
+    WEBP_FLAGS=(-Ibuild/deps/libwebp-1.6.0/src build/deps/libwebp-1.6.0-build/webpdecoder.lib)
 }
 
 build_launcher() {
@@ -162,11 +170,22 @@ build_test() {
 }
 
 case "$TARGET" in
+  webp-test)
+    build_webp
+    "$TR/lib/llvm/bin/clang++.exe" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS \
+      -Isrc/api -Ithird_party "${WEBP_FLAGS[@]}" \
+      src/api/http.cpp src/api/engine_client.cpp src/api/tokenizer.cpp \
+      src/api/chat_template.cpp src/api/json_py.cpp src/api/toolparse.cpp \
+      src/api/vision.cpp src/api/reqstat.cpp src/api/reqstat_read.cpp \
+      tools/webp_api_test.cpp -lws2_32 -o build/webp-api-test.exe
+    python tools/webp_api_test.py --test-bin build/webp-api-test.exe
+    ;;
   v006-test)
     # Pass the existing tokenizer directory; tests never download weights.
     : "${TOK_DIR:?Set TOK_DIR to the model tokenizer directory}"
+    build_webp
     "$TR/lib/llvm/bin/clang++.exe" -O2 -std=c++17 -D_CRT_SECURE_NO_WARNINGS \
-      -Isrc/api -Ithird_party -I"$TR/include" \
+      -Isrc/api -Ithird_party -I"$TR/include" "${WEBP_FLAGS[@]}" \
       src/api/http.cpp src/api/engine_client.cpp src/api/tokenizer.cpp \
       src/api/chat_template.cpp src/api/json_py.cpp src/api/toolparse.cpp \
       src/api/vision.cpp src/api/reqstat.cpp src/api/reqstat_read.cpp \

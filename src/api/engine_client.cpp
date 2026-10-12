@@ -18,6 +18,7 @@
 #include <cerrno>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -360,6 +361,7 @@ std::string build_gen_request(const GenParams& p) {
         for (const auto& b : p.bias) s += " " + std::to_string(b.first) + " " + g9(b.second);
     }
     if (p.logprobs) s += " LOGPROBS";
+    if (p.progress) s += " PROGRESS";
     if (!p.mrope_grids.empty()) {
         s += " MROPE " + std::to_string(p.mrope_grids.size());
         for (const auto& g : p.mrope_grids)
@@ -382,7 +384,7 @@ std::string build_gen_request(const GenParams& p) {
 }
 
 GenResult EngineClient::generate(const GenParams& p, const TokenFn& on_token,
-                                 const WaitFn& on_wait) {
+                                 const WaitFn& on_wait, const ProgressFn& on_progress) {
     GenResult out;
     std::lock_guard<std::mutex> lk(gen_mtx_);
     if (!valid_vision_payload(p)) {
@@ -409,7 +411,7 @@ GenResult EngineClient::generate(const GenParams& p, const TokenFn& on_token,
     }
 
     // --- read T lines until the D terminator ------------------------------
-    bool saw_any = false;
+    double token_deadline = now_s() + first_timeout_;
     bool cancelled = false;
     bool heartbeat = static_cast<bool>(on_wait);
     double next_heartbeat = now_s() + 1.0;
@@ -447,7 +449,7 @@ GenResult EngineClient::generate(const GenParams& p, const TokenFn& on_token,
     };
     for (;;) {
         std::string l;
-        if (!read_with_wait(&l, saw_any ? next_timeout_ : first_timeout_)) {
+        if (!read_with_wait(&l, std::max(0.0, token_deadline - now_s()))) {
             out.timed_out = read_timed_out_;
             if (out.timed_out && !cancelled) cancel(p.req);
             close();
@@ -464,7 +466,7 @@ GenResult EngineClient::generate(const GenParams& p, const TokenFn& on_token,
             if (req != p.req) continue;
             float lp = 0.0f;
             bool has_lp = (bool)(ss >> lp);
-            saw_any = true;
+            token_deadline = now_s() + next_timeout_;
             out.tokens.push_back(tok);
             out.logprobs.push_back(has_lp ? lp : 0.0f);
             if (!cancelled && on_token && !on_token(tok, has_lp ? lp : 0.0f)) {
@@ -473,6 +475,20 @@ GenResult EngineClient::generate(const GenParams& p, const TokenFn& on_token,
                 cancel(p.req);  // engine acknowledges with its own D line
                 cancel_deadline = now_s() + 10.0;
             }
+        } else if (kind == "P") {
+            long long req = 0;
+            int done = 0;
+            GenProgress v;
+            if (!(ss >> req >> done >> v.completed >> v.estimated >> v.total >>
+                  v.cached >> v.prefill_ms) || req != p.req || (done != 0 && done != 1) ||
+                v.completed < 0 || v.estimated < v.completed || v.total < v.estimated ||
+                v.cached < 0 || v.total > (long long)p.ids.size() ||
+                v.cached != (long long)p.ids.size() - v.total ||
+                !std::isfinite(v.prefill_ms) || v.prefill_ms < 0 ||
+                (done && v.completed != v.total)) continue;
+            v.prefill_done = done != 0;
+            if (!cancelled && on_progress) on_progress(v);
+            // Telemetry must not extend first-token or idle-token deadlines.
         } else if (kind == "D") {
             long long req = 0;
             if (!(ss >> req) || req != p.req) continue;

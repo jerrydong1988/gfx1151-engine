@@ -39,6 +39,7 @@ struct GenParams {
     float frequency = 0.0f;
     std::vector<std::pair<int, float>> bias;   // <= 20480, tid < 248320
     bool logprobs = false;               // sampler-only, like PENALTY/BIAS
+    bool progress = false;               // opt-in P lines; old engines ignore PROGRESS
     std::vector<std::array<int, 3>> mrope_grids;  // MROPE k t h w ...
     std::vector<std::vector<float>> patches;      // VIMG: one (P*1536) fp32 per grid
     long long snap = -1;                 // -1 = omit
@@ -70,6 +71,13 @@ using TokenFn = std::function<bool(int /*token*/, float /*logprob*/)>;
 // Called periodically during generation, including while T lines keep arriving.
 // Returning false cancels the request, but generate() still drains its D line.
 using WaitFn = std::function<bool()>;
+
+struct GenProgress {
+    bool prefill_done = false;
+    long long completed = 0, estimated = 0, total = 0, cached = 0;
+    double prefill_ms = 0;
+};
+using ProgressFn = std::function<void(const GenProgress&)>;
 
 // The `GEN ...` request line for these params, newline included. Exposed so the
 // grammar can be checked without a live engine (tools/eng_cli --dump-req).
@@ -105,7 +113,7 @@ class EngineClient {
     // transport_ok = false; a protocol-level rejection (D ... error) returns
     // transport_ok = true with reason == "error".
     GenResult generate(const GenParams& p, const TokenFn& on_token,
-                       const WaitFn& on_wait = {});
+                       const WaitFn& on_wait = {}, const ProgressFn& on_progress = {});
 
     // Write `X <req>` without disturbing an in-flight read. Safe to call from
     // another thread (e.g. when the HTTP client disconnects).

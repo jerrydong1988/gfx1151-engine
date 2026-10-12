@@ -11,11 +11,11 @@
 #include <limits>
 #include <mutex>
 #include <unordered_set>
+#include <webp/decode.h>
 
 #ifdef _WIN32
 // Windows 构建不链 libpng/libjpeg：改用 stb_image（public domain 单头文件，
-// 编译进 exe，零新增 DLL）解码 PNG/JPEG，保持产物自包含。WebP 无等价单头
-// 实现，decode_image 里对其明确报错。
+// 编译进 exe，零新增 DLL）解码 PNG/JPEG。WebP 使用静态 libwebpdecoder。
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
 #define STBI_ONLY_PNG
@@ -26,7 +26,6 @@
 
 #include <jpeglib.h>
 #include <png.h>
-#include <webp/decode.h>
 #endif
 
 namespace vision {
@@ -142,12 +141,19 @@ bool decode_jpeg(const std::vector<uint8_t>& bytes, Image* out, std::string* err
     return true;
 }
 
+#endif
+
 bool decode_webp(const std::vector<uint8_t>& bytes, Image* out, std::string* error) {
-    int width = 0, height = 0;
-    if (!WebPGetInfo(bytes.data(), bytes.size(), &width, &height)) {
+    WebPBitstreamFeatures features{};
+    if (WebPGetFeatures(bytes.data(), bytes.size(), &features) != VP8_STATUS_OK) {
         *error = "invalid WebP image";
         return false;
     }
+    if (features.has_animation) {
+        *error = "animated WebP images are not supported; send a static image";
+        return false;
+    }
+    const int width = features.width, height = features.height;
     size_t size = 0;
     if (!checked_rgb_size(width, height, &size, error)) return false;
     out->width = width;
@@ -162,25 +168,25 @@ bool decode_webp(const std::vector<uint8_t>& bytes, Image* out, std::string* err
 }
 
 bool decode_image(const std::vector<uint8_t>& bytes, Image* out, std::string* error) {
+    if (bytes.size() >= 12 && std::memcmp(bytes.data(), "RIFF", 4) == 0 &&
+        std::memcmp(bytes.data() + 8, "WEBP", 4) == 0)
+        return decode_webp(bytes, out, error);
+#ifndef _WIN32
     if (bytes.size() >= 8 && png_sig_cmp(bytes.data(), 0, 8) == 0)
         return decode_png(bytes, out, error);
     if (bytes.size() >= 2 && bytes[0] == 0xff && bytes[1] == 0xd8)
         return decode_jpeg(bytes, out, error);
-    if (bytes.size() >= 12 && std::memcmp(bytes.data(), "RIFF", 4) == 0 &&
-        std::memcmp(bytes.data() + 8, "WEBP", 4) == 0)
-        return decode_webp(bytes, out, error);
     *error = "unsupported image format; expected PNG, JPEG, or WebP";
     return false;
-}
 #else
-bool decode_image(const std::vector<uint8_t>& bytes, Image* out, std::string* error) {
-    if (bytes.size() >= 12 && std::memcmp(bytes.data(), "RIFF", 4) == 0 &&
-        std::memcmp(bytes.data() + 8, "WEBP", 4) == 0) {
-        *error = "WebP images are not supported in this Windows build; "
-                 "send PNG or JPEG instead";
+    int width = 0, height = 0;
+    if (!stbi_info_from_memory(bytes.data(), static_cast<int>(bytes.size()),
+                               &width, &height, nullptr)) {
+        *error = "invalid image; expected PNG, JPEG, or WebP";
         return false;
     }
-    int width = 0, height = 0;
+    size_t size = 0;
+    if (!checked_rgb_size(width, height, &size, error)) return false;
     unsigned char* pixels =
         stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()),
                               &width, &height, nullptr, 3);
@@ -190,18 +196,13 @@ bool decode_image(const std::vector<uint8_t>& bytes, Image* out, std::string* er
                  (reason ? reason : "unknown error");
         return false;
     }
-    size_t size = 0;
-    if (!checked_rgb_size(width, height, &size, error)) {
-        stbi_image_free(pixels);
-        return false;
-    }
     out->width = width;
     out->height = height;
     out->rgb.assign(pixels, pixels + size);
     stbi_image_free(pixels);
     return true;
-}
 #endif
+}
 
 // Keep extreme-aspect content intact by padding only the short side. Ordinary
 // images take the original path, with no allocation or pixel changes.
@@ -476,6 +477,15 @@ bool image_url_from_item(const json& item, std::string* url, bool* image,
 }
 
 }  // namespace
+
+json capabilities() {
+    const int version = WebPGetDecoderVersion();
+    return {{"formats", json::array({"png", "jpeg", "webp"})},
+            {"animated_webp", false},
+            {"webp_decoder", "libwebp"},
+            {"webp_decoder_version", std::to_string(version >> 16) + "." +
+                std::to_string((version >> 8) & 255) + "." + std::to_string(version & 255)}};
+}
 
 // GDEC_API_MAX_IMAGES overrides the per-request image cap (default 8); values
 // above the engine's protocol cap clamp to it with a warning.

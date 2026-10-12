@@ -108,6 +108,9 @@ const memory = {
   process_rss_bytes: 84 * 2 ** 30,
 };
 const calls = [];
+let liveError = false;
+let live = {session: "fixture-1", sample_ms: 0, prefill_completed_tokens_total: 0,
+  prefill_estimated_tokens_total: 0, output_tokens_total: 0, active: [], last_prefill: null};
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, "http://localhost");
   calls.push(u.pathname);
@@ -134,6 +137,10 @@ const server = http.createServer(async (req, res) => {
     return statsError
       ? json({ error: { message: "fixture statistics failure" } }, 500)
       : json(summary);
+  }
+  if (u.pathname === "/metrics/live") {
+    live.sample_ms += 1000;
+    return liveError ? json({error: {message: "fixture live unavailable"}}, 503) : json(live);
   }
   if (u.pathname === "/reqstat/tail") {
     tailRequests++;
@@ -289,6 +296,41 @@ async function main() {
     assert.equal(visibility.visible, true, label + " must be fully visible: " + JSON.stringify(visibility));
   };
   await page.goto(base);
+  await run("live progress, phase completion, restart and error recovery", async () => {
+    await waitText("live-state", "空闲");
+    live.active = [{req_seq: 91, phase: "prefill", prompt_tokens: 8192, output_tokens: 0,
+      prefill_reported: true, prefill_done: false, prefill_completed_tokens: 0,
+      prefill_estimated_tokens: 4096, prefill_total_tokens: 6144, cached_tokens: 2048,
+      prefill_ms: 5000, elapsed_ms: 5500, update_age_ms: 0}];
+    live.prefill_estimated_tokens_total = 4096;
+    await waitText("live-state", "1 个请求进行中");
+    assert.equal(await page.locator("#live-requests progress").getAttribute("value"), "4096");
+    assert.match(await text("#live-requests"), /实际完成 0/);
+    await page.screenshot({path: path.join(output, "live-prefill-desktop.png"), fullPage: true});
+    live.active[0] = {...live.active[0], phase: "decode", prefill_done: true,
+      prefill_completed_tokens: 6144, prefill_estimated_tokens: 6144, output_tokens: 42,
+      prefill_tok_per_s: 1024};
+    live.last_prefill = {req_seq: 91, tokens: 6144, cached_tokens: 2048, prefill_ms: 6000, tok_per_s: 1024};
+    live.output_tokens_total = 42;
+    await waitText("live-requests", "已输出 42");
+    await waitText("live-last-prefill", "1,024.0");
+    assert.equal(await text("#s-requests"), "16", "history unchanged until completion");
+    await page.setViewportSize({width: 390, height: 844});
+    await page.screenshot({path: path.join(output, "live-decode-mobile.png"), fullPage: true});
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.setViewportSize({width: 1600, height: 1080});
+    liveError = true;
+    await waitText("live-state", "暂不可用");
+    assert.equal(await text("#live-decode"), "—");
+    assert.equal(await page.locator("#live-requests .live-row").count(), 0);
+    live = {...live, session: "fixture-2", sample_ms: 0, prefill_estimated_tokens_total: 0,
+      prefill_completed_tokens_total: 0, output_tokens_total: 0, active: [], last_prefill: null};
+    liveError = false;
+    await waitText("live-state", "空闲");
+    assert.equal(await text("#live-decode"), "—", "restart discards previous counters");
+    await waitText("live-decode", "0.0");
+    assert.equal(await page.locator("#live-err").isVisible(), false);
+  });
   await run(
     "real fixture data, accurate status and recent request scope",
     async () => {

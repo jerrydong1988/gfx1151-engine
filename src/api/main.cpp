@@ -48,6 +48,7 @@
 #include "json_py.h"
 #include "reqstat.h"
 #include "reqstat_read.h"
+#include "live_stats.h"
 #include "tokenizer.h"
 #include "toolparse.h"
 #include "vision.h"
@@ -76,6 +77,7 @@ Config g_cfg;
 gdec::Tokenizer g_tok;
 std::mutex g_conn_mtx;  // serialize (re)connects
 std::atomic<long long> g_req_seq{0};
+live_stats::Store g_live;
 
 // The engine runs INFO kv_slots sequences at once (GDEC_PARALLEL, sharing
 // one KV pool; 1 = batch-1) and takes one GEN per connection.  Up to g_slots
@@ -776,11 +778,14 @@ GenOutcome run_generation(GenSpec& spec,
         return deliver(delta);
     };
 
+    p.progress = true;
+    live_stats::Lease live_request(g_live, req_id, (long long)p.ids.size());
     gdec::GenResult r = eng.generate(p, [&](int tok, float lp) {
         (void)lp;
         ++emitted;
+        g_live.token(req_id);
         return emit(detok.push(tok));
-    }, wait_callback);
+    }, wait_callback, [&](const gdec::GenProgress& v) { g_live.progress(req_id, v); });
     out.ttft_ms = ttft;
     if (r.transport_ok && r.reason != "error") {
         // Before the response ends, so a client's next turn always sees it.
@@ -1462,7 +1467,7 @@ json normalize_responses_input(const json& body) {
             ordinary.push_back(
                 json{{"role", "tool"},
                      {"tool_call_id", item["call_id"]},
-                     {"content", responses_text_content(item["output"], "function output")}});
+                     {"content", responses_message_content(item["output"], "function output", true)}});
             return;
         }
         if (type == "input_text") {
@@ -1852,7 +1857,7 @@ void handle_health(const http::Request&, http::Response* r, http::Stream*) {
     j["model"] = g_cfg.model;
     j["endpoints"] = json::array(
         {"/v1/chat/completions", "/v1/completions", "/v1/models", "/v1/responses",
-         "/dashboard", "/reqstat/summary", "/reqstat/tail"});
+         "/dashboard", "/reqstat/summary", "/reqstat/tail", "/metrics/live"});
     if (g_cfg.rope.factor > 1.0) {
         j["rope_scaling"] = {{"type", "yarn"},
                               {"factor", g_cfg.rope.factor},
@@ -1891,13 +1896,17 @@ void handle_health(const http::Request&, http::Response* r, http::Stream*) {
                        {"tool_choice", json::array({"auto", "none", "required", "named"})},
                        {"parallel_tool_calls", true},
                        {"constrained_decoding", false}};
+    const json vision_cap = vision::capabilities();
     j["vision"] = {{"accepted", true},
                    {"chat_content_type", "image_url"},
                    {"responses_content_type", "input_image"},
                    {"inline_data_url", true},
                    {"bare_base64", true},
                    {"http_urls", false},
-                   {"formats", json::array({"png", "jpeg", "webp"})},
+                   {"formats", vision_cap["formats"]},
+                   {"animated_webp", vision_cap["animated_webp"]},
+                   {"webp_decoder", vision_cap["webp_decoder"]},
+                   {"webp_decoder_version", vision_cap["webp_decoder_version"]},
                    {"max_images", vision::max_images()},
                    {"max_total_patches", gdec_vision_limits::kMaxPatches},
                    {"max_visual_tokens", gdec_vision_limits::kMaxPatches / 4},
@@ -2910,6 +2919,10 @@ int main(int argc, char** argv) {
     srv.on("GET", "/cache", handle_cache);
     srv.on("GET", "/reqstat/summary", handle_reqstat_summary);
     srv.on("GET", "/reqstat/tail", handle_reqstat_tail);
+    srv.on("GET", "/metrics/live", [](const http::Request&, http::Response* r, http::Stream*) {
+        r->set("Cache-Control", "no-store");
+        r->body = g_live.snapshot().dump();
+    });
     srv.on("GET", "/admin/overrides", handle_overrides_get);
     srv.on("POST", "/admin/overrides", handle_overrides_post);
     srv.on("POST", "/v1/completions", handle_completions);

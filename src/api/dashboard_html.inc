@@ -511,6 +511,23 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       .panel-body {
         padding: 20px 22px;
       }
+      .live-panel { margin-bottom: 20px; }
+      .live-speeds {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+        margin-bottom: 16px;
+      }
+      .live-speeds strong { font-size: 1.8rem; font-variant-numeric: tabular-nums; }
+      .live-speeds small, .live-detail { color: var(--dim); font-size: var(--text-xs); }
+      .live-speeds p { margin-bottom: 6px; }
+      .live-row { padding: 12px 0; border-top: 1px solid var(--border); }
+      .live-row progress { width: 100%; height: 6px; accent-color: var(--accent); }
+      .live-row .row { justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+      @media (max-width: 600px) {
+        .live-speeds { gap: 12px; }
+        .live-speeds strong { font-size: 1.5rem; }
+      }
       .chart-switch {
         display: flex;
         gap: 3px;
@@ -1778,6 +1795,26 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             </div>
             <small id="health-meta">状态来自 API 进程</small>
           </div>
+          <section class="panel live-panel" aria-labelledby="live-title">
+            <div class="panel-head">
+              <div><h2 id="live-title">实时运行</h2>
+                <p id="live-meta">正在获取 · 每秒更新 · 不受历史日期筛选影响</p></div>
+              <span class="chip" id="live-state">连接中</span>
+            </div>
+            <div class="panel-body">
+              <div id="live-err" class="errmsg" role="status"></div>
+              <div class="live-speeds">
+                <div><p>Prefill · 近期速度（估算）</p>
+                  <strong id="live-prefill">—</strong> <small>tok/s</small>
+                  <p class="live-detail" id="live-prefill-note">按层完成进度估算，不含缓存命中</p></div>
+                <div><p>Decode · 近期速度</p>
+                  <strong id="live-decode">—</strong> <small>tok/s</small>
+                  <p class="live-detail">仅计已确认输出，包含思考与工具调用</p></div>
+              </div>
+              <p class="live-detail" id="live-last-prefill">等待本次服务的 Prefill 结果</p>
+              <div id="live-requests"></div>
+            </div>
+          </section>
           <div class="stats" id="reqs-grid">
             <article class="stat featured">
               <svg class="signal-mark" viewBox="0 0 140 140" fill="none" aria-hidden="true">
@@ -1785,7 +1822,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
               </svg>
               <div class="metric-code" aria-hidden="true">INFERENCE / PREFILL</div>
               <div class="label">
-                Prefill · 输入处理<i data-icon="pulse"></i>
+                Prefill · 历史平均<i data-icon="pulse"></i>
               </div>
               <div class="value">
                 <span id="s-prefill">—</span><small>tok/s</small>
@@ -1794,7 +1831,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             </article>
             <article class="stat">
               <div class="label">
-                Decode · 输出生成<i data-icon="arrow"></i>
+                Decode · 历史平均<i data-icon="arrow"></i>
               </div>
               <div class="value">
                 <span id="s-decode">—</span><small>tok/s</small>
@@ -2238,7 +2275,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         toastTimer;
       let chartPoints = [],
         chartSelected = -1;
-      const pending = { health: false, reqs: false, memory: false };
+      const pending = { health: false, reqs: false, memory: false, live: false };
+      let livePrevious = null;
       const hist = { committed: [], rss: [] };
       const icons = {
         chip: '<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
@@ -2404,6 +2442,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
         updateRefreshMeta();
         if (page === "overview" || page === "requests") {
           tickReqs();
+          if (page === "overview") tickLive();
           requestAnimationFrame(drawThroughput);
         }
         if (page === "settings" && !ovrLoaded) loadOvr();
@@ -2430,11 +2469,74 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
             ? "自动刷新已暂停 · 显示最后一次数据"
             : document.hidden
               ? "页面在后台 · 自动刷新暂停"
-              : "API 状态每 2 秒 · 请求统计每 10 秒",
+               : "实时速度每秒 · API 状态每 2 秒 · 历史统计每 10 秒",
         );
       }
       function pollingAllowed() {
         return !paused && !document.hidden;
+      }
+      async function tickLive() {
+        if (!pollingAllowed() || page !== "overview" || pending.live) return;
+        pending.live = true;
+        try {
+          const j = await grab("/metrics/live");
+          if (!Array.isArray(j.active) || !Number.isFinite(j.sample_ms))
+            throw new Error("实时数据格式无效");
+          const prev = livePrevious;
+          const dt = prev ? (j.sample_ms - prev.sample_ms) / 1000 : 0;
+          const continuous = prev && prev.session === j.session && dt > 0 && dt < 5;
+          const rate = (key) => continuous && j[key] >= prev[key]
+            ? (j[key] - prev[key]) / dt : null;
+          const preUnavailable = j.active.some(r => !r.prefill_reported);
+          txt("live-prefill", fmtRate(preUnavailable ? null : rate("prefill_estimated_tokens_total")));
+          txt("live-decode", fmtRate(rate("output_tokens_total")));
+          txt("live-prefill-note", preUnavailable
+            ? "等待引擎上报；旧版引擎不提供实时 Prefill"
+            : "按层完成进度估算，不含缓存命中");
+          txt("live-state", j.active.length ? j.active.length + " 个请求进行中" : "空闲");
+          txt("live-meta", "更新于 " + hhmmss() + " · 近期速度覆盖全部请求 · 每秒采样");
+          const last = j.last_prefill;
+          txt("live-last-prefill", last
+            ? "最近完成 Prefill · 请求 #" + last.req_seq + " · " + fmtRate(last.tok_per_s) +
+              " tok/s · " + fmtTok(last.tokens) + " token · " + fmtMs(last.prefill_ms)
+            : "等待本次服务的 Prefill 结果");
+          const rows = j.active.map(r => {
+            const row = document.createElement("div"); row.className = "live-row";
+            const head = document.createElement("div"); head.className = "row";
+            const title = document.createElement("strong");
+            title.textContent = "请求 #" + r.req_seq + " · " +
+              ({starting: "准备输入", prefill: "Prefill 输入处理", decode: "Decode 输出生成"}[r.phase] || "处理中");
+            const detail = document.createElement("span"); detail.className = "live-detail";
+            detail.textContent = r.phase === "decode"
+              ? "已输出 " + fmtTok(r.output_tokens) + " token"
+              : r.prefill_reported
+                ? "估算 " + fmtTok(r.prefill_estimated_tokens) + " / " + fmtTok(r.prefill_total_tokens) +
+                  " token · 实际完成 " + fmtTok(r.prefill_completed_tokens)
+                : "等待进度数据";
+            head.append(title, detail); row.append(head);
+            if (r.phase === "prefill" && r.prefill_total_tokens > 0) {
+              const bar = document.createElement("progress");
+              bar.max = r.prefill_total_tokens; bar.value = r.prefill_estimated_tokens;
+              bar.setAttribute("aria-label", "请求 " + r.req_seq + " Prefill 估算进度"); row.append(bar);
+            }
+            const foot = document.createElement("p"); foot.className = "live-detail";
+            foot.textContent = "已用 " + fmtMs(r.elapsed_ms) +
+              (r.cached_tokens == null ? "" : " · 缓存命中 " + fmtTok(r.cached_tokens) + " token") +
+              (r.prefill_done ? " · 本次 Prefill " + fmtRate(r.prefill_tok_per_s) + " tok/s" : "") +
+              (r.update_age_ms > 5000 ? " · " + fmtMs(r.update_age_ms) + " 未收到新进度" : "");
+            row.append(foot); return row;
+          });
+          $("live-requests").replaceChildren(...rows);
+          livePrevious = j;
+          hideErr("live-err");
+        } catch (e) {
+          livePrevious = null;
+          txt("live-prefill", "—"); txt("live-decode", "—");
+          txt("live-state", "暂不可用");
+          txt("live-meta", "实时数据未更新，将自动重试");
+          $("live-requests").replaceChildren();
+          showErr("live-err", e.message + " · 实时统计暂不可用");
+        } finally { pending.live = false; }
       }
       async function tickHealth() {
         if (!pollingAllowed() || pending.health) return;
@@ -3969,6 +4071,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
           : "暂停刷新";
         updateRefreshMeta();
         if (!paused) {
+          livePrevious = null;
+          tickLive();
           tickHealth().then(tickMem);
           tickReqs();
         }
@@ -3985,6 +4089,8 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       document.addEventListener("visibilitychange", () => {
         updateRefreshMeta();
         if (!document.hidden && !paused) {
+          livePrevious = null;
+          tickLive();
           tickHealth().then(tickMem);
           tickReqs();
         }
@@ -4002,6 +4108,7 @@ static const char kDashboardHtml[] = R"HTMLDOC(<!doctype html>
       tickHealth();
       tickReqs();
       setInterval(tickHealth, HEALTH_MS);
+      setInterval(tickLive, 1000);
       setInterval(tickReqs, REQ_MS);
       setInterval(tickMem, MEM_MS);
     </script>

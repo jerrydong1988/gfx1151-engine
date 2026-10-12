@@ -63,6 +63,26 @@
     "ROPE_ATTN_SCALE": "0"
   },
   "profiles": {
+    "v2-reference": {
+      "GDEC_DRAFTER": "serial",
+      "MODEL_FILE": "qwen38-flash-next-v2.hgn",
+      "NGRAM_FILE": "qwen38-flash-next-ngram.hgn",
+      "MTP_FILE": "",
+      "OVERLAY_FILE": "",
+      "V2_MOE": "reference",
+      "V2_NATIVE_HT": "0",
+      "V2_DENSE_BACKEND": "fork",
+      "V2_EXPERT_BACKEND": "fork",
+      "V2_HT_ORDERED": "0",
+      "GDEC_V2_MOE_DEFER_SCALE": "0",
+      "GDEC_V2_MOE_PERMUTE_Q4": "0",
+      "GDEC_V2_MOE_FUSED_GU": "0",
+      "GDEC_V2_MOE_REDUCE_HAD": "0",
+      "GDEC_V2_EXACT_REUSE": "0",
+      "GDEC_V2_EXACT_ORDER": "0",
+      "GDEC_V2_EXACT_DATAFLOW": "0",
+      "GDEC_V2_BF16_GEMV": "0"
+    },
     "v2-exact": {
       "GDEC_DRAFTER": "mtp",
       "MODEL_FILE": "qwen38-flash-next-v2.hgn",
@@ -102,6 +122,24 @@
       "V2_DENSE_BACKEND": "upstream",
       "V2_EXPERT_BACKEND": "upstream-prefill",
       "V2_HT_ORDERED": "1"
+    },
+    "v2-hybrid-exact-dequant": {
+      "GDEC_DRAFTER": "serial",
+      "MODEL_FILE": "qwen38-flash-next-v2.hgn",
+      "NGRAM_FILE": "qwen38-flash-next-ngram.hgn",
+      "MTP_FILE": "",
+      "OVERLAY_FILE": "",
+      "V2_MOE": "grouped",
+      "V2_NATIVE_HT": "1",
+      "V2_DENSE_BACKEND": "upstream",
+      "V2_EXPERT_BACKEND": "upstream-prefill",
+      "V2_HT_ORDERED": "1",
+      "GDEC_V2_HT_DEQ_EXACT": "1",
+      "GDEC_V2_REFERENCE_HEAD": "0",
+      "GDEC_V2_EXACT_REUSE": "0",
+      "GDEC_V2_EXACT_ORDER": "0",
+      "GDEC_V2_EXACT_DATAFLOW": "0",
+      "GDEC_V2_BF16_GEMV": "0"
     },
     "w4b": {
       "MODEL_FILE": "qwen38-flash-next-w4b.hgn",

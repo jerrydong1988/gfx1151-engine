@@ -1390,6 +1390,7 @@ struct GenReq {
   float presence = 0.0f, frequency = 0.0f;
   std::vector<std::pair<int, float>> bias;
   bool logprobs = false;
+  bool progress = false;
   // SNAP / SNAP2: frontend-hinted prefix lengths worth an SSD snapshot (the
   // next turn repeats them verbatim; see serve_api.py render_prompt).
   // SNAPS: same idea as a counted list (semantic message boundaries); the
@@ -1780,6 +1781,8 @@ static GenReq parse_gen(std::istringstream& ss) {
           return g;
         }
       }
+    } else if (tok == "PROGRESS") {
+      g.progress = true;
     } else if (tok == "LOGPROBS") {
       g.logprobs = true;
     } else if (tok == "MROPE") {
@@ -2173,6 +2176,9 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
                     std::vector<std::vector<float>> vpatches,
                     const kvsnap::Cfg& kvs) {
   kvsnap::Turn kv_turn;  // KVSYNC waits for this turn's SSD commit
+  struct ProgressLease {
+    ~ProgressLease() { GpuModel::prefill_progress_sink() = {}; }
+  } progress_lease;
   const std::atomic<bool>& cancel = c.cancel;
   char db[192];
   auto err_line = [&]() {
@@ -2562,6 +2568,30 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
     m.prog_last_est = 0;
     m.prog_req = g.req;
     m.prog_t0 = m.prog_last = std::chrono::steady_clock::now();
+    const int64_t progress_total = m.prog_total;
+    auto progress_last = std::chrono::steady_clock::time_point{};
+    auto report_progress = [&](int64_t completed, int64_t estimated, bool done,
+                               double elapsed_ms) {
+      if (!g.progress) return;
+      const auto now = std::chrono::steady_clock::now();
+      if (!done && completed != 0 &&
+          std::chrono::duration<double>(now - progress_last).count() < 0.25) return;
+      progress_last = now;
+      char pb[192];
+      snprintf(pb, sizeof pb, "P %lld %d %lld %lld %lld %lld %.3f\n",
+               (long long)g.req, done ? 1 : 0, (long long)completed,
+               (long long)estimated, (long long)progress_total,
+               (long long)g.ids.size() - (long long)progress_total, elapsed_ms);
+      c.send(pb);
+    };
+    if (g.progress) {
+      GpuModel::prefill_progress_sink() = [&](int64_t completed, int64_t estimated) {
+        report_progress(completed, estimated, false,
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count());
+      };
+      GpuModel::prefill_progress_sink()(0, 0);
+    }
     // live spec counters reset per request, or a serial decode after a
     // speculative one would report the previous request's acceptance
     m.live_spec_rounds = m.live_spec_commits = m.live_spec_proposed = 0;
@@ -2605,6 +2635,8 @@ static void gen_one(GpuModel& m, Conn& c, GenReq g,
     double pre_ms = std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - t0)
                         .count();
+    GpuModel::prefill_progress_sink() = {};
+    report_progress(progress_total, progress_total, true, pre_ms);
     if (GpuModel::request_timing_enabled()) {
       const double setup_ms = std::chrono::duration<double, std::milli>(
           pre_ingest_started - t0).count();
